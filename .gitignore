@@ -1,0 +1,30 @@
+# dependencies
+/node_modules
+
+# Next.js
+/.next
+/out
+
+# production
+/build
+
+# local environment and secrets
+.env*
+!.env.example
+
+# test output
+/coverage
+
+# local database files
+*.db
+*.db-shm
+*.db-wal
+
+# logs
+*.log
+
+# operating system
+.DS_Store
+
+# TypeScript
+*.tsbuildinfo
