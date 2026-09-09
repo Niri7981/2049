@@ -21,7 +21,7 @@ The only supported capability name is crypto.market.snapshot.
 
 export const openAICapabilityPlanner: CapabilityPlanner = {
   async plan(task) {
-    const result = await run(capabilityPlanningAgent, task);
+    const result = await run(capabilityPlanningAgent, task, { maxTurns: 3, signal: AbortSignal.timeout(30_000) });
 
     if (!result.finalOutput) {
       throw new Error("Capability planner returned no structured output");
