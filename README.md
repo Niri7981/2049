@@ -2,7 +2,7 @@
 
 这个项目要证明：AI Agent 可以发现完成任务所需的付费能力，并在后续阶段通过受控策略自主购买它。
 
-## 当前进度：Day 4 支付代码与本地链验收完成，Devnet 验收待专用钱包入金
+## 当前进度：Day 4 支付代码、本地链及 Devnet 验收完成
 
 已实现独立支付流程（尚未接入 Agent）：
 
@@ -19,7 +19,7 @@ CLI 请求 Paid API
 
 旧的 `demo-signature` 不再能解锁数据。报价和结算结果保存在 SQLite；相同支付重试、并发请求和重启后重试都不会重复结算。超时保留 `UNKNOWN`，不重新生成付款。
 
-**已验证的是 Solana localnet 上的真实交易，代币是本地模拟 USDC，市场数据仍是明确标注的 fixture。尚未取得 Devnet 验收交易。** 官方测试 Facilitator 的 `/supported` 已检查支持 Devnet；专用买方已支持 macOS 钥匙串自动签名，RPC 已连通；等待给专用钱包转入测试币。
+**已完成 Solana localnet 和 Devnet 实际交易验收。** Devnet 使用钥匙串专用钱包支付 0.01 Circle 测试 USDC，买方余额 1 → 0.99，商家 0 → 0.01；返回 HTTP 200，重复运行未再次扣款。市场数据仍为明确标注的 fixture。[查看 Devnet 付款交易](https://explorer.solana.com/tx/52sLxqiXx5bjmQWb3CrNeLsZ8RohHk7i3TmJP3yS9G2KixcXRVv9DmTetY4HDTzPJSDWi8WGkSfjrEUuur23k2vo?cluster=devnet)。
 
 ### 本地链完整验收
 

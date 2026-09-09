@@ -4,7 +4,7 @@
 
 2026-09-09：支付代码、本地 Solana 真实交易验收、CLI 入口验收已完成。
 
-**Devnet 最终验收尚未完成。** 专用买方已创建并验证可从 macOS 钥匙串加载；用户 Phantom 中的 Circle 测试 USDC 已查到。脚本现在继承系统代理，官方 RPC 已连通。目前等待向专用买方转入测试 SOL/USDC，随后创建商家 ATA 并执行付款。
+**Devnet 最终验收已完成。** 2026-09-09 使用专用钥匙串钱包，完成 Circle Devnet USDC 实际付款；API 返回 HTTP 200 和示例市场数据，RPC 独立确认，重复运行没有重复扣款。
 
 这个阶段仍不把钱包连接到 Agent，不实现 Day 5 的消费策略。市场 JSON 是标注 `is_demo_snapshot: true` 的示例数据。
 
@@ -121,3 +121,17 @@ Day 4 命令在 macOS 读取既有系统 HTTP 代理供 Node 使用，不修改�
 | `tests/unit/day4-wallet.test.ts` | 新增钥匙串加载、来源冲突、诊断信息不外泄测试。 |
 
 钱包元数据、账户初始化交易日志和本机配置均不上传 Git。钥匙串初始化已实际执行两次，确认第二次复用同一地址；Devnet 账户初始化已验证在余额不足时正确停止。
+
+## Devnet 实际验收记录（2026-09-09）
+
+- 买方：`BSEDrH4umjwCKUL5TqYm69ffsSjwWcV2BXQkczVp1F52`。
+- 商家：`4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs`。
+- mint：`4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`（Circle Devnet USDC，6 位精度）。
+- 创建商家 ATA：[初始化交易](https://explorer.solana.com/tx/53yx92GNshMfiK6YSSkxzMMrbj12BVG97XQWzpYAKUxuwsqky2rjY99gV5Cs8g7pvTknwV9nVrJRoDcQoiwPywFb?cluster=devnet)。买方 ATA 已由入金建立。
+- 实际付款：[0.01 测试 USDC 交易](https://explorer.solana.com/tx/52sLxqiXx5bjmQWb3CrNeLsZ8RohHk7i3TmJP3yS9G2KixcXRVv9DmTetY4HDTzPJSDWi8WGkSfjrEUuur23k2vo?cluster=devnet)。CLI 返回 `CONFIRMED`。
+- 付款前后独立 preflight 查询：买方 `1000000 → 990000` 最小单位（1 → 0.99 USDC）；商家 `0 → 10000`（0 → 0.01 USDC）。
+- Facilitator 代付交易费，SOL 余额减少 10,001 lamports；账户初始化费用由买方承担。
+- API 返回 SOL 市场示例数据，带 `is_demo_snapshot: true`，不表示实时行情。
+- 再运行 `day4:pay` 返回同一交易和 `Already paid`，没有创建下一笔付款。
+
+Day 4 独立程序付款闭环已完成。尚未实现的是后续 Agent 自动决策与消费额度策略。
