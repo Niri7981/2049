@@ -28,3 +28,10 @@
 
 # TypeScript
 *.tsbuildinfo
+
+# Local chain, signed payment journals and acceptance output
+/.data/
+/test-ledger/
+
+# Personal progress notes (not a publishing document)
+/docs/daily-summary.md

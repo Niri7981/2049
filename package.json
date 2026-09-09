@@ -12,14 +12,24 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "day4:preflight": "node --import tsx --env-file-if-exists=.env.local scripts/day4-preflight.mjs",
+    "day4:localnet": "NO_DNA=1 solana-test-validator --ledger .data/solana-ledger --bind-address 127.0.0.1",
+    "day4:localnet:init": "bash scripts/day4-localnet-init.sh",
+    "day4:pay": "node --import tsx --env-file-if-exists=.env.local scripts/day4-pay.ts",
+    "day4:smoke": "node --import tsx scripts/day4-localnet-smoke.ts"
   },
   "dependencies": {
     "@openai/agents": "^0.17.0",
+    "@solana/web3.js": "^1.98.4",
+    "@x402/core": "^2.25.0",
+    "@x402/fetch": "^2.25.0",
+    "@x402/svm": "^2.25.0",
     "next": "^16.3.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "zod": "^4.5.4"
+    "zod": "^4.5.4",
+    "@solana/kit": "^5.5.1"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",
@@ -27,7 +37,9 @@
     "@types/react-dom": "^19.2.7",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.4",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.11",
+    "tsx": "^4.21.0",
+    "@solana/spl-token": "^0.4.14"
   }
 }
