@@ -4,13 +4,13 @@
 
 2026-09-09：支付代码、本地 Solana 真实交易验收、CLI 入口验收已完成。
 
-**Devnet 最终验收尚未完成。** 本机没有配置项目专用的买方签名与买卖双方公钥，也没有确认买方已有 Circle 测试 USDC；公共 `api.devnet.solana.com` 在本次检查中连接超时。不得把 localnet 成功记作 Devnet 成功。
+**Devnet 最终验收尚未完成。** 专用买方已创建并验证可从 macOS 钥匙串加载；用户 Phantom 中的 Circle 测试 USDC 已查到。脚本现在继承系统代理，官方 RPC 已连通。目前等待向专用买方转入测试 SOL/USDC，随后创建商家 ATA 并执行付款。
 
 这个阶段仍不把钱包连接到 Agent，不实现 Day 5 的消费策略。市场 JSON 是标注 `is_demo_snapshot: true` 的示例数据。
 
 ## 已验证结果
 
-- 132 项自动测试通过，TypeScript、ESLint、Next.js 生产构建通过。
+- 138 项自动测试通过，TypeScript、ESLint、Next.js 生产构建通过。
 - 未付款返回标准 x402 V2 `402` 和 `PAYMENT-REQUIRED`。
 - 签名之前模拟完整交易；固定金额 10,000 最小单位（0.01 测试 USDC）。
 - 通过官方 x402 SDK 构建交易，经本机测试 Facilitator HTTP `/verify`、`/settle`，在真实 local validator 确认。
@@ -49,12 +49,17 @@ npm run day4:smoke
 
 ## Devnet 最终验收步骤
 
-1. 在 `.env.local` 配置 `SOLANA_CLUSTER=devnet`、可访问的 Devnet RPC、专用买方/商家公钥。Facilitator 默认 `https://x402.org/facilitator`。
-2. 给买方标准 ATA 准备至少 0.01 Circle Devnet USDC，给商家创建相同 mint 的标准 ATA。商家不需要签名私钥。
-3. 买方签名使用**已存在的项目专用测试钱包**：`DEMO_BUYER_KEYPAIR` 仅填写本机路径，或在执行 CLI 的进程环境中注入 `DEMO_BUYER_PRIVATE_KEY`（base58 或 64-byte JSON）。不在聊天、文档、Git 中粘贴私钥。
-4. `npm run day4:preflight`。检查真实 genesis、经典 SPL Token/6 位精度、双方标准 ATA、余额、Facilitator 支持的网络及手续费付款方余额；失败会非零退出。
-5. `npm run dev` 启动本机 API；另一个终端运行 `npm run day4:pay`。
-6. 必须同时得到 `CONFIRMED`、可在 Devnet Explorer 查询的 TX、准确的买卖余额变化，以及 HTTP 200 市场数据，才能标记 Devnet 验收完成。
+1. 在 `.env.local` 配置 Devnet RPC 和 `DEMO_MERCHANT_PUBLIC_KEY`；Facilitator 默认 `https://x402.org/facilitator`。
+2. 执行 `npm run day4:wallet`。首次生成专用钱包，把密钥写入 macOS 钥匙串；项目只保存公开地址和钥匙串条目名。重跑复用原钱包。无需导出 Phantom 私钥。
+3. 在 Phantom 的 Devnet 向输出地址转入 1 测试 USDC、0.01 测试 SOL。
+4. 执行 `npm run day4:accounts`，验证真实 Devnet 和 mint，补建双方缺失的标准 USDC ATA，账户租金和手续费由专用买方支付，总预算限制为 0.01 SOL。商家不需要签名。
+5. 执行 `npm run day4:preflight`，检查余额和 Facilitator 等付款条件。
+6. 执行 `npm run day4:server` 启动本机 API；另一个终端执行 `npm run day4:pay`。
+7. 必须取得确认 TX、准确的余额变化、HTTP 200 市场数据，才能标记 Devnet 验收完成。
+
+`day4:accounts` 先模拟再签名，提交前保存交易 ID；结果未知时重跑只查询原交易，不另建交易。若始终查不到交易，需要人工核对是否过期及双方账户状态；不要直接删除日志重试。
+
+Day 4 命令在 macOS 读取既有系统 HTTP 代理供 Node 使用，不修改系统设置，本机请求绕过代理。使用 Node.js 24.5+。钥匙串用于本机 Demo 的密钥保存；它不构成对同一 macOS 登录用户下其他进程的隔离，也没有实现 Agent 消费额度策略。
 
 重复运行 `day4:pay` 会继续原付款或直接显示已完成。只有前笔已确认，且显式使用 `npm run day4:pay -- --new-payment`，才产生下一笔购买。CLI 使用跨进程 SQLite 锁，避免同时运行时各自生成付款。
 
@@ -102,3 +107,17 @@ npm run day4:smoke
 | `tests/unit/day4-wallet.test.ts` | 签名输入格式、公钥匹配和错误信息不泄密。 |
 | `tests/unit/paid-market-api.test.ts` | 真实结算边界、报价绑定、并发/重启幂等、UNKNOWN 状态。 |
 | `docs/demo/day-4-runbook.md` | 本文件：操作步骤、实际验收证据、剩余阻断和逐文件说明。 |
+
+## 本次自动签名补充文件
+
+| 文件 | 重点 |
+|---|---|
+| `scripts/day4-wallet-setup.ts` | 生成并复用专用钱包，校验钥匙串签名器与公开地址，自动写公开配置。 |
+| `src/modules/payment/day4-keychain.ts` | 钥匙串读写；秘密通过进程标准输入传入，不放命令参数或日志。 |
+| `src/modules/payment/day4-wallet.ts` | 支持钥匙串、已有 keypair 或运行时秘密三选一，拒绝来源冲突。 |
+| `scripts/day4-accounts.ts` | Devnet USDC ATA 初始化、租金预算、签名前模拟、交易日志防盲目重发。 |
+| `scripts/day4-run.mjs` | 统一命令入口，继承已有代理并绕过本机地址。 |
+| `tests/unit/day4-accounts.test.ts` | 错链、错误 mint、资金不足时不读取签名器、不发送交易。 |
+| `tests/unit/day4-wallet.test.ts` | 新增钥匙串加载、来源冲突、诊断信息不外泄测试。 |
+
+钱包元数据、账户初始化交易日志和本机配置均不上传 Git。钥匙串初始化已实际执行两次，确认第二次复用同一地址；Devnet 账户初始化已验证在余额不足时正确停止。

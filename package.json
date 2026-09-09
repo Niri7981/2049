@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.5.0"
   },
   "scripts": {
     "dev": "next dev",
@@ -13,14 +13,19 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "day4:preflight": "node --import tsx --env-file-if-exists=.env.local scripts/day4-preflight.mjs",
+    "day4:preflight": "node scripts/day4-run.mjs preflight",
     "day4:localnet": "NO_DNA=1 solana-test-validator --ledger .data/solana-ledger --bind-address 127.0.0.1",
     "day4:localnet:init": "bash scripts/day4-localnet-init.sh",
-    "day4:pay": "node --import tsx --env-file-if-exists=.env.local scripts/day4-pay.ts",
-    "day4:smoke": "node --import tsx scripts/day4-localnet-smoke.ts"
+    "day4:pay": "node scripts/day4-run.mjs pay",
+    "day4:smoke": "node --import tsx scripts/day4-localnet-smoke.ts",
+    "day4:wallet": "node scripts/day4-run.mjs wallet",
+    "day4:accounts": "node scripts/day4-run.mjs accounts",
+    "day4:server": "node scripts/day4-run.mjs server"
   },
   "dependencies": {
     "@openai/agents": "^0.17.0",
+    "@solana-program/token": "0.9.0",
+    "@solana/kit": "^5.5.1",
     "@solana/web3.js": "^1.98.4",
     "@x402/core": "^2.25.0",
     "@x402/fetch": "^2.25.0",
@@ -28,18 +33,17 @@
     "next": "^16.3.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "zod": "^4.5.4",
-    "@solana/kit": "^5.5.1"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@solana/spl-token": "^0.4.14",
     "@types/node": "^26.4.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.4",
-    "typescript": "~5.9.3",
-    "vitest": "^4.1.11",
     "tsx": "^4.21.0",
-    "@solana/spl-token": "^0.4.14"
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.11"
   }
 }

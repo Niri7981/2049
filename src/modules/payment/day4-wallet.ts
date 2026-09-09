@@ -1,11 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { createKeyPairSignerFromBytes, getBase58Encoder } from "@solana/kit";
+import { readDemoKeychain } from "./day4-keychain";
 
-export async function loadDay4Buyer(expectedAddress: string, env = process.env) {
+export async function loadDay4Buyer(expectedAddress: string, env: Record<string, string | undefined> = process.env) {
   // Only the runtime consumes the secret. Never log input or parser exceptions.
   let bytes: Uint8Array;
   try {
-    const raw = env.DEMO_BUYER_KEYPAIR
+    const sources = [env.DEMO_BUYER_KEYCHAIN_SERVICE, env.DEMO_BUYER_KEYPAIR, env.DEMO_BUYER_PRIVATE_KEY].filter(Boolean);
+    if (sources.length !== 1) throw new Error();
+    const raw = env.DEMO_BUYER_KEYCHAIN_SERVICE
+      ? await readDemoKeychain(env.DEMO_BUYER_KEYCHAIN_SERVICE, expectedAddress)
+      : env.DEMO_BUYER_KEYPAIR
       ? await readFile(env.DEMO_BUYER_KEYPAIR, "utf8")
       : env.DEMO_BUYER_PRIVATE_KEY;
     if (!raw) throw new Error();
@@ -19,7 +24,7 @@ export async function loadDay4Buyer(expectedAddress: string, env = process.env) 
     }
     if (bytes.length !== 64) throw new Error();
   } catch {
-    throw new Error("Configure a valid dedicated test buyer signer via DEMO_BUYER_KEYPAIR or DEMO_BUYER_PRIVATE_KEY");
+    throw new Error("Configure a valid dedicated test buyer signer via DEMO_BUYER_KEYCHAIN_SERVICE, DEMO_BUYER_KEYPAIR or DEMO_BUYER_PRIVATE_KEY");
   }
   try {
     const signer = await createKeyPairSignerFromBytes(bytes);

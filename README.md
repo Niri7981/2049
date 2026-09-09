@@ -2,7 +2,7 @@
 
 这个项目要证明：AI Agent 可以发现完成任务所需的付费能力，并在后续阶段通过受控策略自主购买它。
 
-## 当前进度：Day 4 支付代码与本地链验收完成，Devnet 验收待配置
+## 当前进度：Day 4 支付代码与本地链验收完成，Devnet 验收待专用钱包入金
 
 已实现独立支付流程（尚未接入 Agent）：
 
@@ -19,7 +19,7 @@ CLI 请求 Paid API
 
 旧的 `demo-signature` 不再能解锁数据。报价和结算结果保存在 SQLite；相同支付重试、并发请求和重启后重试都不会重复结算。超时保留 `UNKNOWN`，不重新生成付款。
 
-**已验证的是 Solana localnet 上的真实交易，代币是本地模拟 USDC，市场数据仍是明确标注的 fixture。尚未取得 Devnet 验收交易。** 官方测试 Facilitator 的 `/supported` 已检查支持 Devnet；专用买方签名配置、测试 USDC 和可访问的 Devnet RPC 仍需就绪。
+**已验证的是 Solana localnet 上的真实交易，代币是本地模拟 USDC，市场数据仍是明确标注的 fixture。尚未取得 Devnet 验收交易。** 官方测试 Facilitator 的 `/supported` 已检查支持 Devnet；专用买方已支持 macOS 钥匙串自动签名，RPC 已连通；等待给专用钱包转入测试币。
 
 ### 本地链完整验收
 
@@ -38,11 +38,14 @@ npm run day4:smoke
 
 ### Devnet 独立付款
 
-在 `.env.local` 填写 `.env.example` 中的公开配置；买方签名通过专用测试 keypair 路径或 CLI 的运行时环境注入。商家只需要公钥。
+在 `.env.local` 填写商家公钥和 Devnet 公开配置。执行 `day4:wallet` 创建专用钱包后，用 Phantom 向输出地址转入 1 测试 USDC、0.01 测试 SOL。无需导出 Phantom 私钥，程序从 macOS 钥匙串读取专用签名器。
 
 ```bash
+npm run day4:wallet
+# 用 Phantom 给输出地址转入 Devnet 测试币后：
+npm run day4:accounts
 npm run day4:preflight
-npm run dev
+npm run day4:server
 ```
 
 另一个终端执行 `npm run day4:pay`。首次固定购买 0.01 测试 USDC；再次运行会读取保存的支付，不会自动再付。只有前笔已确认，且明确执行 `npm run day4:pay -- --new-payment`，才购买下一次调用。
@@ -53,7 +56,7 @@ npm run dev
 
 ## 本地运行
 
-要求 Node.js 24 或更高版本。
+要求 Node.js 24.5 或更高版本。
 
 ```bash
 npm install

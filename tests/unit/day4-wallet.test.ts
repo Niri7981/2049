@@ -3,7 +3,10 @@ import { createKeyPairSignerFromPrivateKeyBytes, getBase58Decoder } from "@solan
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { loadDay4Buyer } from "../../src/modules/payment/day4-wallet";
 
-const SAFE_CONFIG_ERROR = "Configure a valid dedicated test buyer signer via DEMO_BUYER_KEYPAIR or DEMO_BUYER_PRIVATE_KEY";
+vi.mock("../../src/modules/payment/day4-keychain", () => ({ readDemoKeychain: vi.fn() }));
+import { readDemoKeychain } from "../../src/modules/payment/day4-keychain";
+
+const SAFE_CONFIG_ERROR = "Configure a valid dedicated test buyer signer via DEMO_BUYER_KEYCHAIN_SERVICE, DEMO_BUYER_KEYPAIR or DEMO_BUYER_PRIVATE_KEY";
 const SAFE_ADDRESS_ERROR = "Buyer signer does not match DEMO_BUYER_PUBLIC_KEY";
 let publicAddress: string;
 let secretBytes: Uint8Array;
@@ -20,6 +23,22 @@ beforeAll(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("Day 4 dedicated buyer signer", () => {
+  it("loads the configured Keychain signer and verifies its public address", async () => {
+    vi.mocked(readDemoKeychain).mockResolvedValue(getBase58Decoder().decode(secretBytes));
+    const signer = await loadDay4Buyer(publicAddress, { DEMO_BUYER_KEYCHAIN_SERVICE: "com.2049.day4.0123456789abcdef" });
+    expect(signer.address).toBe(publicAddress);
+    expect(readDemoKeychain).toHaveBeenCalledWith("com.2049.day4.0123456789abcdef", publicAddress);
+  });
+
+  it("rejects conflicting signer sources", async () => {
+    await expect(loadDay4Buyer(publicAddress, { DEMO_BUYER_KEYCHAIN_SERVICE: "com.2049.day4.0123456789abcdef", DEMO_BUYER_PRIVATE_KEY: getBase58Decoder().decode(secretBytes) })).rejects.toThrow(SAFE_CONFIG_ERROR);
+  });
+
+  it("does not expose Keychain diagnostics", async () => {
+    vi.mocked(readDemoKeychain).mockRejectedValue(new Error("secret-diagnostic"));
+    await expect(loadDay4Buyer(publicAddress, { DEMO_BUYER_KEYCHAIN_SERVICE: "com.2049.day4.0123456789abcdef" })).rejects.toThrow(SAFE_CONFIG_ERROR);
+  });
+
   it("loads an in-memory JSON keypair without logging or contacting a network", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
