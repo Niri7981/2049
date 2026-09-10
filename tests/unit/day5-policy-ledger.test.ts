@@ -77,3 +77,27 @@ describe('durable approval and budget ledger', () => {
     finally { b.close(); rmSync(dir, { recursive: true, force: true }); }
   });
 });
+
+it('expired unclaimed approvals release budget but claimed payments stay frozen', () => {
+  const ledger = new PurchaseLedger(':memory:');
+  try {
+    const first = fixture(100000); const claimed = fixture(100000);
+    ledger.reserve(first.purchase, first.quote, first.resource, now);
+    const record = ledger.reserve(claimed.purchase, claimed.quote, claimed.resource, now);
+    ledger.claim(record.approvalId, now);
+    ledger.releaseExpired(now + 300001);
+    expect(ledger.get(first.purchase.taskId)?.status).toBe('EXPIRED');
+    expect(ledger.get(claimed.purchase.taskId)?.status).toBe('PAYING');
+    expect(() => ledger.claim(record.approvalId, now + 300001)).toThrow();
+    const next = fixture(); next.purchase.createdAt += 300001; next.purchase.expiresAt += 300001;
+    expect(ledger.reserve(next.purchase, next.quote, next.resource, now + 300001).decision.reason).toBe('LEDGER_UNRESOLVED');
+  } finally { ledger.close(); }
+});
+it('a new purchase can use released expired budget', () => {
+  const ledger = new PurchaseLedger(':memory:');
+  try {
+    for (let i = 0; i < 10; i++) { const f = fixture(100000); ledger.reserve(f.purchase, f.quote, f.resource, now); }
+    const next = fixture(100000); next.purchase.createdAt += 300001; next.purchase.expiresAt += 300001;
+    expect(ledger.reserve(next.purchase, next.quote, next.resource, now + 300001).status).toBe('APPROVED');
+  } finally { ledger.close(); }
+});

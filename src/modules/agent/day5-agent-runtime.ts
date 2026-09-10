@@ -1,3 +1,4 @@
+import { MarketSnapshotOutputSchema, type MarketSnapshotOutput } from '../resources/resource-schema';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { CapabilityPlanner } from './capability-plan';
@@ -9,29 +10,43 @@ import { runDay4Preflight } from '../payment/day4-preflight';
 import { selectDay4Quote } from '../payment/day4-payment';
 import { PurchaseLedger, type PurchaseRecord } from '../purchases/purchase-ledger';
 import { hash, PurchaseSchema } from '../purchases/spending-policy';
-import { executeApprovedPayment, paymentBinding, paymentEndpoint } from '../purchases/approved-payment';
+import { executeApprovedPayment, recoverApprovedPayment, paymentBinding, paymentEndpoint } from '../purchases/approved-payment';
 
 const TaskSchema = z.object({ taskId: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/), task: z.string().trim().min(1).max(1000) }).strict();
 function publicResult(record: PurchaseRecord, ledger: PurchaseLedger) {
   return { taskId: record.purchase.taskId, status: record.status, policy: record.decision, amountUSDC: record.purchase.amount / 1_000_000,
-    transaction: record.transaction, data: record.data, events: ledger.events(record.purchase.taskId),
+    transaction: record.transaction, data: record.data, answer: record.answer, events: ledger.events(record.purchase.taskId),
     summary: record.data ? `示例快照（${record.data.as_of}）：SOL 价格 $${record.data.spot_price_usd}，24 小时变化 ${record.data.change_24h_pct}%，RSI ${record.data.rsi_14d}。数据来自 Demo fixture，不是实时行情。` : undefined };
 }
 export async function runDay5Task(input: { taskId: string; task: string }, options: {
   planner: CapabilityPlanner; plannerMode: PlannerMode; config: Day4Config; ledger: PurchaseLedger; origin: string;
   // Trusted composition dependencies for integration tests, never model/tool inputs.
   preflight?: typeof runDay4Preflight; pay?: typeof executeApprovedPayment;
+  answer?: (task: string, data: MarketSnapshotOutput) => Promise<string>;
 }) {
   const { taskId, task } = TaskSchema.parse(input);
   const { config, ledger } = options;
   if (config.cluster !== 'devnet' || config.network !== DEVNET_NETWORK || config.mint !== DEVNET_USDC_MINT) throw new Error('Day 5 policy only supports Circle USDC on Devnet');
   const endpoint = paymentEndpoint(options.origin);
   const binding = paymentBinding(config, endpoint);
+  ledger.releaseExpired();
+  async function result(record: PurchaseRecord) {
+    let answerStatus = record.answer ? 'COMPLETE' : 'NOT_REQUESTED';
+    if (record.status === 'PAID' && record.data && !record.answer && options.answer) {
+      try {
+        const answer = await options.answer(task, MarketSnapshotOutputSchema.parse(record.data));
+        ledger.saveAnswer(taskId, answer);
+        answerStatus = 'COMPLETE';
+      } catch { answerStatus = 'FAILED'; }
+    }
+    return { ...publicResult(ledger.get(taskId) ?? record, ledger), answerStatus };
+  }
   const existing = ledger.get(taskId);
   if (existing) {
     if (existing.purchase.taskHash !== hash(task) || existing.purchase.binding !== binding) throw new Error('Task ID already belongs to different input or configuration');
-    // A restart never signs again, including an abandoned APPROVED/PAYING record.
-    return { ...publicResult(existing, ledger), reused: true };
+    // Recovery only reads the original settlement; it cannot initiate a payment.
+    await recoverApprovedPayment(ledger, taskId, config, endpoint);
+    return { ...await result(ledger.get(taskId)!), reused: true };
   }
   // Registry endpoint is a logical HTTPS identity. Only the fixed local endpoint
   // above is routable in this desktop demo; no URL ever comes from the model.
@@ -50,8 +65,11 @@ export async function runDay5Task(input: { taskId: string; task: string }, optio
     createdAt: now, expiresAt: now + Math.min(quote.maxTimeoutSeconds, 300) * 1000, binding });
   const reserved = ledger.reserve(purchase, quote, resources[0]);
   // Only the invocation that created the unique purchase can execute its approval.
-  if (reserved.purchase.id !== purchase.id || reserved.status !== 'APPROVED') return { ...publicResult(reserved, ledger), discovery };
+  if (reserved.purchase.id !== purchase.id || reserved.status !== 'APPROVED') return { ...await result(reserved), discovery };
   try { await (options.pay ?? executeApprovedPayment)(ledger, reserved.approvalId, config, endpoint); }
-  catch { return { ...publicResult(ledger.get(taskId)!, ledger), discovery }; }
-  return { ...publicResult(ledger.get(taskId)!, ledger), discovery };
+  catch {
+    await recoverApprovedPayment(ledger, taskId, config, endpoint);
+    return { ...await result(ledger.get(taskId)!), discovery };
+  }
+  return { ...await result(ledger.get(taskId)!), discovery };
 }

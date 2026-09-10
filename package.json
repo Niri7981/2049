@@ -21,6 +21,8 @@
     "day4:wallet": "node scripts/day4-run.mjs wallet",
     "day4:accounts": "node scripts/day4-run.mjs accounts",
     "day4:server": "node scripts/day4-run.mjs server",
+    "day6:acceptance": "node scripts/day4-run.mjs day6-acceptance",
+    "day5:model-check": "node scripts/day4-run.mjs model-check",
     "day5:agent": "node scripts/day4-run.mjs agent"
   },
   "dependencies": {

@@ -53,3 +53,23 @@ describe('Day 5 discovery → policy → payment → cached result', () => {
     } finally { ledger.close(); }
   });
 });
+
+it('retries failed analysis using paid data and persists the successful answer without paying again', async () => {
+  mockQuote(); const ledger = new PurchaseLedger(':memory:');
+  const pay = vi.fn<typeof executeApprovedPayment>(async (store, id) => { store.claim(id); store.finish(id, { transaction: 'test-receipt', data }); return { transaction: 'test-receipt', data }; });
+  const answer = vi.fn().mockRejectedValueOnce(new Error('model timeout')).mockResolvedValue('示例 SOL 分析');
+  const task = { taskId: 'answer', task: '分析 SOL 市场价格和 RSI' };
+  try {
+    const opts = { ...options(ledger, pay), answer };
+    const failed = await runDay5Task(task, opts);
+    expect(failed.status).toBe('PAID');
+    expect('answerStatus' in failed && failed.answerStatus).toBe('FAILED');
+    const success = await runDay5Task(task, opts);
+    expect('answer' in success && success.answer).toBe('示例 SOL 分析');
+    await runDay5Task(task, opts);
+    expect(answer).toHaveBeenCalledTimes(2);
+    expect(answer).toHaveBeenLastCalledWith(task.task, data);
+    expect(pay).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  } finally { ledger.close(); }
+});

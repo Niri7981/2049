@@ -1,4 +1,5 @@
-import { Agent, run } from "@openai/agents";
+import { modelRunner } from './model-runner';
+import { Agent } from "@openai/agents";
 
 import {
   CapabilityPlanSchema,
@@ -21,7 +22,7 @@ The only supported capability name is crypto.market.snapshot.
 
 export const openAICapabilityPlanner: CapabilityPlanner = {
   async plan(task) {
-    const result = await run(capabilityPlanningAgent, task, { maxTurns: 3, signal: AbortSignal.timeout(30_000) });
+    const result = await modelRunner.run(capabilityPlanningAgent, task, { maxTurns: 3, signal: AbortSignal.timeout(60_000) });
 
     if (!result.finalOutput) {
       throw new Error("Capability planner returned no structured output");

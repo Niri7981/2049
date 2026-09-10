@@ -1,3 +1,5 @@
+import { reconcileOriginalTransaction } from '../../src/modules/payment/reconcile-transaction';
+vi.mock('../../src/modules/payment/reconcile-transaction', () => ({ reconcileOriginalTransaction: vi.fn() }));
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Keypair, PublicKey, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -246,4 +248,48 @@ describe("x402 paid market API", () => {
     expect(response.status).toBe(503);
     expect(response.headers.get(PAYMENT_REQUIRED_HEADER)).toBeNull();
   });
+});
+
+it('recovery never initiates an unclaimed payment', async () => {
+  const { handler, facilitator } = setup(); const { header } = await paymentFor(handler);
+  expect((await handler({ asset: 'SOL' }, header, true)).status).toBe(202);
+  expect(facilitator.verify).not.toHaveBeenCalled();
+  expect(facilitator.settle).not.toHaveBeenCalled();
+});
+it('recovers a lost settlement receipt through chain proof after server restart without settling again', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'day6-recovery-')); directories.push(directory);
+  const path = join(directory, 'payments.sqlite'); const first = setup(path);
+  first.facilitator.settle.mockRejectedValueOnce(new Error('lost receipt'));
+  const { header, payload } = await paymentFor(first.handler);
+  expect((await first.handler({ asset: 'SOL' }, header)).status).toBe(202);
+  const second = setup(path);
+  vi.mocked(reconcileOriginalTransaction).mockResolvedValueOnce({ status: 'UNKNOWN' });
+  expect((await second.handler({ asset: 'SOL' }, header, true)).status).toBe(202);
+  vi.mocked(reconcileOriginalTransaction).mockResolvedValueOnce({ status: 'CONFIRMED', transaction: 'recovered-signature' });
+  const response = await second.handler({ asset: 'SOL' }, header, true);
+  expect(response.status).toBe(200);
+  expect((await response.json()).is_demo_snapshot).toBe(true);
+  expect(reconcileOriginalTransaction).toHaveBeenLastCalledWith(config, expect.any(String), payload.accepted.extra?.memo, undefined);
+  expect(first.facilitator.settle).toHaveBeenCalledOnce();
+  expect(second.facilitator.settle).not.toHaveBeenCalled();
+  expect(second.facilitator.getSupported).not.toHaveBeenCalled();
+});
+it('chain-proven failure returns failure evidence and never data', async () => {
+  const { handler, facilitator } = setup(); facilitator.settle.mockRejectedValueOnce(new Error('lost receipt'));
+  const { header } = await paymentFor(handler); await handler({ asset: 'SOL' }, header);
+  vi.mocked(reconcileOriginalTransaction).mockResolvedValueOnce({ status: 'FAILED', transaction: 'failed-signature' });
+  const response = await handler({ asset: 'SOL' }, header, true);
+  expect(response.status).toBe(402);
+  expect(JSON.parse(Buffer.from(response.headers.get(PAYMENT_RESPONSE_HEADER)!, 'base64').toString())).toMatchObject({ success: false, transaction: 'failed-signature' });
+  expect((await response.json()).is_demo_snapshot).toBeUndefined();
+  expect(facilitator.settle).toHaveBeenCalledOnce();
+});
+it('replaced signatures cannot trigger chain reconciliation or receive cached data', async () => {
+  const { handler, facilitator } = setup(); facilitator.settle.mockRejectedValueOnce(new Error('lost receipt'));
+  const { header, payload } = await paymentFor(handler); await handler({ asset: 'SOL' }, header);
+  const tx = VersionedTransaction.deserialize(Buffer.from(String(payload.payload.transaction), 'base64'));
+  tx.signatures[0].fill(0); payload.payload.transaction = Buffer.from(tx.serialize()).toString('base64');
+  vi.mocked(reconcileOriginalTransaction).mockClear();
+  expect((await handler({ asset: 'SOL' }, encode(payload), true)).status).toBe(409);
+  expect(reconcileOriginalTransaction).not.toHaveBeenCalled();
 });

@@ -1,6 +1,7 @@
 import {
   paidMarketSnapshotResponse,
   PAYMENT_SIGNATURE_HEADER,
+  PAYMENT_RECOVERY_HEADER,
 } from "@/modules/paid-market-api/paid-market-api";
 
 export const runtime = "nodejs";
@@ -12,5 +13,5 @@ export async function GET(request: Request) {
     return Response.json({ error: "Exactly one asset parameter is required" }, { status: 400 });
   }
   const asset = query.get("asset");
-  return paidMarketSnapshotResponse({ asset }, request.headers.get(PAYMENT_SIGNATURE_HEADER) ?? undefined);
+  return paidMarketSnapshotResponse({ asset }, request.headers.get(PAYMENT_SIGNATURE_HEADER) ?? undefined, request.headers.get(PAYMENT_RECOVERY_HEADER) === "1");
 }

@@ -70,11 +70,11 @@ export class SettlementStore {
   }
 
   /** Only the caller that inserted the claim is allowed to call /settle. */
-  claim(messageHash: string, quoteId: string, payloadHash: string): boolean {
+  claim(messageHash: string, quoteId: string, payloadHash: string, body?: string): boolean {
     return this.db.prepare(`
-      INSERT OR IGNORE INTO day4_settlements (message_hash, quote_id, payload_hash, status)
-      VALUES (?, ?, ?, 'UNKNOWN')
-    `).run(messageHash, quoteId, payloadHash).changes === 1;
+      INSERT OR IGNORE INTO day4_settlements (message_hash, quote_id, payload_hash, status, body)
+      VALUES (?, ?, ?, 'UNKNOWN', ?)
+    `).run(messageHash, quoteId, payloadHash, body ?? null).changes === 1;
   }
 
   confirm(messageHash: string, receipt: SettleResponse, body: string) {

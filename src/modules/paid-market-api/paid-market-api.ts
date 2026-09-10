@@ -1,3 +1,4 @@
+import { reconcileOriginalTransaction } from '../payment/reconcile-transaction';
 import { createHash, randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { VersionedTransaction } from "@solana/web3.js";
@@ -11,6 +12,7 @@ import { SettlementStore, type StoredSettlement } from "./settlement-store";
 
 export const PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
 export const PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE";
+export const PAYMENT_RECOVERY_HEADER = "PAYMENT-RECOVERY";
 export const PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
 export const MARKET_RESOURCE_URL = "/api/paid/market-snapshot?asset=SOL";
 export const PAYMENT_AMOUNT = "10000";
@@ -45,7 +47,11 @@ function previousResponse(previous: StoredSettlement, payloadHash: string): Resp
   if (previous.status === "CONFIRMED" && previous.receipt && previous.body) {
     return paidResponse(previous.body, previous.receipt);
   }
-  if (previous.status === "FAILED") return jsonError(402, "Settlement failed; this payment cannot be resubmitted");
+  if (previous.status === "FAILED") {
+    const response = jsonError(402, "Settlement failed; this payment cannot be resubmitted");
+    if (previous.receipt?.transaction) response.headers.set(PAYMENT_RESPONSE_HEADER, encode(previous.receipt));
+    return response;
+  }
   const response = jsonError(202, "Settlement outcome unknown; do not create another payment", { paymentId: previous.messageHash });
   if (previous.receipt) response.headers.set(PAYMENT_RESPONSE_HEADER, encode(previous.receipt));
   return response;
@@ -64,7 +70,7 @@ export function createPaidMarketApi(
   config: Day4Config,
   facilitator: FacilitatorClient = new HTTPFacilitatorClient({ url: config.facilitatorUrl, timeoutMs: 30_000 }),
   store = new SettlementStore(),
-): (input: unknown, payment?: string) => Promise<Response> {
+): (input: unknown, payment?: string, recoveryOnly?: boolean) => Promise<Response> {
   const server = new x402ResourceServer(facilitator).register(config.network, new ExactSvmScheme());
   let initialized: Promise<void> | undefined;
 
@@ -94,10 +100,10 @@ export function createPaidMarketApi(
     } });
   }
 
-  return async (input, payment) => {
+  return async (input, payment, recoveryOnly = false) => {
     if (!MarketSnapshotInputSchema.safeParse(input).success) return jsonError(400, "Unsupported asset");
     try {
-      if (!payment) return await quote();
+      if (!payment) return recoveryOnly ? jsonError(400, "Recovery requires original payment") : await quote();
       const payload = decodePayment(payment);
       if (!payload) return await quote("Invalid x402 V2 payment payload");
       const memo = payload.accepted.extra?.memo;
@@ -125,8 +131,20 @@ export function createPaidMarketApi(
       const previous = store.get(messageHash);
       if (previous) {
         if (previous.quoteId !== storedQuote.id) return jsonError(409, "Transaction belongs to a different quote");
-        return previousResponse(previous, payloadHash);
+        if (previous.payloadHash !== payloadHash) return jsonError(409, "Payment transaction already claimed");
+        if (recoveryOnly && previous.status === "UNKNOWN") {
+          const outcome = await reconcileOriginalTransaction(config, messageHash, storedQuote.id, previous.receipt?.transaction);
+          if (outcome.status !== "UNKNOWN") {
+            const receipt: SettleResponse = { success: outcome.status === "CONFIRMED", transaction: outcome.transaction,
+              network: config.network, payer: config.buyer, amount: PAYMENT_AMOUNT };
+            if (outcome.status === "CONFIRMED") store.confirm(messageHash, receipt, previous.body ?? snapshotBody);
+            else store.fail(messageHash, { ...receipt, errorReason: "transaction_failed_on_chain" });
+          }
+        }
+        return previousResponse(store.get(messageHash)!, payloadHash);
       }
+      // Recovery must never turn an unsubmitted payload into a first payment.
+      if (recoveryOnly) return jsonError(202, "No settlement claim found; payment remains unresolved");
       if (store.getByQuote(storedQuote.id)) return jsonError(409, "Quote already claimed; do not create another payment");
       if (storedQuote.expiresAt <= Date.now()) return await quote("Payment quote expired");
 
@@ -136,7 +154,7 @@ export function createPaidMarketApi(
 
       // Prepare output first. Commit the durable UNKNOWN claim before calling
       // settlement: timeouts, process exits and write failures never permit re-pay.
-      if (!store.claim(messageHash, storedQuote.id, payloadHash)) {
+      if (!store.claim(messageHash, storedQuote.id, payloadHash, snapshotBody)) {
         const claimed = store.get(messageHash);
         return claimed ? previousResponse(claimed, payloadHash) : jsonError(409, "Quote already claimed");
       }
@@ -172,11 +190,11 @@ function matchesConfig(requirements: PaymentRequirements, config: Day4Config) {
 
 let configuredHandler: ReturnType<typeof createPaidMarketApi> | undefined;
 
-export async function paidMarketSnapshotResponse(input: unknown, payment?: string) {
+export async function paidMarketSnapshotResponse(input: unknown, payment?: string, recoveryOnly = false) {
   if (!MarketSnapshotInputSchema.safeParse(input).success) return jsonError(400, "Unsupported asset");
   try {
     configuredHandler ??= createPaidMarketApi(loadDay4Config());
-    return await configuredHandler(input, payment);
+    return await configuredHandler(input, payment, recoveryOnly);
   } catch {
     return jsonError(503, "Day 4 payment configuration is incomplete");
   }
