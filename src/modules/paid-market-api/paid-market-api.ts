@@ -17,13 +17,14 @@ export const PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
 export const MARKET_RESOURCE_URL = "/api/paid/market-snapshot?asset=SOL";
 export const PAYMENT_AMOUNT = "10000";
 
-const snapshotBody = JSON.stringify(MarketSnapshotOutputSchema.parse({
+export const demoSnapshot = MarketSnapshotOutputSchema.parse({
   asset: "SOL", as_of: "2026-09-05T08:00:00.000Z", spot_price_usd: 140,
   change_24h_pct: 2.4, volume_24h_usd: 3_000_000_000, market_cap_usd: 75_000_000_000,
   volatility_7d_pct: 5.8, rsi_14d: 57, support_levels_usd: [132, 136],
   resistance_levels_usd: [145, 151], source_label: "Demo snapshot fixture",
   is_demo_snapshot: true,
-}));
+});
+const snapshotBody = JSON.stringify(demoSnapshot);
 
 function encode(value: unknown) {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");

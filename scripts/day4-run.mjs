@@ -17,10 +17,10 @@ if (process.platform === 'darwin' && !env.HTTPS_PROXY && !env.https_proxy) {
 env.NODE_USE_ENV_PROXY = '1';
 env.NO_PROXY = [env.NO_PROXY || env.no_proxy, 'localhost', '127.0.0.1', '::1'].filter(Boolean).join(',');
 const [target, ...args] = process.argv.slice(2);
-const entries = { 'day6-acceptance': 'scripts/day6-acceptance.ts', 'model-check': 'scripts/day5-model-check.ts', agent: 'scripts/day5-agent.ts', wallet: 'scripts/day4-wallet-setup.ts', accounts: 'scripts/day4-accounts.ts', preflight: 'scripts/day4-preflight.mjs', pay: 'scripts/day4-pay.ts' };
-if (target !== 'server' && !entries[target]) throw new Error('Unknown Day 4 command');
-const command = target === 'server'
-  ? ['node_modules/next/dist/bin/next', 'dev', '--hostname', '127.0.0.1', ...args]
+const entries = { 'day7-preflight': 'scripts/day7-preflight.ts', 'day6-acceptance': 'scripts/day6-acceptance.ts', 'model-check': 'scripts/day5-model-check.ts', agent: 'scripts/day5-agent.ts', wallet: 'scripts/day4-wallet-setup.ts', accounts: 'scripts/day4-accounts.ts', preflight: 'scripts/day4-preflight.mjs', pay: 'scripts/day4-pay.ts' };
+if (!['server', 'demo'].includes(target) && !entries[target]) throw new Error('Unknown demo command');
+const command = ['server', 'demo'].includes(target)
+  ? ['node_modules/next/dist/bin/next', target === 'demo' ? 'start' : 'dev', '--hostname', '127.0.0.1', ...args]
   : ['--import', 'tsx', '--env-file-if-exists=.env.local', entries[target], ...args];
 const child = spawn(process.execPath, command, { env, stdio: 'inherit' });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));

@@ -1,3 +1,4 @@
+import type { Trace } from '../demo/trace';
 import type { PaymentPayload, SettleResponse } from '@x402/core/types';
 import type { Day4Config } from '../payment/day4-config';
 import { prepareDay4Payment, confirmDay4Transaction, MARKET_RESOURCE } from '../payment/day4-payment';
@@ -20,8 +21,9 @@ function checkBinding(record: PurchaseRecord, config: Day4Config, endpoint: stri
   if (p.binding !== paymentBinding(config, endpoint) || p.quoteFingerprint !== hash(record.quote) || p.amount !== Number(record.quote.amount)
     || p.mint !== config.mint || p.network !== config.network || p.payTo !== config.merchant) throw new Error('Approval binding changed');
 }
-async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, config: Day4Config, endpoint: string, payload: PaymentPayload, recovery: boolean) {
+async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, config: Day4Config, endpoint: string, payload: PaymentPayload, recovery: boolean, trace: Trace) {
   if (hash(payload.accepted) !== record.purchase.quoteFingerprint || typeof payload.payload.transaction !== 'string') throw new Error('Saved payment changed');
+  if (!recovery) trace('SUBMITTED');
   const response = await fetch(endpoint, { headers: {
     'PAYMENT-SIGNATURE': Buffer.from(JSON.stringify(payload)).toString('base64'),
     ...(recovery ? { 'PAYMENT-RECOVERY': '1' } : {}),
@@ -40,21 +42,25 @@ async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, co
     throw new Error('Original transaction failed');
   }
   if (proof.status !== 'CONFIRMED' || response.status !== 200 || receipt.success !== true) throw new Error('Settlement not confirmed');
+  trace('CHAIN_CONFIRMED', transaction);
   const data = await readMarketSnapshot(response);
+  trace('DATA_VALIDATED', `历史演示快照 · ${data.as_of}`);
   ledger.finish(record.approvalId, { transaction, data });
   return { transaction, data };
 }
 /** Internal approval ID is the only caller-supplied payment parameter. */
-export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId: string, config: Day4Config, endpoint: string) {
+export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId: string, config: Day4Config, endpoint: string, trace: Trace = () => {}) {
   const record = ledger.claim(approvalId);
   try {
     checkBinding(record, config, endpoint);
+    trace('SIGNING');
     const signer = await loadDay4Buyer(config.buyer);
     if (Date.now() >= record.purchase.expiresAt) throw new Error('Approval expired');
     const payload = await prepareDay4Payment(config, signer, record.quote);
     if (Date.now() >= record.purchase.expiresAt) throw new Error('Approval expired before submission');
     ledger.savePayload(approvalId, payload);
-    return await receivePayment(ledger, record, config, endpoint, payload, false);
+    trace('SIGNED');
+    return await receivePayment(ledger, record, config, endpoint, payload, false, trace);
   } catch {
     if (!ledger.savedPayload(approvalId)) ledger.failUnsubmitted(approvalId);
     else ledger.unknown(approvalId);
@@ -62,13 +68,14 @@ export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId:
   }
 }
 /** Can run concurrently with the initial request: reads only, never signs or settles. */
-export async function recoverApprovedPayment(ledger: PurchaseLedger, taskId: string, config: Day4Config, endpoint: string) {
+export async function recoverApprovedPayment(ledger: PurchaseLedger, taskId: string, config: Day4Config, endpoint: string, trace: Trace = () => {}) {
   const record = ledger.get(taskId);
   if (!record || !['PAYING', 'PAYMENT_UNKNOWN'].includes(record.status)) return;
+  trace('RECOVERY_STARTED');
   checkBinding(record, config, endpoint);
   const payload = ledger.savedPayload(record.approvalId);
   // An in-flight signer may not have saved yet. No evidence of failure: keep frozen.
   if (!payload) return;
-  try { return await receivePayment(ledger, record, config, endpoint, payload, true); }
+  try { return await receivePayment(ledger, record, config, endpoint, payload, true, trace); }
   catch { /* Inconclusive recovery is neither permission to repay nor to release budget. */ }
 }

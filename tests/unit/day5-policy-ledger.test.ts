@@ -44,11 +44,13 @@ describe('durable approval and budget ledger', () => {
     try {
       const f = fixture();
       const first = ledger.reserve(f.purchase, f.quote, f.resource, now);
+      expect(ledger.summary(now)).toEqual({ paidUSDC: 0, reservedUSDC: 0.01, remainingUSDC: 0.99, unresolved: 0 });
       expect(ledger.reserve({ ...f.purchase, id: randomUUID() }, f.quote, f.resource, now).approvalId).toBe(first.approvalId);
       expect(() => ledger.reserve({ ...f.purchase, taskHash: 'changed' }, f.quote, f.resource, now)).toThrow();
       ledger.claim(first.approvalId, now);
       expect(() => ledger.claim(first.approvalId, now)).toThrow();
       ledger.unknown(first.approvalId);
+      expect(ledger.summary(now).unresolved).toBe(1);
       const next = fixture();
       expect(ledger.reserve(next.purchase, next.quote, next.resource, now).decision.reason).toBe('LEDGER_UNRESOLVED');
     } finally { ledger.close(); }
@@ -88,6 +90,7 @@ it('expired unclaimed approvals release budget but claimed payments stay frozen'
     ledger.releaseExpired(now + 300001);
     expect(ledger.get(first.purchase.taskId)?.status).toBe('EXPIRED');
     expect(ledger.get(claimed.purchase.taskId)?.status).toBe('PAYING');
+    expect(ledger.summary(now + 300001)).toEqual({ paidUSDC: 0, reservedUSDC: 0.1, remainingUSDC: 0.9, unresolved: 1 });
     expect(() => ledger.claim(record.approvalId, now + 300001)).toThrow();
     const next = fixture(); next.purchase.createdAt += 300001; next.purchase.expiresAt += 300001;
     expect(ledger.reserve(next.purchase, next.quote, next.resource, now + 300001).decision.reason).toBe('LEDGER_UNRESOLVED');

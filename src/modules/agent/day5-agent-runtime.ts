@@ -1,3 +1,4 @@
+import type { Trace } from '../demo/trace';
 import { MarketSnapshotOutputSchema, type MarketSnapshotOutput } from '../resources/resource-schema';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -23,52 +24,66 @@ export async function runDay5Task(input: { taskId: string; task: string }, optio
   // Trusted composition dependencies for integration tests, never model/tool inputs.
   preflight?: typeof runDay4Preflight; pay?: typeof executeApprovedPayment;
   answer?: (task: string, data: MarketSnapshotOutput) => Promise<string>;
+  trace?: Trace;
 }) {
   const { taskId, task } = TaskSchema.parse(input);
   const { config, ledger } = options;
+  const trace: Trace = options.trace ?? (() => {});
   if (config.cluster !== 'devnet' || config.network !== DEVNET_NETWORK || config.mint !== DEVNET_USDC_MINT) throw new Error('Day 5 policy only supports Circle USDC on Devnet');
   const endpoint = paymentEndpoint(options.origin);
   const binding = paymentBinding(config, endpoint);
   ledger.releaseExpired();
   async function result(record: PurchaseRecord) {
+    if (['PAYING', 'PAYMENT_UNKNOWN'].includes(record.status)) trace('PAYMENT_UNKNOWN', '保留原任务，只读查询原交易；禁止重新付款');
+    if (record.status === 'FAILED') trace('PAYMENT_FAILED', '原任务保留失败证据，不会自动重新购买');
     let answerStatus = record.answer ? 'COMPLETE' : 'NOT_REQUESTED';
     if (record.status === 'PAID' && record.data && !record.answer && options.answer) {
       try {
+        trace('ANALYSIS_STARTED');
         const answer = await options.answer(task, MarketSnapshotOutputSchema.parse(record.data));
         ledger.saveAnswer(taskId, answer);
         answerStatus = 'COMPLETE';
-      } catch { answerStatus = 'FAILED'; }
+        trace('COMPLETED');
+      } catch { answerStatus = 'FAILED'; trace('ANALYSIS_FAILED'); }
     }
     return { ...publicResult(ledger.get(taskId) ?? record, ledger), answerStatus };
   }
   const existing = ledger.get(taskId);
   if (existing) {
     if (existing.purchase.taskHash !== hash(task) || existing.purchase.binding !== binding) throw new Error('Task ID already belongs to different input or configuration');
+    if (existing.status === 'PAID') trace('CACHE_HIT', '复用已购买的数据，本次新增付款 0 USDC');
     // Recovery only reads the original settlement; it cannot initiate a payment.
-    await recoverApprovedPayment(ledger, taskId, config, endpoint);
+    await recoverApprovedPayment(ledger, taskId, config, endpoint, trace);
     return { ...await result(ledger.get(taskId)!), reused: true };
   }
   // Registry endpoint is a logical HTTPS identity. Only the fixed local endpoint
   // above is routable in this desktop demo; no URL ever comes from the model.
   const resources = createStaticResourceRegistry({ endpoint: 'https://day5.local.invalid/api/paid/market-snapshot', asset_id: config.mint, network: config.network, allowed_pay_to: config.merchant });
+  trace('PLANNING');
   const discovery = await runDay2Discovery({ task, planner: options.planner, plannerMode: options.plannerMode, resources });
-  if (discovery.discovery?.status !== 'found' || !discovery.discovery.resource) return { taskId, status: 'NO_PURCHASE', discovery };
+  if (discovery.discovery?.status !== 'found' || !discovery.discovery.resource) { trace('NO_PURCHASE', '未找到受支持的付费资源，未签名或付款'); return { taskId, status: 'NO_PURCHASE', discovery }; }
+  trace('RESOURCE_FOUND', 'Premium SOL Market Snapshot');
+  trace('PREFLIGHT');
   const preflight = await (options.preflight ?? runDay4Preflight)(config);
+  trace('QUOTE_REQUESTED');
   const response = await fetch(endpoint, { signal: AbortSignal.timeout(20_000), redirect: 'error' });
   const header = response.headers.get('PAYMENT-REQUIRED');
   if (response.status !== 402 || !header) throw new Error('Expected a valid x402 quote');
   const quote = selectDay4Quote(header, config, preflight.facilitator.feePayer);
+  trace('QUOTE_RECEIVED', '0.01 测试 USDC · Solana Devnet');
   const now = Date.now();
   const purchase = PurchaseSchema.parse({ id: randomUUID(), taskId, taskHash: hash(task), resourceId: discovery.discovery.resource.resource_id,
     providerId: discovery.discovery.resource.provider_id, input: { asset: 'SOL' }, amount: Number(quote.amount), currency: 'USDC', decimals: 6,
     mint: quote.asset, network: quote.network, payTo: quote.payTo, scheme: quote.scheme, quoteFingerprint: hash(quote),
     createdAt: now, expiresAt: now + Math.min(quote.maxTimeoutSeconds, 300) * 1000, binding });
   const reserved = ledger.reserve(purchase, quote, resources[0]);
+  trace(reserved.status === 'APPROVED' ? 'POLICY_APPROVED' : 'POLICY_STOPPED', `${reserved.status === 'APPROVED' ? '金额、币种、网络、收款方和预算全部通过' : reserved.decision.reason} · 剩余预算 ${(reserved.decision.remainingAfter / 1_000_000).toFixed(2)} USDC`);
   // Only the invocation that created the unique purchase can execute its approval.
   if (reserved.purchase.id !== purchase.id || reserved.status !== 'APPROVED') return { ...await result(reserved), discovery };
-  try { await (options.pay ?? executeApprovedPayment)(ledger, reserved.approvalId, config, endpoint); }
+  try { await (options.pay ?? executeApprovedPayment)(ledger, reserved.approvalId, config, endpoint, trace); }
   catch {
-    await recoverApprovedPayment(ledger, taskId, config, endpoint);
+    trace('PAYMENT_PAUSED');
+    await recoverApprovedPayment(ledger, taskId, config, endpoint, trace);
     return { ...await result(ledger.get(taskId)!), discovery };
   }
   return { ...await result(ledger.get(taskId)!), discovery };

@@ -2,11 +2,24 @@
 
 这个项目要证明：AI Agent 可以发现完成任务所需的付费能力，并通过受控策略自主购买它，再使用购买的数据完成任务。
 
+## Day 7：本机网页演示
+
+网页已接入真实模型和 Day 5/6 的付款闭环：输入任务 → 实时执行记录 → 分析与原交易凭证。刷新页面可以恢复原任务；重复读取不会重新购买。页面只展示安全字段，签名器仍在服务端。
+
+```bash
+npm run build
+npm run day7:demo
+# 另一个终端，可选：
+npm run day7:preflight
+```
+
+打开 [本机演示](http://127.0.0.1:3000)。需要沿用已配置的模型、Devnet 专用钱包和收款服务。当前为明确标注的历史快照模式。使用步骤、文件链路、实际付款证据及环境检查限制见 [Day 7 演示说明](docs/demo/day-7-runbook.md)。
+
 ## Day 6：完整任务闭环已验收
 
 真实模型 → 资源发现 → 402 报价 → 规则审批 → Devnet 付款 → 数据校验 → 模型回答，已连续通过五个全新任务。同任务重跑不重复付款；付款后数据丢失、未知交易可按原任务触发只读恢复，证据不足时继续冻结。
 
-当前入口是本机 CLI，网页仍只提供 Discovery。配置方式、验收命令、交易链接及恢复边界见 [Day 6 使用与验收记录](docs/demo/day-6-runbook.md)。
+Day 6 完成时入口为本机 CLI；Day 7 已接入网页。配置方式、验收命令、交易链接及恢复边界见 [Day 6 使用与验收记录](docs/demo/day-6-runbook.md)。
 
 ## Day 5 主要功能：按规则自动购买
 
@@ -18,7 +31,7 @@ npm run day4:server
 npm run day5:agent -- my-sol-task-001 "根据价格、成交量和 RSI 分析 SOL 市场情况"
 ```
 
-已在 Devnet 实际支付 0.01 测试 USDC 并验证重跑不重复扣款。本次使用明确标注的本地规划模式；配置 `OPENAI_API_KEY` 后使用模型规划。当前入口是 CLI，网页未接入自动付款；未知交易对账现已在 Day 6 加入。预算只覆盖 Day 5 账本中的购买。
+已在 Devnet 实际支付 0.01 测试 USDC 并验证重跑不重复扣款。Day 5 初次验收使用明确标注的本地规划模式；配置 `OPENAI_API_KEY` 后使用模型规划。未知交易对账在 Day 6 加入，网页在 Day 7 接入。预算只覆盖 Day 5 账本中的购买。
 
 [Day 5 使用方式、逐文件重点和验收记录](docs/demo/day-5-runbook.md)。
 
@@ -70,7 +83,7 @@ npm run day4:server
 
 另一个终端执行 `npm run day4:pay`。首次固定购买 0.01 测试 USDC；再次运行会读取保存的支付，不会自动再付。只有前笔已确认，且明确执行 `npm run day4:pay -- --new-payment`，才购买下一次调用。
 
-未配置钱包时，网页的 Day 2 Discovery 仍可运行；Paid API 返回 503，不会接受假支付。
+未配置钱包时，Day 2 Discovery API 仍可运行；Paid API 返回 503，不会接受假支付。Day 7 网页付款需要完整配置。
 
 完整运行步骤、验收证据、失败处理及逐文件说明见 [Day 4 运行说明](docs/demo/day-4-runbook.md)。
 
@@ -80,12 +93,12 @@ npm run day4:server
 
 ```bash
 npm install
-npm run dev
+npm run day4:server
 ```
 
-然后打开 `http://localhost:3000`。
+然后打开 `http://127.0.0.1:3000`。这是开发模式；正式本机演示使用上面的生产构建命令。
 
-没有配置 `OPENAI_API_KEY` 时，页面会明确显示“本地确定性演示模式”，可以离线验证完整 Discovery 流程。
+没有配置 `OPENAI_API_KEY` 时，Day 7 网页不会启动任务；Day 2 Discovery API 的本地规划模式仍可离线验证资源发现。
 
 要运行真实 OpenAI Capability Planner：
 

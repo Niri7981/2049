@@ -1,5 +1,7 @@
 # D1-14 Execution Trace
 
+> Day 7 实现：`src/modules/demo/trace.ts` 定义 `DemoEvent`，`demo-store.ts` 先提交 SQLite，再把同一对象写入 Console；网页每 1.5 秒读取持久化记录。字段 `eventId`、`taskId`、`at`、`detail` 分别对应下文设计中的 `event_id`、`task_id`、`timestamp`、`safe_details`。实际事件合并非关键子阶段，详见 [Day 7 演示说明](../demo/day-7-runbook.md)。下文保留原设计目录，不表示所有概念事件均单独实现。
+
 ## 目标
 
 让非技术观众能够在 30–60 秒内看懂 Agent 刚才做了什么、为什么花钱、谁批准了支付、链上是否成功，以及购买的数据是否真正被使用。

@@ -1,5 +1,2 @@
-import { Day2Demo } from "./day2-demo";
-
-export default function HomePage() {
-  return <Day2Demo />;
-}
+import { Day7Demo } from './day7-demo';
+export default function HomePage() { return <Day7Demo />; }

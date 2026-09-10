@@ -131,13 +131,15 @@ OpenAI Agent
 8. Facilitator 支持目标 network。
 9. Paid API 首次请求返回 402。
 10. Registry 与 402 amount、mint、network、payee 一致。
-11. Market snapshot 不超过 2 小时。
+11. 实时模式下 Market snapshot 不超过 2 小时。Day 7 使用 Scope Cut 允许的历史 fixture 模式，必须保留真实时间并明确标注“不是实时行情”；不能把它算作实时新鲜度通过。
 12. SQLite 中没有阻塞 Demo 的活动或 UNKNOWN Payment。
 13. Execution Trace redaction 检查通过。
 14. Solana Explorer 可访问。
 15. 完整 dry run 成功一次。
 
 ## Scope Cut 顺序
+
+Day 7 执行记录：采用历史 fixture 和 SQLite 轮询；保留真实模型、策略审批、Devnet 付款和原交易校验。2026-09-10 Explorer 在线检查返回 429，因此严格现场 Preflight 未全绿；保留失败提示，可回看本机证据和视频，待外部服务恢复后重验。[详情](../demo/day-7-runbook.md)。
 
 进度落后时依次砍：
 

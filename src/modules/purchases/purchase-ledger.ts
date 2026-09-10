@@ -113,6 +113,12 @@ export class PurchaseLedger {
       if (row) this.event(String(row.id), 'payment.PAYMENT_UNKNOWN');
     });
   }
+  summary(now = Date.now()) {
+    const paid = Number(this.db.prepare("SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status='PAID' AND confirmed_day=?").get(spendingDay(now))!.n);
+    const reserved = Number(this.db.prepare("SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN')").get()!.n);
+    const unresolved = Number(this.db.prepare("SELECT COUNT(*) AS n FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN')").get()!.n);
+    return { paidUSDC: paid / 1_000_000, reservedUSDC: reserved / 1_000_000, remainingUSDC: Math.max(0, 1 - (paid + reserved) / 1_000_000), unresolved };
+  }
   events(taskId: string) { return this.db.prepare('SELECT e.sequence,e.type,e.at FROM purchase_events e JOIN purchases p ON p.id=e.purchase_id WHERE p.task_id=? ORDER BY e.sequence').all(taskId); }
   close() { this.db.close(); }
 }
