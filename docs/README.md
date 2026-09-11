@@ -1,4 +1,14 @@
-# Day 1 Design Index
+# 架构与运行文档索引
+
+## 当前运行入口
+
+- [网页演示](demo/demo-runbook.md)
+- [完整任务验收](demo/task-acceptance-runbook.md)
+- [自动购买](demo/purchase-runbook.md)
+- [独立支付](demo/payment-runbook.md)
+- [命名对照与数据兼容](architecture/naming.md)
+
+以下设计记录保留原开发阶段编号，便于追溯当时的范围与决定。
 
 ## 阅读顺序
 
@@ -19,7 +29,7 @@
 | 13 | [Paid Market Data](architecture/paid-market-data.md) | 冻结 Paid API 数据合同 |
 | 14 | [Execution Trace](architecture/execution-trace.md) | 冻结可观察事件和敏感信息边界 |
 | 15 | [Risks and Fallbacks](architecture/risks-and-fallbacks.md) | 冻结风险 Gate、Fallback 和 Preflight |
-| 16 | [Day 2 Plan](demo/day-2-plan.md) | 冻结下一天的开发入口和验收标准 |
+| 16 | [资源发现开发计划](demo/discovery-plan.md) | 冻结下一天的开发入口和验收标准 |
 | — | [Architecture Overview](architecture/overview.md) | 汇总整体架构、控制流和数据流 |
 
 ## Day 1 已冻结的关键决定

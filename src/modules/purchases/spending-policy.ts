@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { PaymentRequirements } from '@x402/core/types';
-import { DEVNET_NETWORK, DEVNET_USDC_MINT } from '../payment/day4-config';
+import { DEVNET_NETWORK, DEVNET_USDC_MINT } from '../payment/payment-config';
 import type { ResourceMetadata } from '../resources/resource-schema';
 
 export const PurchaseSchema = z.object({

@@ -139,7 +139,7 @@ OpenAI Agent
 
 ## Scope Cut 顺序
 
-Day 7 执行记录：采用历史 fixture 和 SQLite 轮询；保留真实模型、策略审批、Devnet 付款和原交易校验。2026-09-10 Explorer 在线检查返回 429，因此严格现场 Preflight 未全绿；保留失败提示，可回看本机证据和视频，待外部服务恢复后重验。[详情](../demo/day-7-runbook.md)。
+Day 7 执行记录：采用历史 fixture 和 SQLite 轮询；保留真实模型、策略审批、Devnet 付款和原交易校验。2026-09-10 Explorer 在线检查返回 429，因此严格现场 Preflight 未全绿；保留失败提示，可回看本机证据和视频，待外部服务恢复后重验。[详情](../demo/demo-runbook.md)。
 
 进度落后时依次砍：
 

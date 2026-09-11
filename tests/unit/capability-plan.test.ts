@@ -38,7 +38,7 @@ describe("CapabilityPlanSchema", () => {
   });
 });
 
-describe("local Day 2 capability planner", () => {
+describe("local Discovery capability planner", () => {
   it.each([
     "使用专业市场数据分析一下 SOL 当前的市场情况。",
     "根据价格、成交量和 RSI 分析 SOL。",

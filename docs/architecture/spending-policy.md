@@ -208,4 +208,4 @@ Wallet Signer：
 
 ## Day 5 实现补充
 
-主要规则已在 `src/modules/purchases/` 落地。为避免并发预算透支，实际可用预算还扣除未完成的预占；`PAYING` / `PAYMENT_UNKNOWN` 会阻止后续付款。预算覆盖此运行时账本，不追踪其他程序的链上转账。过期批准和未知付款目前保守保留，自动对账与释放待后续实现。详见 [Day 5 运行说明](../demo/day-5-runbook.md)。
+主要规则已在 `src/modules/purchases/` 落地。为避免并发预算透支，实际可用预算还扣除未完成的预占；`PAYING` / `PAYMENT_UNKNOWN` 会阻止后续付款。预算覆盖此运行时账本，不追踪其他程序的链上转账。过期批准和未知付款目前保守保留，自动对账与释放待后续实现。详见 [Day 5 运行说明](../demo/purchase-runbook.md)。

@@ -67,7 +67,7 @@ export async function POST(request: Request) {
             "--import",
             "tsx",
             "--env-file-if-exists=.env.local",
-            "scripts/day7-worker.ts",
+            "scripts/task-worker.ts",
             input.taskId,
             launch.token,
           ],

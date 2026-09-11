@@ -11,12 +11,12 @@ import {
   createPaidMarketApi, paidMarketSnapshotResponse, MARKET_RESOURCE_URL, PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER,
 } from "../../src/modules/paid-market-api/paid-market-api";
 import { SettlementStore } from "../../src/modules/paid-market-api/settlement-store";
-import type { Day4Config } from "../../src/modules/payment/day4-config";
+import type { PaymentConfig } from "../../src/modules/payment/payment-config";
 
 const buyer = Keypair.generate();
 const merchant = Keypair.generate();
 const feePayer = Keypair.generate();
-const config: Day4Config = {
+const config: PaymentConfig = {
   cluster: "devnet", rpcUrl: "https://api.devnet.solana.com",
   network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
   mint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",

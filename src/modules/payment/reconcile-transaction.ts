@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { VersionedTransaction } from '@solana/web3.js';
 import { getBase58Decoder } from '@solana/kit';
-import type { Day4Config } from './day4-config';
-import { day4Rpc } from './day4-payment';
+import type { PaymentConfig } from './payment-config';
+import { solanaRpc } from './solana-payment';
 
 export type ChainOutcome = { status: 'CONFIRMED' | 'FAILED'; transaction: string } | { status: 'UNKNOWN' };
 const signaturePattern = /^[1-9A-HJ-NP-Za-km-z]{64,100}$/;
@@ -14,10 +14,10 @@ export function transactionMessageHash(wire: string) {
 }
 
 /** Read-only proof of the exact signed message, never proof by a receipt alone. */
-export async function inspectOriginalTransaction(config: Day4Config, signature: string, messageHash: string): Promise<ChainOutcome> {
+export async function inspectOriginalTransaction(config: PaymentConfig, signature: string, messageHash: string): Promise<ChainOutcome> {
   if (!signaturePattern.test(signature)) return { status: 'UNKNOWN' };
   type TransactionResult = { transaction: [string, string]; meta: { err: unknown } | null } | null;
-  const read = (commitment: string) => day4Rpc<TransactionResult>(config, 'getTransaction', [signature, {
+  const read = (commitment: string) => solanaRpc<TransactionResult>(config, 'getTransaction', [signature, {
     encoding: 'base64', commitment, maxSupportedTransactionVersion: 0,
   }]);
   function matches(result: TransactionResult) {
@@ -36,13 +36,13 @@ export async function inspectOriginalTransaction(config: Day4Config, signature: 
 }
 
 /** A missing receipt can be recovered through the unique quote memo. Bounded history only. */
-export async function reconcileOriginalTransaction(config: Day4Config, messageHash: string, memo: string, knownSignature?: string): Promise<ChainOutcome> {
+export async function reconcileOriginalTransaction(config: PaymentConfig, messageHash: string, memo: string, knownSignature?: string): Promise<ChainOutcome> {
   if (knownSignature) {
     const known = await inspectOriginalTransaction(config, knownSignature, messageHash);
     if (known.status !== 'UNKNOWN') return known;
   }
   if (!/^day4:[A-Za-z0-9_-]{22}$/.test(memo)) return { status: 'UNKNOWN' };
-  const recent = await day4Rpc<Array<{ signature: string; memo: string | null }>>(config, 'getSignaturesForAddress', [
+  const recent = await solanaRpc<Array<{ signature: string; memo: string | null }>>(config, 'getSignaturesForAddress', [
     config.buyer, { limit: 100, commitment: 'confirmed' },
   ]);
   // RPC may render the memo as "[27] day4:...". It is only a search hint;

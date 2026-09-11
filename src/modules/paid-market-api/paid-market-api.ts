@@ -6,7 +6,7 @@ import { HTTPFacilitatorClient, x402ResourceServer, type FacilitatorClient } fro
 import { PaymentPayloadV2Schema } from "@x402/core/schemas";
 import type { PaymentPayload, PaymentRequirements, SettleResponse } from "@x402/core/types";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
-import { loadDay4Config, type Day4Config } from "../payment/day4-config";
+import { loadPaymentConfig, type PaymentConfig } from "../payment/payment-config";
 import { MarketSnapshotInputSchema, MarketSnapshotOutputSchema } from "../resources/resource-schema";
 import { SettlementStore, type StoredSettlement } from "./settlement-store";
 
@@ -68,7 +68,7 @@ function decodePayment(header: string): PaymentPayload | undefined {
 }
 
 export function createPaidMarketApi(
-  config: Day4Config,
+  config: PaymentConfig,
   facilitator: FacilitatorClient = new HTTPFacilitatorClient({ url: config.facilitatorUrl, timeoutMs: 30_000 }),
   store = new SettlementStore(),
 ): (input: unknown, payment?: string, recoveryOnly?: boolean) => Promise<Response> {
@@ -184,7 +184,7 @@ export function createPaidMarketApi(
   };
 }
 
-function matchesConfig(requirements: PaymentRequirements, config: Day4Config) {
+function matchesConfig(requirements: PaymentRequirements, config: PaymentConfig) {
   return requirements.scheme === "exact" && requirements.network === config.network &&
     requirements.asset === config.mint && requirements.payTo === config.merchant && requirements.amount === PAYMENT_AMOUNT;
 }
@@ -194,9 +194,9 @@ let configuredHandler: ReturnType<typeof createPaidMarketApi> | undefined;
 export async function paidMarketSnapshotResponse(input: unknown, payment?: string, recoveryOnly = false) {
   if (!MarketSnapshotInputSchema.safeParse(input).success) return jsonError(400, "Unsupported asset");
   try {
-    configuredHandler ??= createPaidMarketApi(loadDay4Config());
+    configuredHandler ??= createPaidMarketApi(loadPaymentConfig());
     return await configuredHandler(input, payment, recoveryOnly);
   } catch {
-    return jsonError(503, "Day 4 payment configuration is incomplete");
+    return jsonError(503, "Payment configuration is incomplete");
   }
 }

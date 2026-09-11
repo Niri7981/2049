@@ -1,6 +1,6 @@
-import { loadDay4Config } from "../payment/day4-config";
-import { runDay4Preflight } from "../payment/day4-preflight";
-import { selectDay4Quote } from "../payment/day4-payment";
+import { loadPaymentConfig } from "../payment/payment-config";
+import { runPaymentPreflight } from "../payment/payment-preflight";
+import { selectPaymentQuote } from "../payment/solana-payment";
 import { paymentEndpoint } from "../purchases/approved-payment";
 import { PurchaseLedger } from "../purchases/purchase-ledger";
 import { openAICapabilityPlanner } from "../agent/openai-capability-planner";
@@ -21,9 +21,9 @@ export async function runDemoPreflight(): Promise<DemoPreflight> {
   const checks: DemoCheck[] = [];
   const tasks = await Promise.allSettled([
     (async () => {
-      const config = loadDay4Config();
+      const config = loadPaymentConfig();
       if (config.cluster !== "devnet") throw new Error("Devnet required");
-      const state = await runDay4Preflight(config);
+      const state = await runPaymentPreflight(config);
       if (BigInt(state.buyer.balanceBaseUnits) < 100_000n)
         throw new Error("Ten demos require 0.10 test USDC");
       const response = await fetch(
@@ -31,7 +31,7 @@ export async function runDemoPreflight(): Promise<DemoPreflight> {
         { signal: AbortSignal.timeout(20000), redirect: "error" },
       );
       if (response.status !== 402) throw new Error("Missing quote");
-      selectDay4Quote(
+      selectPaymentQuote(
         response.headers.get("PAYMENT-REQUIRED") || "",
         config,
         state.facilitator.feePayer,

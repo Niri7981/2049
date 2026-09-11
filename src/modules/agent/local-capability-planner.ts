@@ -26,7 +26,7 @@ export function planCapabilityLocally(task: string): CapabilityPlan {
           capability: null,
           asset: null,
           reason: isDirectPaymentRequest
-            ? "任务包含直接付款指令；Day 2 Agent 不接受付款请求。"
+            ? "任务包含直接付款指令；资源发现模块不接受付款请求。"
             : "当前任务不需要 V0 提供的市场快照能力。",
         },
   );
