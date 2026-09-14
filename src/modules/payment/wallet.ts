@@ -3,6 +3,10 @@ import { createKeyPairSignerFromBytes, getBase58Encoder } from "@solana/kit";
 import { readDemoKeychain } from "./keychain";
 
 export async function loadBuyerSigner(expectedAddress: string, env: Record<string, string | undefined> = process.env) {
+  if (env.APP2049_USE_PRODUCT_WALLET === '1') {
+    const { loadProductWalletSigner } = await import('../app-wallet/product-wallet');
+    return loadProductWalletSigner(expectedAddress);
+  }
   // Only the runtime consumes the secret. Never log input or parser exceptions.
   let bytes: Uint8Array;
   try {

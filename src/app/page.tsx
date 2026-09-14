@@ -1,2 +1,2 @@
-import { TaskConsole } from './task-console';
-export default function HomePage() { return <TaskConsole />; }
+import { AppDashboard } from './app-dashboard';
+export default function HomePage() { return <AppDashboard />; }
