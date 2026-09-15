@@ -6,7 +6,8 @@ import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
 import type { ResourceMetadata, MarketSnapshotOutput } from '../resources/resource-schema';
 import { evaluatePurchase, nextSpendingDayBoundary, spendingDay, POLICY, type Purchase, type PolicyDecision, type SpendingControls } from './spending-policy';
 
-export type PurchaseRecord = { purchase: Purchase; quote: PaymentRequirements; approvalId: string; decision: PolicyDecision; status: string; transaction?: string; data?: MarketSnapshotOutput; answer?: string };
+export type DeliveryStatus = 'NOT_PAID' | 'PENDING' | 'COMPLETE';
+export type PurchaseRecord = { purchase: Purchase; quote: PaymentRequirements; approvalId: string; decision: PolicyDecision; status: string; deliveryStatus: DeliveryStatus; transaction?: string; data?: MarketSnapshotOutput; answer?: string };
 export type PurchaseLedgerOptions = { managed?: boolean; timeZone?: () => string; now?: () => number };
 /** SQLite owns approval, budget reservation and the unique task purchase. No model writes. */
 export class PurchaseLedger {
@@ -14,6 +15,7 @@ export class PurchaseLedger {
   private managed: boolean;
   private timeZone: () => string;
   private now: () => number;
+  private stopping = false;
   constructor(path = '.data/day5-ledger.sqlite', options: PurchaseLedgerOptions = {}) {
     this.managed = options.managed ?? false;
     this.timeZone = options.timeZone ?? (() => 'Asia/Shanghai');
@@ -78,10 +80,37 @@ export class PurchaseLedger {
     this.atomic(() => { this.db.prepare('UPDATE app_settings SET paused=? WHERE id=1').run(paused ? 1 : 0); });
     return this.controls();
   }
+  stopPayments() { this.stopping = true; }
+  /** Called synchronously immediately before the signer and before submission. */
+  assertCanSign(approvalId: string, now = this.now()) {
+    if (this.stopping) throw new Error('Service is stopping');
+    const row = this.db.prepare('SELECT task_id FROM purchases WHERE approval_id=?').get(approvalId);
+    const record = row ? this.get(String(row.task_id)) : undefined;
+    if (record?.status !== 'PAYING' || record.purchase.expiresAt <= now) throw new Error('Approval inactive or expired');
+    if (this.managed) {
+      const controls = this.controls();
+      if (controls.paused) throw new Error('Payments were paused before submission');
+      const committed = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?)`).get(this.activeDay(now))!.total);
+      if (controls.dailyBudget === null || committed > controls.dailyBudget) throw new Error('Daily limit no longer covers reserved payments');
+    }
+  }
+  /** Only the sole service owner calls this before accepting any requests.
+   * A payload is durably saved before submission; its absence proves no submission.
+   * Never run this while another process or signer can still own these claims. */
+  recoverUnsubmittedOnStartup() {
+    this.atomic(() => {
+      const rows = this.db.prepare("UPDATE purchases SET status='FAILED' WHERE status='PAYING' AND payload IS NULL RETURNING id").all();
+      for (const row of rows) this.event(String(row.id), 'payment.FAILED_BEFORE_SUBMISSION');
+    });
+  }
+  pendingRecovery() {
+    return this.db.prepare("SELECT task_id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND data IS NULL)").all().map(row => String(row.task_id));
+  }
   get(taskId: string): PurchaseRecord | undefined {
     const row = this.db.prepare('SELECT * FROM purchases WHERE task_id=?').get(taskId);
     if (!row) return undefined;
     return { purchase: JSON.parse(String(row.purchase)), quote: JSON.parse(String(row.quote)), approvalId: String(row.approval_id), decision: JSON.parse(String(row.decision)), status: String(row.status),
+      deliveryStatus: row.status === 'PAID' ? (row.data ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
       ...(this.db.prepare("SELECT answer FROM purchase_answers WHERE purchase_id=?").get(String(row.id)) as { answer: string } | undefined),
       ...(row.transaction_id ? { transaction: String(row.transaction_id) } : {}), ...(row.data ? { data: JSON.parse(String(row.data)) } : {}) };
   }
@@ -119,6 +148,7 @@ export class PurchaseLedger {
   }
   claim(approvalId: string, now = Date.now()): PurchaseRecord {
     return this.atomic(() => {
+      if (this.stopping) throw new Error('Service is stopping');
       const row = this.db.prepare('SELECT task_id FROM purchases WHERE approval_id=?').get(approvalId);
       if (!row) throw new Error('Unknown approval');
       const record = this.get(String(row.task_id))!;
@@ -138,7 +168,7 @@ export class PurchaseLedger {
   }
   savePayload(approvalId: string, payload: unknown) {
     this.atomic(() => {
-      if (this.managed && this.controls().paused) throw new Error('Payments were paused before submission');
+      this.assertCanSign(approvalId);
       if (this.db.prepare("UPDATE purchases SET payload=? WHERE approval_id=? AND status='PAYING' AND payload IS NULL").run(JSON.stringify(payload), approvalId).changes !== 1) throw new Error('Payment already signed or inactive');
     });
   }
@@ -158,14 +188,22 @@ export class PurchaseLedger {
       if (row) this.event(String(row.id), 'payment.FAILED_ON_CHAIN');
     });
   }
+  private recordConfirmation(approvalId: string, transaction: string, now: number) {
+    const existing = this.db.prepare('SELECT status,transaction_id FROM purchases WHERE approval_id=?').get(approvalId);
+    if (existing?.status === 'PAID' && existing.transaction_id === transaction) return;
+    const row = this.db.prepare("UPDATE purchases SET status='PAID',transaction_id=?,confirmed_day=? WHERE approval_id=? AND status IN ('PAYING','PAYMENT_UNKNOWN') RETURNING id")
+      .get(transaction, this.activeDay(now), approvalId);
+    if (!row) throw new Error('Payment cannot be confirmed from this state');
+    this.event(String(row.id), 'payment.PAID');
+  }
+  confirmPayment(approvalId: string, transaction: string, now = Date.now()) {
+    this.atomic(() => this.recordConfirmation(approvalId, transaction, now));
+  }
   finish(approvalId: string, result: { transaction: string; data: MarketSnapshotOutput }, now = Date.now()) {
     this.atomic(() => {
-      const existing = this.db.prepare('SELECT status,transaction_id FROM purchases WHERE approval_id=?').get(approvalId);
-      if (existing?.status === 'PAID' && existing.transaction_id === result.transaction) return;
-      const row = this.db.prepare("UPDATE purchases SET status='PAID',transaction_id=?,data=?,confirmed_day=? WHERE approval_id=? AND status IN ('PAYING','PAYMENT_UNKNOWN') RETURNING id")
-        .get(result.transaction, JSON.stringify(result.data), this.activeDay(now), approvalId);
-      if (!row) throw new Error('Payment cannot be confirmed from this state');
-      this.event(String(row.id), 'payment.PAID');
+      this.recordConfirmation(approvalId, result.transaction, now);
+      const row = this.db.prepare('UPDATE purchases SET data=? WHERE approval_id=? AND data IS NULL RETURNING id').get(JSON.stringify(result.data), approvalId);
+      if (row) this.event(String(row.id), 'delivery.COMPLETE');
     });
   }
   unknown(approvalId: string, transaction?: string) {
@@ -193,8 +231,8 @@ export class PurchaseLedger {
   }
   list(limit = 50) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid record limit');
-    return this.db.prepare('SELECT task_id,status,amount,transaction_id,json_extract(purchase,\'$.createdAt\') AS created_at FROM purchases ORDER BY created_at DESC LIMIT ?').all(limit)
-      .map(row => ({ purchaseId: String(row.task_id), status: String(row.status), amount: String(row.amount), createdAt: Number(row.created_at), transaction: row.transaction_id ? String(row.transaction_id) : null }));
+    return this.db.prepare('SELECT task_id,status,amount,transaction_id,data IS NOT NULL AS delivered,json_extract(purchase,\'$.createdAt\') AS created_at FROM purchases ORDER BY created_at DESC LIMIT ?').all(limit)
+      .map(row => ({ purchaseId: String(row.task_id), status: String(row.status), deliveryStatus: row.status === 'PAID' ? (row.delivered ? 'COMPLETE' : 'PENDING') : 'NOT_PAID', amount: String(row.amount), createdAt: Number(row.created_at), transaction: row.transaction_id ? String(row.transaction_id) : null }));
   }
   events(taskId: string) { return this.db.prepare('SELECT e.sequence,e.type,e.at FROM purchase_events e JOIN purchases p ON p.id=e.purchase_id WHERE p.task_id=? ORDER BY e.sequence').all(taskId); }
   close() { this.db.close(); }

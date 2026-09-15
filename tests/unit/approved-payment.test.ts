@@ -16,7 +16,7 @@ import { hash } from '../../src/modules/purchases/spending-policy';
 vi.mock('../../src/modules/payment/wallet', () => ({ loadBuyerSigner: vi.fn() }));
 vi.mock('../../src/modules/payment/solana-payment', () => ({ MARKET_RESOURCE: '/api/paid/market-snapshot?asset=SOL', prepareSolanaPayment: vi.fn(), confirmSolanaTransaction: vi.fn() }));
 const endpoint = 'http://127.0.0.1:3000/api/paid/market-snapshot?asset=SOL';
-async function fixture(path = ':memory:') {
+async function fixture(path = ':memory:', managed = false) {
   vi.clearAllMocks();
   const signer = await generateKeyPairSigner();
   vi.mocked(loadBuyerSigner).mockResolvedValue(signer);
@@ -24,7 +24,8 @@ async function fixture(path = ':memory:') {
   const resource = createStaticResourceRegistry({ endpoint: 'https://example.com', asset_id: config.mint, network: config.network, allowed_pay_to: config.merchant })[0];
   const quote = { scheme: 'exact', network: config.network, asset: config.mint, amount: '10000', payTo: config.merchant, maxTimeoutSeconds: 300, extra: {} };
   vi.mocked(prepareSolanaPayment).mockResolvedValue({ x402Version: 2, accepted: quote, payload: { transaction: 'test-wire' } });
-  const ledger = new PurchaseLedger(path); const now = Date.now();
+  const ledger = new PurchaseLedger(path, { managed }); const now = Date.now();
+  if (managed) ledger.setDailyLimit('100000');
   const record = ledger.reserve({ id: randomUUID(), taskId: 'task', taskHash: hash('task'), resourceId: resource.resource_id, providerId: resource.provider_id, input: { asset: 'SOL' }, amount: 10000, currency: 'USDC', decimals: 6, mint: config.mint, network: config.network, payTo: config.merchant, scheme: 'exact', quoteFingerprint: hash(quote), createdAt: now, expiresAt: now + 300000, binding: paymentBinding(config, endpoint) }, quote, resource);
   return { ledger, record, config };
 }
@@ -80,8 +81,89 @@ it.each([JSON.stringify({ ...snapshot, rsi_14d: 999 }), JSON.stringify(snapshot)
   try {
     await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, endpoint)).rejects.toThrow();
     await recoverApprovedPayment(f.ledger, 'task', f.config, endpoint);
-    expect(f.ledger.get('task')?.status).toBe('PAYMENT_UNKNOWN'); expect(f.ledger.get('task')?.data).toBeUndefined();
+    expect(f.ledger.get('task')?.status).toBe('PAID'); expect(f.ledger.get('task')?.deliveryStatus).toBe('PENDING');
+    expect(f.ledger.get('task')?.data).toBeUndefined();
+    expect(f.ledger.summary()).toMatchObject({ paidUSDC: 0.01, reservedUSDC: 0, unresolved: 0 });
   } finally { f.ledger.close(); }
+});
+
+it('pause while loading the wallet prevents preparation and submission', async () => {
+  const f = await fixture(':memory:', true);
+  const signer = await generateKeyPairSigner();
+  let release!: () => void;
+  vi.mocked(loadBuyerSigner).mockImplementationOnce(async () => {
+    await new Promise<void>(resolve => { release = resolve; });
+    return signer;
+  });
+  const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+  try {
+    const payment = executeApprovedPayment(f.ledger, f.record.approvalId, f.config, endpoint);
+    f.ledger.setPaused(true); release();
+    await expect(payment).rejects.toThrow();
+    expect(prepareSolanaPayment).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled();
+    expect(f.ledger.get('task')?.status).toBe('FAILED');
+  } finally { f.ledger.close(); }
+});
+
+it('pause during preparation is checked at the actual signing boundary', async () => {
+  const f = await fixture(':memory:', true);
+  vi.mocked(prepareSolanaPayment).mockImplementationOnce(async (_config, _signer, _quote, beforeSign) => {
+    f.ledger.setPaused(true);
+    beforeSign?.();
+    throw new Error('signing guard did not reject');
+  });
+  const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+  try {
+    await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, endpoint)).rejects.toThrow();
+    expect(vi.mocked(prepareSolanaPayment).mock.calls[0]?.[3]).toBeTypeOf('function');
+    expect(fetcher).not.toHaveBeenCalled(); expect(f.ledger.savedPayload(f.record.approvalId)).toBeUndefined();
+  } finally { f.ledger.close(); }
+});
+
+it('startup releases a crashed claim without a persisted payload', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'app2049-crash-')); const path = join(dir, 'ledger.sqlite');
+  const f = await fixture(path); f.ledger.claim(f.record.approvalId); f.ledger.close();
+  const reopened = new PurchaseLedger(path);
+  try {
+    reopened.recoverUnsubmittedOnStartup();
+    expect(reopened.get('task')?.status).toBe('FAILED');
+    expect(reopened.summary().unresolved).toBe(0);
+  } finally { reopened.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('startup preserves a signed unknown payment and its reservation', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'app2049-unknown-')); const path = join(dir, 'ledger.sqlite');
+  const f = await fixture(path);
+  f.ledger.claim(f.record.approvalId);
+  f.ledger.savePayload(f.record.approvalId, { x402Version: 2, accepted: f.record.quote, payload: { transaction: 'test-wire' } });
+  f.ledger.unknown(f.record.approvalId); f.ledger.close();
+  const reopened = new PurchaseLedger(path);
+  try {
+    reopened.recoverUnsubmittedOnStartup();
+    expect(reopened.get('task')?.status).toBe('PAYMENT_UNKNOWN');
+    expect(reopened.summary()).toMatchObject({ reservedUSDC: 0.01, unresolved: 1 });
+    expect(reopened.savedPayload(f.record.approvalId)).toBeDefined();
+  } finally { reopened.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('delivery recovery after restart preserves the payment day and uses no new signature', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'app2049-delivery-')); const path = join(dir, 'ledger.sqlite');
+  const f = await fixture(path);
+  f.ledger.claim(f.record.approvalId);
+  f.ledger.savePayload(f.record.approvalId, { x402Version: 2, accepted: f.record.quote, payload: { transaction: 'test-wire' } });
+  const yesterday = Date.now() - 86400000;
+  f.ledger.confirmPayment(f.record.approvalId, '1'.repeat(88), yesterday); f.ledger.close();
+  const reopened = new PurchaseLedger(path);
+  vi.stubGlobal('fetch', vi.fn(async () => paidResponse(f.config)));
+  vi.mocked(inspectOriginalTransaction).mockResolvedValue({ status: 'CONFIRMED', transaction: '1'.repeat(88) });
+  try {
+    expect(reopened.get('task')?.deliveryStatus).toBe('PENDING');
+    await recoverApprovedPayment(reopened, 'task', f.config, endpoint);
+    expect(reopened.get('task')?.deliveryStatus).toBe('COMPLETE');
+    expect(reopened.summary(yesterday).paidUSDC).toBe(0.01);
+    expect(reopened.summary().paidUSDC).toBe(0);
+    expect(loadBuyerSigner).not.toHaveBeenCalled(); expect(prepareSolanaPayment).not.toHaveBeenCalled();
+  } finally { reopened.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 it('a receipt for an unrelated confirmed transaction never completes a purchase', async () => {
   const f = await fixture(); vi.stubGlobal('fetch', vi.fn(async () => paidResponse(f.config)));

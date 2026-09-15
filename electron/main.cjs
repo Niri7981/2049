@@ -13,6 +13,8 @@ let window;
 let tray;
 let service;
 let quitting = false;
+let quitRequested = false;
+let serviceReady = false;
 
 app.setName('2049');
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('APP2049_PORT must be a valid unprivileged port');
@@ -86,6 +88,7 @@ app.on('second-instance', showWindow);
 app.whenReady().then(async () => {
   startService();
   await waitForService();
+  serviceReady = true;
   window = new BrowserWindow({ width: 780, height: 720, minWidth: 640, minHeight: 560, title: '2049', webPreferences: {
     preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true,
   } });
@@ -107,10 +110,22 @@ app.whenReady().then(async () => {
 app.on('before-quit', event => {
   if (quitting) return;
   event.preventDefault();
-  quitting = true;
-  void serviceRequest('/api/app/lifecycle', 'POST', { action: 'prepareQuit' }).catch(() => undefined).finally(() => {
-    if (service && !service.killed) service.kill('SIGTERM');
+  if (quitRequested) return;
+  quitRequested = true;
+  void (async () => {
+    // A timeout is not permission to kill a signer. Retry the idempotent drain.
+    while (serviceReady && service && service.exitCode === null && service.signalCode === null) {
+      try {
+        const response = await serviceRequest('/api/app/lifecycle', 'POST', { action: 'prepareQuit' });
+        if (response.ok && (await response.json()).ready === true) break;
+      } catch { /* Continue waiting for durable payment state or service exit. */ }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    quitting = true;
+    if (service && service.exitCode === null && service.signalCode === null) {
+      await new Promise(resolve => { service.once('exit', resolve); service.kill('SIGTERM'); });
+    }
     app.quit();
-  });
+  })();
 });
 app.on('window-all-closed', () => {});

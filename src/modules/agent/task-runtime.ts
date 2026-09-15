@@ -15,7 +15,7 @@ import { executeApprovedPayment, recoverApprovedPayment, paymentBinding, payment
 
 const TaskSchema = z.object({ taskId: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/), task: z.string().trim().min(1).max(1000) }).strict();
 function publicResult(record: PurchaseRecord, ledger: PurchaseLedger) {
-  return { taskId: record.purchase.taskId, status: record.status, policy: record.decision, amountUSDC: record.purchase.amount / 1_000_000,
+  return { taskId: record.purchase.taskId, status: record.status, deliveryStatus: record.deliveryStatus, policy: record.decision, amountUSDC: record.purchase.amount / 1_000_000,
     transaction: record.transaction, data: record.data, answer: record.answer, events: ledger.events(record.purchase.taskId),
     summary: record.data ? `示例快照（${record.data.as_of}）：SOL 价格 $${record.data.spot_price_usd}，24 小时变化 ${record.data.change_24h_pct}%，RSI ${record.data.rsi_14d}。数据来自 Demo fixture，不是实时行情。` : undefined };
 }
@@ -51,7 +51,7 @@ export async function runTask(input: { taskId: string; task: string }, options: 
   const existing = ledger.get(taskId);
   if (existing) {
     if (existing.purchase.taskHash !== hash(task) || existing.purchase.binding !== binding) throw new Error('Task ID already belongs to different input or configuration');
-    if (existing.status === 'PAID') trace('CACHE_HIT', '复用已购买的数据，本次新增付款 0 USDC');
+    if (existing.deliveryStatus === 'COMPLETE') trace('CACHE_HIT', '复用已购买的数据，本次新增付款 0 USDC');
     // Recovery only reads the original settlement; it cannot initiate a payment.
     await recoverApprovedPayment(ledger, taskId, config, endpoint, trace);
     return { ...await result(ledger.get(taskId)!), reused: true };

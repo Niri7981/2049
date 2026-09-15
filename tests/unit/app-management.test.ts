@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PaymentRequirements } from '@x402/core/types';
 import { AppRuntime } from '../../src/modules/app/app-runtime';
 import { requireManagementRequest } from '../../src/modules/app/management-auth';
@@ -10,10 +10,17 @@ import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT } from '../../src/modules/payment/payment-config';
 import { createStaticResourceRegistry } from '../../src/modules/resources/static-resource-registry';
 import { hash, PurchaseSchema } from '../../src/modules/purchases/spending-policy';
+import { paymentBinding, paymentEndpoint, recoverApprovedPayment } from '../../src/modules/purchases/approved-payment';
+import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
+
+vi.mock('../../src/modules/purchases/approved-payment', async importOriginal => {
+  const original = await importOriginal<typeof import('../../src/modules/purchases/approved-payment')>();
+  return { ...original, recoverApprovedPayment: vi.fn() };
+});
 
 const address = 'BSEDrH4umjwCKUL5TqYm69ffsSjwWcV2BXQkczVp1F52';
 const dirs: string[] = [];
-afterEach(() => { delete process.env.APP2049_MANAGEMENT_TOKEN; delete process.env.APP2049_ENABLE_DEVNET_PURCHASES; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); delete process.env.APP2049_MANAGEMENT_TOKEN; delete process.env.APP2049_ENABLE_DEVNET_PURCHASES; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 function runtime(timeZone = 'America/Los_Angeles', now?: () => number) {
   const dir = mkdtempSync(join(tmpdir(), 'app2049-')); dirs.push(dir);
   return new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }), timeZone: () => timeZone, now });
@@ -31,6 +38,62 @@ describe('authenticated local management boundary', () => {
 });
 
 describe('managed budget and Devnet test records', () => {
+  it('quit waits for a request loading its wallet and prevents it from making a purchase', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'app2049-drain-')); dirs.push(dir);
+    let release!: () => void;
+    let entered!: () => void;
+    const loading = new Promise<void>(resolve => { entered = resolve; });
+    const app = new AppRuntime(dir, { initializeWallet: async () => {
+      entered(); await new Promise<void>(resolve => { release = resolve; });
+      return { address, reused: true };
+    } });
+    try {
+      app.setDailyLimit('100000');
+      const payment = app.createTestPurchase('quit-race', 'http://127.0.0.1:3049');
+      const rejected = expect(payment).rejects.toThrow('正在退出');
+      await loading;
+      let ready = false;
+      const quit = app.prepareQuit().then(() => { ready = true; });
+      await Promise.resolve(); expect(ready).toBe(false);
+      await expect(app.createTestPurchase('after-quit', 'http://127.0.0.1:3049')).rejects.toThrow('正在退出');
+      release(); await rejected; await quit;
+      expect(ready).toBe(true); expect(app.ledger.list()).toHaveLength(0);
+    } finally { app.ledger.close(); }
+  });
+
+  it('startup recovers original pending purchases once even when paused and live purchases are disabled', async () => {
+    vi.stubEnv('DEMO_MERCHANT_PUBLIC_KEY', '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs');
+    vi.stubEnv('SOLANA_CLUSTER', 'devnet');
+    const app = runtime();
+    const origin = 'http://127.0.0.1:3049';
+    const config = loadPaymentConfig({ DEMO_BUYER_PUBLIC_KEY: address, DEMO_MERCHANT_PUBLIC_KEY: '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs' });
+    const resource = createStaticResourceRegistry({ endpoint: 'https://example.com', asset_id: config.mint, network: config.network, allowed_pay_to: config.merchant })[0];
+    const quote = { scheme: 'exact', network: config.network, asset: config.mint, amount: '10000', payTo: config.merchant, maxTimeoutSeconds: 300, extra: {} };
+    const now = Date.now();
+    app.setDailyLimit('100000');
+    const record = app.ledger.reserve(PurchaseSchema.parse({ id: randomUUID(), taskId: 'startup-original', taskHash: hash('task'), resourceId: resource.resource_id, providerId: resource.provider_id, input: { asset: 'SOL' }, amount: 10000, currency: 'USDC', decimals: 6, mint: config.mint, network: config.network, payTo: config.merchant, scheme: 'exact', quoteFingerprint: hash(quote), createdAt: now, expiresAt: now + 300000, binding: paymentBinding(config, paymentEndpoint(origin)) }), quote, resource);
+    app.ledger.claim(record.approvalId);
+    app.ledger.savePayload(record.approvalId, { x402Version: 2, accepted: quote, payload: { transaction: 'test-wire' } });
+    app.setPaused(true);
+    let release!: () => void;
+    let entered!: () => void;
+    const recovering = new Promise<void>(resolve => { entered = resolve; });
+    vi.mocked(recoverApprovedPayment).mockImplementationOnce(async () => {
+      entered(); await new Promise<void>(resolve => { release = resolve; });
+      return undefined;
+    });
+    try {
+      const startup = app.start(origin); const repeated = app.start(origin);
+      await recovering;
+      let ready = false; const quit = app.prepareQuit().then(() => { ready = true; });
+      await Promise.resolve(); expect(ready).toBe(false);
+      release(); await Promise.all([startup, repeated, quit]);
+      expect(recoverApprovedPayment).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(recoverApprovedPayment).mock.calls[0]?.[1]).toBe('startup-original');
+      expect(app.ledger.get('startup-original')?.status).toBe('PAYING');
+      expect(app.ledger.controls().paused).toBe(true);
+    } finally { app.ledger.close(); }
+  });
   it('reports zero for an unfunded wallet and fails closed on malformed RPC data', async () => {
     const app = runtime();
     try {

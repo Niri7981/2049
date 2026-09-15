@@ -41,8 +41,11 @@ async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, co
     ledger.failConfirmed(record.approvalId, transaction);
     throw new Error('Original transaction failed');
   }
-  if (proof.status !== 'CONFIRMED' || response.status !== 200 || receipt.success !== true) throw new Error('Settlement not confirmed');
+  if (proof.status !== 'CONFIRMED') throw new Error('Settlement not confirmed');
+  // Persist chain evidence before reading delivery: bad/missing data cannot undo payment.
+  ledger.confirmPayment(record.approvalId, transaction);
   trace('CHAIN_CONFIRMED', transaction);
+  if (response.status !== 200 || receipt.success !== true) throw new Error('Delivery unavailable');
   const data = await readMarketSnapshot(response);
   trace('DATA_VALIDATED', `历史演示快照 · ${data.as_of}`);
   ledger.finish(record.approvalId, { transaction, data });
@@ -55,8 +58,8 @@ export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId:
     checkBinding(record, config, endpoint);
     trace('SIGNING');
     const signer = await loadBuyerSigner(config.buyer);
-    if (Date.now() >= record.purchase.expiresAt) throw new Error('Approval expired');
-    const payload = await prepareSolanaPayment(config, signer, record.quote);
+    ledger.assertCanSign(approvalId);
+    const payload = await prepareSolanaPayment(config, signer, record.quote, () => ledger.assertCanSign(approvalId));
     if (Date.now() >= record.purchase.expiresAt) throw new Error('Approval expired before submission');
     ledger.savePayload(approvalId, payload);
     trace('SIGNED');
@@ -70,7 +73,7 @@ export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId:
 /** Can run concurrently with the initial request: reads only, never signs or settles. */
 export async function recoverApprovedPayment(ledger: PurchaseLedger, taskId: string, config: PaymentConfig, endpoint: string, trace: Trace = () => {}) {
   const record = ledger.get(taskId);
-  if (!record || !['PAYING', 'PAYMENT_UNKNOWN'].includes(record.status)) return;
+  if (!record || (!['PAYING', 'PAYMENT_UNKNOWN'].includes(record.status) && record.deliveryStatus !== 'PENDING')) return;
   trace('RECOVERY_STARTED');
   checkBinding(record, config, endpoint);
   const payload = ledger.savedPayload(record.approvalId);

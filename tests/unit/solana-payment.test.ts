@@ -101,6 +101,15 @@ describe("Payment simulation before signing", () => {
     return { signer, signTransactions };
   }
 
+  it("a pause or shutdown guard after simulation prevents the actual signature", async () => {
+    mockRpc({ value: { err: null } });
+    const { signer, signTransactions } = setupSigning();
+    await expect(prepareSolanaPayment(config, signer, requirement(), () => {
+      throw new Error('Payments paused');
+    })).rejects.toThrow('Payments paused');
+    expect(signTransactions).not.toHaveBeenCalled();
+  });
+
   it("does not call the underlying signer after simulation failure", async () => {
     const fetchMock = mockRpc({ value: { err: { InstructionError: [1, "InsufficientFunds"] } } });
     const { signer, signTransactions } = setupSigning();
