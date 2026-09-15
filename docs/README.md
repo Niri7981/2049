@@ -1,5 +1,13 @@
 # 架构与运行文档索引
 
+## macOS App 第一版计划（2026-09-14）
+
+- [当前实施计划与验收标准](../plan.md)
+- [编码规范与资金边界](../AGENTS.md)
+- [macOS App 壳与本地服务生命周期](architecture/macos-app-shell.md)
+
+新 App 采用 macOS 管理窗口、本地后端和后续 Codex MCP 接口。M0–M2 和 M3 无付款路径已经实现；Codex 接入、真实 Devnet 最终付款验收和主网尚未完成。下面保留的是已有测试网 Demo 的设计与运行记录；其中“不使用 MCP”等旧范围限定不覆盖新的实施计划。
+
 ## 当前运行入口
 
 - [网页演示](demo/demo-runbook.md)

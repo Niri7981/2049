@@ -1,0 +1,13 @@
+---
+description: Automatically commit and push completed code changes
+alwaysApply: true
+---
+
+# Auto-push completed changes
+
+- After completing a user-requested code change and its relevant validation, commit the task-related changes and push them directly to `origin/main`.
+- Do not create a pull request unless the user explicitly asks for one.
+- Include only files related to the completed request. Preserve unrelated user changes and never commit secrets, local data, generated credentials, or payment artifacts.
+- Check `origin/main` before pushing and integrate remote updates safely. Never force-push unless the user explicitly requests it.
+- If validation, commit, authentication, reconciliation, or push fails, report the exact blocker instead of claiming the code was uploaded.
+- A code push does not authorize deployment, publication, signing, or payment.

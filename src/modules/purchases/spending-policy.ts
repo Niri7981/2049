@@ -15,6 +15,7 @@ export const PurchaseSchema = z.object({
 export type Purchase = z.infer<typeof PurchaseSchema>;
 export type PolicyDecision = { decision: 'APPROVED' | 'REJECTED' | 'NEEDS_CONFIRMATION'; reason: string; committedBefore: number; remainingAfter: number };
 export const POLICY = Object.freeze({ singleLimit: 100_000, dailyBudget: 1_000_000 });
+export type SpendingControls = { dailyBudget: number | null; paused: boolean; singleLimit: number };
 export function hash(value: unknown): string {
   function normalize(input: unknown): unknown {
     if (Array.isArray(input)) return input.map(normalize);
@@ -23,12 +24,32 @@ export function hash(value: unknown): string {
   }
   return createHash('sha256').update(JSON.stringify(normalize(value))).digest('hex');
 }
-export function spendingDay(now: number): string {
-  return new Date(now + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+export function spendingDay(now: number, timeZone = 'Asia/Shanghai'): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(now));
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value;
+  const day = `${value('year')}-${value('month')}-${value('day')}`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error('Could not determine the local spending day');
+  return day;
+}
+export function nextSpendingDayBoundary(now: number, timeZone: string): number {
+  const current = spendingDay(now, timeZone);
+  let high = now + 60 * 60 * 1000;
+  while (spendingDay(high, timeZone) === current && high - now <= 36 * 60 * 60 * 1000) high += 60 * 60 * 1000;
+  if (spendingDay(high, timeZone) === current) throw new Error('Could not determine the next local spending day');
+  let low = now;
+  while (high - low > 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (spendingDay(middle, timeZone) === current) low = middle;
+    else high = middle;
+  }
+  return high;
 }
 export function evaluatePurchase(raw: unknown, resource: ResourceMetadata, quote: PaymentRequirements,
-  ledger: { committed: number; hasUnknown: boolean }, now = Date.now()): PolicyDecision {
-  const reject = (reason: string): PolicyDecision => ({ decision: 'REJECTED', reason, committedBefore: ledger.committed, remainingAfter: Math.max(0, POLICY.dailyBudget - ledger.committed) });
+  ledger: { committed: number; hasUnknown: boolean }, now = Date.now(), controls: SpendingControls = { dailyBudget: POLICY.dailyBudget, paused: false, singleLimit: POLICY.singleLimit }): PolicyDecision {
+  const remaining = () => controls.dailyBudget === null ? 0 : Math.max(0, controls.dailyBudget - ledger.committed);
+  const reject = (reason: string): PolicyDecision => ({ decision: 'REJECTED', reason, committedBefore: ledger.committed, remainingAfter: remaining() });
   const parsed = PurchaseSchema.safeParse(raw);
   if (!parsed.success) return reject('INVALID_PURCHASE');
   const p = parsed.data;
@@ -42,7 +63,10 @@ export function evaluatePurchase(raw: unknown, resource: ResourceMetadata, quote
   if (!Number.isFinite(quote.maxTimeoutSeconds) || quote.maxTimeoutSeconds <= 0 || p.createdAt > now || p.expiresAt <= now || p.expiresAt > p.createdAt + Math.min(quote.maxTimeoutSeconds, 300) * 1000) return reject('QUOTE_EXPIRED_OR_INVALID');
   if (p.amount !== resource.expected_price_minor || quote.amount !== String(p.amount)) return reject('PRICE_CHANGED');
   if (!Number.isSafeInteger(ledger.committed) || ledger.committed < 0 || ledger.hasUnknown) return reject('LEDGER_UNRESOLVED');
-  if (ledger.committed + p.amount > POLICY.dailyBudget) return reject('DAILY_BUDGET_EXCEEDED');
-  const decision = p.amount > POLICY.singleLimit ? 'NEEDS_CONFIRMATION' : 'APPROVED';
-  return { decision, reason: decision === 'APPROVED' ? 'ALLOWLIST_AND_BUDGET_PASSED' : 'SINGLE_LIMIT_EXCEEDED', committedBefore: ledger.committed, remainingAfter: POLICY.dailyBudget - ledger.committed - p.amount };
+  if (controls.paused) return reject('PAYMENTS_PAUSED');
+  if (controls.dailyBudget === null) return reject('DAILY_LIMIT_NOT_SET');
+  if (!Number.isSafeInteger(controls.dailyBudget) || controls.dailyBudget < 0) return reject('INVALID_DAILY_LIMIT');
+  if (ledger.committed + p.amount > controls.dailyBudget) return reject(controls.dailyBudget === 0 ? 'DAILY_LIMIT_ZERO' : 'DAILY_BUDGET_EXCEEDED');
+  const decision = p.amount > controls.singleLimit ? 'NEEDS_CONFIRMATION' : 'APPROVED';
+  return { decision, reason: decision === 'APPROVED' ? 'ALLOWLIST_AND_BUDGET_PASSED' : 'SINGLE_LIMIT_EXCEEDED', committedBefore: ledger.committed, remainingAfter: controls.dailyBudget - ledger.committed - p.amount };
 }

@@ -4,8 +4,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Autonomous Agent Payments Demo",
-  description: "An AI agent purchases the capability it needs to finish a task.",
+  title: "2049",
+  description: "Local API purchase service for macOS.",
 };
 
 type RootLayoutProps = Readonly<{
