@@ -8,6 +8,7 @@ const sdk = vi.hoisted(() => ({ constructor: vi.fn(), createPaymentPayload: vi.f
 
 vi.mock("@x402/svm/exact/client", () => ({
   ExactSvmScheme: class {
+    readonly scheme = "exact";
     constructor(...args: unknown[]) { sdk.constructor(...args); }
     createPaymentPayload(...args: unknown[]) { return sdk.createPaymentPayload(...args); }
   },

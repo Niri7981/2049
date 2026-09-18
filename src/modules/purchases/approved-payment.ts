@@ -1,5 +1,5 @@
 import type { Trace } from '../demo/trace';
-import type { PaymentPayload, SettleResponse } from '@x402/core/types';
+import type { PaymentPayload } from '@x402/core/types';
 import type { PaymentConfig } from '../payment/payment-config';
 import { prepareSolanaPayment, confirmSolanaTransaction, MARKET_RESOURCE } from '../payment/solana-payment';
 import { inspectOriginalTransaction, transactionMessageHash } from '../payment/reconcile-transaction';
@@ -7,6 +7,7 @@ import { loadBuyerSigner } from '../payment/wallet';
 import { readMarketSnapshot } from '../resources/read-market-snapshot';
 import { PurchaseLedger, type PurchaseRecord } from './purchase-ledger';
 import { hash } from './spending-policy';
+import { paymentSignatureHeaders, readSettlementResponse } from '../payment/x402-client';
 
 export function paymentEndpoint(origin: string) {
   const url = new URL(origin);
@@ -25,12 +26,10 @@ async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, co
   if (hash(payload.accepted) !== record.purchase.quoteFingerprint || typeof payload.payload.transaction !== 'string') throw new Error('Saved payment changed');
   if (!recovery) trace('SUBMITTED');
   const response = await fetch(endpoint, { headers: {
-    'PAYMENT-SIGNATURE': Buffer.from(JSON.stringify(payload)).toString('base64'),
+    ...paymentSignatureHeaders(payload),
     ...(recovery ? { 'PAYMENT-RECOVERY': '1' } : {}),
   }, signal: AbortSignal.timeout(55_000), redirect: 'error' });
-  const header = response.headers.get('PAYMENT-RESPONSE');
-  if (!header || header.length > 16_384) throw new Error('Missing settlement receipt');
-  const receipt = JSON.parse(Buffer.from(header, 'base64').toString('utf8')) as SettleResponse;
+  const receipt = readSettlementResponse(response);
   const transaction = receipt.transaction;
   if (receipt.network !== config.network || receipt.payer !== config.buyer || typeof transaction !== 'string'
     || !/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(transaction)

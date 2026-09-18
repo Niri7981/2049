@@ -5,6 +5,7 @@ import { VersionedTransaction } from "@solana/web3.js";
 import { HTTPFacilitatorClient, x402ResourceServer, type FacilitatorClient } from "@x402/core/server";
 import { PaymentPayloadV2Schema } from "@x402/core/schemas";
 import type { PaymentPayload, PaymentRequirements, SettleResponse } from "@x402/core/types";
+import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymentResponseHeader } from "@x402/core/http";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { loadPaymentConfig, type PaymentConfig } from "../payment/payment-config";
 import { MarketSnapshotInputSchema, MarketSnapshotOutputSchema } from "../resources/resource-schema";
@@ -26,10 +27,6 @@ export const demoSnapshot = MarketSnapshotOutputSchema.parse({
 });
 const snapshotBody = JSON.stringify(demoSnapshot);
 
-function encode(value: unknown) {
-  return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
-}
-
 function jsonError(status: number, error: string, extra?: Record<string, unknown>) {
   return Response.json({ error, ...extra }, { status, headers: { "cache-control": "no-store" } });
 }
@@ -37,7 +34,7 @@ function jsonError(status: number, error: string, extra?: Record<string, unknown
 function paidResponse(body: string, receipt: SettleResponse) {
   return new Response(body, { status: 200, headers: {
     "content-type": "application/json", "cache-control": "private, no-store",
-    [PAYMENT_RESPONSE_HEADER]: encode(receipt),
+    [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(receipt),
   } });
 }
 
@@ -50,18 +47,18 @@ function previousResponse(previous: StoredSettlement, payloadHash: string): Resp
   }
   if (previous.status === "FAILED") {
     const response = jsonError(402, "Settlement failed; this payment cannot be resubmitted");
-    if (previous.receipt?.transaction) response.headers.set(PAYMENT_RESPONSE_HEADER, encode(previous.receipt));
+    if (previous.receipt?.transaction) response.headers.set(PAYMENT_RESPONSE_HEADER, encodePaymentResponseHeader(previous.receipt));
     return response;
   }
   const response = jsonError(202, "Settlement outcome unknown; do not create another payment", { paymentId: previous.messageHash });
-  if (previous.receipt) response.headers.set(PAYMENT_RESPONSE_HEADER, encode(previous.receipt));
+  if (previous.receipt) response.headers.set(PAYMENT_RESPONSE_HEADER, encodePaymentResponseHeader(previous.receipt));
   return response;
 }
 
 function decodePayment(header: string): PaymentPayload | undefined {
   try {
-    if (header.length > 20_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(header)) return;
-    const parsed = PaymentPayloadV2Schema.safeParse(JSON.parse(Buffer.from(header, "base64").toString("utf8")));
+    if (header.length > 20_000) return;
+    const parsed = PaymentPayloadV2Schema.safeParse(decodePaymentSignatureHeader(header));
     if (!parsed.success) return;
     return parsed.data as PaymentPayload;
   } catch { return; }
@@ -97,7 +94,7 @@ export function createPaidMarketApi(
       url: MARKET_RESOURCE_URL, description: "Premium SOL market snapshot (demo fixture)", mimeType: "application/json",
     }, error);
     return new Response(null, { status: 402, headers: {
-      [PAYMENT_REQUIRED_HEADER]: encode(required), "cache-control": "no-store",
+      [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(required), "cache-control": "no-store",
     } });
   }
 

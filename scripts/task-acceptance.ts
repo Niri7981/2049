@@ -13,6 +13,7 @@ import { createPaidMarketApi } from '../src/modules/paid-market-api/paid-market-
 import { SettlementStore } from '../src/modules/paid-market-api/settlement-store';
 import { transactionMessageHash } from '../src/modules/payment/reconcile-transaction';
 import { createHash } from 'node:crypto';
+import { paymentSignatureHeaders } from '../src/modules/payment/x402-client';
 
 let stage = 'preflight';
 async function main() {
@@ -83,7 +84,7 @@ async function main() {
       store.claim(messageHash, memo, createHash('sha256').update(Buffer.from(wire, 'base64')).digest('hex'), JSON.stringify(first.data));
       const forbidden = async (): Promise<never> => { throw new Error('Recovery tried to contact facilitator'); };
       const handler = createPaidMarketApi(config, { getSupported: forbidden, verify: forbidden, settle: forbidden }, store);
-      const response = await handler({ asset: 'SOL' }, Buffer.from(JSON.stringify(payload)).toString('base64'), true);
+      const response = await handler({ asset: 'SOL' }, paymentSignatureHeaders(payload)['PAYMENT-SIGNATURE'], true);
       assert.equal(response.status, 200, 'Lost receipt recovery did not find the original transaction');
       assert.deepEqual(await response.json(), first.data);
       assert.equal(store.get(messageHash)?.receipt?.transaction, first.transaction);

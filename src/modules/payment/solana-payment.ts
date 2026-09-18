@@ -1,14 +1,16 @@
 import { ExactSvmScheme } from "@x402/svm/exact/client";
+import { x402Client } from "@x402/core/client";
 import { getBase64EncodedWireTransaction, type TransactionSigner } from "@solana/kit";
-import { PaymentRequiredV2Schema } from "@x402/core/schemas";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+import { isDeepStrictEqual } from "node:util";
 import { DEVNET_NETWORK, PAYMENT_AMOUNT, type PaymentConfig } from "./payment-config";
+import { readPaymentRequiredHeader } from "./x402-client";
 
 export const MARKET_RESOURCE = "/api/paid/market-snapshot?asset=SOL";
 
 export function selectPaymentQuote(encoded: string, config: PaymentConfig, feePayer: string) {
   if (encoded.length > 16_384) throw new Error("Payment quote is too large");
-  const quote = PaymentRequiredV2Schema.parse(JSON.parse(Buffer.from(encoded, "base64").toString("utf8")));
+  const quote = readPaymentRequiredHeader(encoded);
   if (quote.resource.url !== MARKET_RESOURCE || quote.accepts.length !== 1) {
     throw new Error("Unexpected resource or payment options");
   }
@@ -67,9 +69,20 @@ export async function prepareSolanaPayment(
   // loopback RPC remains authoritative for localnet; the wire quote keeps its real network.
   const safeRequirement = { ...requirement, network: config.cluster === "localnet" ? DEVNET_NETWORK : requirement.network,
     extra: { feePayer: requirement.extra?.feePayer, memo: requirement.extra?.memo } };
-  const created = await new ExactSvmScheme(checkedSigner, { rpcUrl: config.rpcUrl })
-    .createPaymentPayload(2, safeRequirement);
-  return { ...created, accepted: requirement, resource: { url: MARKET_RESOURCE } };
+  const scheme = new ExactSvmScheme(checkedSigner, { rpcUrl: config.rpcUrl });
+  const client = new x402Client()
+    .register(safeRequirement.network, scheme)
+    .setSpendControls({
+      maxAmountPerPayment: false,
+      allowedAssets: [{ network: safeRequirement.network, asset: safeRequirement.asset, maxAmountPerPayment: PAYMENT_AMOUNT }],
+    })
+    .registerPolicy((_version, requirements) => requirements.filter(candidate => isDeepStrictEqual(candidate, safeRequirement)));
+  const created = await client.createPaymentPayload({
+    x402Version: 2,
+    resource: { url: MARKET_RESOURCE },
+    accepts: [safeRequirement],
+  });
+  return { ...created, accepted: requirement };
 }
 
 export async function confirmSolanaTransaction(config: PaymentConfig, transaction: string) {

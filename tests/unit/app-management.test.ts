@@ -12,6 +12,7 @@ import { createStaticResourceRegistry } from '../../src/modules/resources/static
 import { hash, PurchaseSchema } from '../../src/modules/purchases/spending-policy';
 import { paymentBinding, paymentEndpoint, recoverApprovedPayment } from '../../src/modules/purchases/approved-payment';
 import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
+import { demoSnapshot } from '../../src/modules/paid-market-api/paid-market-api';
 
 vi.mock('../../src/modules/purchases/approved-payment', async importOriginal => {
   const original = await importOriginal<typeof import('../../src/modules/purchases/approved-payment')>();
@@ -137,6 +138,28 @@ describe('managed budget and Devnet test records', () => {
     const restarted = create();
     try { expect(restarted.ledger.managedSummary()).toMatchObject({ dailyLimit: '5000', paid: '10000', remaining: '0', paused: true }); expect(restarted.ledger.list()).toHaveLength(2); }
     finally { restarted.ledger.close(); }
+  });
+
+  it('reuses simulated App purchases created before the shared purchase service migration', async () => {
+    const app = runtime();
+    const id = `app-${randomUUID()}`;
+    const merchant = '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
+    const resource = createStaticResourceRegistry({ endpoint: 'https://purchase.local.invalid/api/paid/market-snapshot', asset_id: DEVNET_USDC_MINT, network: DEVNET_NETWORK, allowed_pay_to: merchant })[0];
+    const quote: PaymentRequirements = { scheme: 'exact', network: DEVNET_NETWORK, asset: DEVNET_USDC_MINT, amount: '10000', payTo: merchant, maxTimeoutSeconds: 300, extra: { feePayer: address, memo: `app-test:${id}` } };
+    const now = Date.now();
+    const purchase = PurchaseSchema.parse({ id: randomUUID(), taskId: id, taskHash: hash('2049 App test purchase'), resourceId: resource.resource_id,
+      providerId: resource.provider_id, input: { asset: 'SOL' }, amount: 10000, currency: 'USDC', decimals: 6, mint: DEVNET_USDC_MINT,
+      network: DEVNET_NETWORK, payTo: merchant, scheme: 'exact', quoteFingerprint: hash(quote), createdAt: now, expiresAt: now + 300_000,
+      binding: hash(['simulated-devnet', address, merchant]) });
+    try {
+      app.setDailyLimit('20000');
+      const reserved = app.ledger.reserve(purchase, quote, resource, now);
+      app.ledger.claim(reserved.approvalId, now);
+      app.ledger.finish(reserved.approvalId, { transaction: `simulated-${id}`, data: demoSnapshot }, now);
+      const replay = await app.createTestPurchase(id, 'http://127.0.0.1:3049');
+      expect(replay.status).toBe('PAID');
+      expect(app.ledger.list()).toHaveLength(1);
+    } finally { app.ledger.close(); }
   });
 
   it('advances at local midnight without allowing a time-zone change or clock rollback to open another window', () => {

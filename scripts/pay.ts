@@ -1,12 +1,13 @@
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { PaymentPayload, SettleResponse } from "@x402/core/types";
+import type { PaymentPayload } from "@x402/core/types";
 import { loadPaymentConfig } from "../src/modules/payment/payment-config";
 import { runPaymentPreflight } from "../src/modules/payment/payment-preflight";
 import { loadBuyerSigner } from "../src/modules/payment/wallet";
 import { MARKET_RESOURCE, selectPaymentQuote, prepareSolanaPayment, confirmSolanaTransaction } from "../src/modules/payment/solana-payment";
 import { MarketSnapshotOutputSchema } from "../src/modules/resources/resource-schema";
+import { paymentSignatureHeaders, readSettlementResponse } from "../src/modules/payment/x402-client";
 
 type Journal = { status: "PREPARED" | "UNKNOWN" | "CONFIRMED"; binding: string; payload: PaymentPayload; transaction?: string };
 let processLock: DatabaseSync | undefined;
@@ -53,12 +54,11 @@ async function main() {
   journal.status = "UNKNOWN";
   await save(journal);
   const response = await fetch(endpoint, {
-    headers: { "PAYMENT-SIGNATURE": Buffer.from(JSON.stringify(journal.payload)).toString("base64") },
+    headers: paymentSignatureHeaders(journal.payload),
     signal: AbortSignal.timeout(55_000), redirect: "error",
   });
-  const receiptHeader = response.headers.get("PAYMENT-RESPONSE");
-  if (receiptHeader) {
-    const receipt = JSON.parse(Buffer.from(receiptHeader, "base64").toString("utf8")) as SettleResponse;
+  try {
+    const receipt = readSettlementResponse(response);
     if (receipt.transaction) { journal.transaction = receipt.transaction; await save(journal); }
     if (response.status === 200 && receipt.success && receipt.network === config.network && receipt.payer === config.buyer && receipt.transaction) {
       const data = MarketSnapshotOutputSchema.parse(await response.json());
@@ -70,7 +70,7 @@ async function main() {
         data }, null, 2));
       return;
     }
-  }
+  } catch { /* The durable UNKNOWN journal remains the recovery authority. */ }
   throw new Error(`Payment outcome requires reconciliation (HTTP ${response.status}). Saved payload retained; no new payment will be created.`);
 }
 main().catch(() => {

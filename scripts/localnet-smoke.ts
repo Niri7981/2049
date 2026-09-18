@@ -17,6 +17,7 @@ import { runPaymentPreflight } from "../src/modules/payment/payment-preflight";
 import { createPaidMarketApi } from "../src/modules/paid-market-api/paid-market-api";
 import { SettlementStore } from "../src/modules/paid-market-api/settlement-store";
 import { MARKET_RESOURCE, confirmSolanaTransaction, prepareSolanaPayment, selectPaymentQuote } from "../src/modules/payment/solana-payment";
+import { paymentSignatureHeaders, readPaymentRequiredHeader, readSettlementResponse } from "../src/modules/payment/x402-client";
 
 async function listen(server: Server) {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -102,17 +103,17 @@ async function main() {
     console.log(JSON.stringify({ cluster: "localnet", amount: "0.01 test USDC", buyer: config.buyer,
       merchant: config.merchant, mint: config.mint, feePayer: sponsorSigner.address }, null, 2));
     const payload = await prepareSolanaPayment(config, signer, requirement, () => console.log("Simulation passed before signing."));
-    const headers = { "PAYMENT-SIGNATURE": Buffer.from(JSON.stringify(payload)).toString("base64") };
+    const headers = paymentSignatureHeaders(payload);
     const malformed = await fetch(endpoint, { headers: { "PAYMENT-SIGNATURE": "demo-signature" } });
     assert.equal(malformed.status, 402);
     const paid = await fetch(endpoint, { headers });
     if (paid.status !== 200) {
       const rejection = paid.headers.get("PAYMENT-REQUIRED");
-      throw new Error(`Paid retry returned ${paid.status}: ${rejection ? JSON.parse(Buffer.from(rejection, "base64").toString()).error : await paid.text()}`);
+      throw new Error(`Paid retry returned ${paid.status}: ${rejection ? readPaymentRequiredHeader(rejection).error : await paid.text()}`);
     }
     const body = await paid.json();
     assert.equal(paid.status, 200, JSON.stringify(body));
-    const receipt = JSON.parse(Buffer.from(paid.headers.get("PAYMENT-RESPONSE")!, "base64").toString());
+    const receipt = readSettlementResponse(paid);
     assert.equal(receipt.success, true);
     assert.equal(body.is_demo_snapshot, true);
     await confirmSolanaTransaction(config, receipt.transaction);

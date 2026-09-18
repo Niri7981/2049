@@ -1,18 +1,13 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { randomUUID } from 'node:crypto';
-import type { PaymentRequirements } from '@x402/core/types';
 import { initializeProductWallet } from '../app-wallet/product-wallet';
 import { getStandardTokenAccount } from '../payment/payment-preflight';
-import { DEVNET_NETWORK, DEVNET_USDC_MINT, TOKEN_PROGRAM, loadPaymentConfig } from '../payment/payment-config';
-import { demoSnapshot } from '../paid-market-api/paid-market-api';
+import { DEVNET_USDC_MINT, TOKEN_PROGRAM, loadPaymentConfig } from '../payment/payment-config';
 import { PurchaseLedger } from '../purchases/purchase-ledger';
-import { hash, PurchaseSchema } from '../purchases/spending-policy';
-import { createStaticResourceRegistry } from '../resources/static-resource-registry';
-import { runTask } from '../agent/task-runtime';
-import { localCapabilityPlanner } from '../agent/local-capability-planner';
 import { paymentEndpoint, recoverApprovedPayment } from '../purchases/approved-payment';
+import { purchaseMarketSnapshot } from '../purchases/purchase-market-snapshot';
+import { hash } from '../purchases/spending-policy';
 
 type RuntimeState = { runtime?: AppRuntime };
 export type TestPurchaseResult = { purchaseId: string; status: string; deliveryStatus: string; policy: { decision: string; reason: string }; transaction: string | null; simulated: boolean; warning?: string };
@@ -127,30 +122,19 @@ export class AppRuntime {
     await this.start(origin);
     const wallet = await this.initializeWallet();
     if (!this.accepting) throw new Error('服务正在退出，不能开始新付款。');
-    if (process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1') {
-      const config = loadPaymentConfig();
-      if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Devnet 钱包配置不匹配。');
-      const result = await runTask({ taskId: id, task: '分析 SOL 市场价格和 RSI' }, { planner: localCapabilityPlanner, plannerMode: 'local_demo', config, ledger: this.ledger, origin });
-      if (!('policy' in result)) throw new Error('测试购买没有生成有效报价。');
-      return { purchaseId: id, status: result.status, deliveryStatus: result.deliveryStatus, policy: result.policy, transaction: result.transaction ?? null, simulated: false };
-    }
-
     const merchant = process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
-    const resource = createStaticResourceRegistry({ endpoint: 'https://purchase.local.invalid/api/paid/market-snapshot', asset_id: DEVNET_USDC_MINT, network: DEVNET_NETWORK, allowed_pay_to: merchant })[0];
-    const now = Date.now();
-    const quote: PaymentRequirements = { scheme: 'exact', network: DEVNET_NETWORK, asset: DEVNET_USDC_MINT, amount: '10000', payTo: merchant, maxTimeoutSeconds: 300, extra: { feePayer: wallet.address, memo: `app-test:${id}` } };
-    const binding = hash(['simulated-devnet', wallet.address, merchant]);
-    const purchase = PurchaseSchema.parse({ id: randomUUID(), taskId: id, taskHash: hash('2049 Devnet test purchase'), resourceId: resource.resource_id,
-      providerId: resource.provider_id, input: { asset: 'SOL' }, amount: 10000, currency: 'USDC', decimals: 6, mint: DEVNET_USDC_MINT,
-      network: DEVNET_NETWORK, payTo: merchant, scheme: 'exact', quoteFingerprint: hash(quote), createdAt: now, expiresAt: now + 300_000, binding });
-    const record = this.ledger.reserve(purchase, quote, resource, now);
-    if (record.purchase.id === purchase.id && record.status === 'APPROVED') {
-      this.ledger.claim(record.approvalId, now);
-      this.ledger.finish(record.approvalId, { transaction: `simulated-${id}`, data: demoSnapshot }, now);
-    }
-    const saved = this.ledger.get(id)!;
+    const mode = process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1' ? 'live_devnet' : 'simulated';
+    const config = mode === 'live_devnet'
+      ? loadPaymentConfig()
+      : loadPaymentConfig({ ...process.env, SOLANA_CLUSTER: 'devnet', DEMO_BUYER_PUBLIC_KEY: wallet.address, DEMO_MERCHANT_PUBLIC_KEY: merchant });
+    if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Devnet 钱包配置不匹配。');
+    const result = await purchaseMarketSnapshot({ purchaseId: id, intent: '2049 App test purchase' }, {
+      config, ledger: this.ledger, origin, mode,
+      legacyBindings: mode === 'simulated' ? [hash(['simulated-devnet', wallet.address, merchant])] : undefined,
+    });
+    const saved = result.record;
     return { purchaseId: id, status: saved.status, deliveryStatus: saved.deliveryStatus, policy: saved.decision, transaction: saved.transaction ?? null,
-      simulated: true, warning: '本次只验证本地策略、状态和账本，没有签名或链上付款。' };
+      simulated: result.simulated, ...(result.simulated ? { warning: '本次只验证本地策略、状态和账本，没有签名或链上付款。' } : {}) };
   }
 }
 
