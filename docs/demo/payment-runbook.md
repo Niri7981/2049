@@ -136,3 +136,15 @@ Day 4 命令在 macOS 读取既有系统 HTTP 代理供 Node 使用，不修改�
 - 再运行 `payment:pay` 返回同一交易和 `Already paid`，没有创建下一笔付款。
 
 Day 4 独立程序付款闭环已完成。尚未实现的是后续 Agent 自动决策与消费额度策略。
+
+## App M3 实际验收记录（2026-09-18）
+
+- 产品钱包：`Hr937hUNE1yHzjDLhZngWn8rHUWGTuTRLMJoTzi9BUeH`，密钥继续保存在 macOS 钥匙串。
+- 测试准备：从旧验收钱包仅转入本次所需的 10,000 最小单位；[入金交易](https://explorer.solana.com/tx/3i1A9MtkSx5EoLsXGd1KMrtiYN7cTdVNgpruXXzGsfWXvcYF2w1hSLiJ27a5Gfg2PoYvNtCz8ZohJ6vXMM1TC4QK?cluster=devnet)。
+- App 购买号：`m3-20260918-final-1`；[0.01 测试 USDC 付款交易](https://explorer.solana.com/tx/42qEJgZfZbWbf8FRwuKvJ2mfMwyi5evrZr2r9cNfriocGxN4gt5jfAAjKiDBjKn2Tpx9ihbdMHu2zbKKK5GfAVkr?cluster=devnet)。
+- RPC 在交易 slot `500400812` 返回成功：买方 `10000 → 0`，商家 `130000 → 140000` 最小单位，差额均为 0.01 测试 USDC。
+- 同一 AppRuntime 重放一次、关闭并重新打开账本后再重放一次，三次都返回同一交易；购买号对应记录始终为一条，没有再次扣款。
+- App 界面显示余额 0.00、今日已消费 0.01、剩余 0.00，并显示“付款已确认 / 结果已交付”。
+- 本次使用显式真实测试开关；正常启动仍默认为模拟模式，不会签名或提交交易。
+
+这次验收完成 M3。Codex MCP 连接、原对话确认和撤销连接属于 M4，尚未开始。
