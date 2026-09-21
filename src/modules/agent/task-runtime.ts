@@ -12,8 +12,8 @@ import { purchaseMarketSnapshot } from '../purchases/purchase-market-snapshot';
 
 const TaskSchema = z.object({ taskId: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/), task: z.string().trim().min(1).max(1000) }).strict();
 function publicResult(record: PurchaseRecord, ledger: PurchaseLedger) {
-  return { taskId: record.purchase.taskId, status: record.status, deliveryStatus: record.deliveryStatus, policy: record.decision, amountUSDC: record.purchase.amount / 1_000_000,
-    transaction: record.transaction, data: record.data, answer: record.answer, events: ledger.events(record.purchase.taskId),
+  return { taskId: record.intent.idempotencyKey, status: record.status, deliveryStatus: record.deliveryStatus, policy: record.decision, amountUSDC: record.intent.amount / 1_000_000,
+    transaction: record.transaction, data: record.data, answer: record.answer, events: ledger.events(record.intent.idempotencyKey),
     summary: record.data ? `示例快照（${record.data.as_of}）：SOL 价格 $${record.data.spot_price_usd}，24 小时变化 ${record.data.change_24h_pct}%，RSI ${record.data.rsi_14d}。数据来自 Demo fixture，不是实时行情。` : undefined };
 }
 export async function runTask(input: { taskId: string; task: string }, options: {

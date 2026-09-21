@@ -18,12 +18,12 @@ export function paymentBinding(config: PaymentConfig, endpoint: string) {
   return hash([config.cluster, config.network, config.mint, config.buyer, config.merchant, endpoint]);
 }
 function checkBinding(record: PurchaseRecord, config: PaymentConfig, endpoint: string) {
-  const p = record.purchase;
-  if (p.binding !== paymentBinding(config, endpoint) || p.quoteFingerprint !== hash(record.quote) || p.amount !== Number(record.quote.amount)
-    || p.mint !== config.mint || p.network !== config.network || p.payTo !== config.merchant) throw new Error('Approval binding changed');
+  const intent = record.intent;
+  if (intent.executionBinding !== paymentBinding(config, endpoint) || intent.quoteFingerprint !== hash(record.quote) || intent.amount !== Number(record.quote.amount)
+    || intent.assetId !== config.mint || intent.network !== config.network || intent.payTo !== config.merchant) throw new Error('Approval binding changed');
 }
 async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, config: PaymentConfig, endpoint: string, payload: PaymentPayload, recovery: boolean, trace: Trace) {
-  if (hash(payload.accepted) !== record.purchase.quoteFingerprint || typeof payload.payload.transaction !== 'string') throw new Error('Saved payment changed');
+  if (hash(payload.accepted) !== record.intent.quoteFingerprint || typeof payload.payload.transaction !== 'string') throw new Error('Saved payment changed');
   if (!recovery) trace('SUBMITTED');
   const response = await fetch(endpoint, { headers: {
     ...paymentSignatureHeaders(payload),
@@ -33,7 +33,7 @@ async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, co
   const transaction = receipt.transaction;
   if (receipt.network !== config.network || receipt.payer !== config.buyer || typeof transaction !== 'string'
     || !/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(transaction)
-    || (receipt.amount !== undefined && receipt.amount !== String(record.purchase.amount))) throw new Error('Settlement receipt mismatch');
+    || (receipt.amount !== undefined && receipt.amount !== String(record.intent.amount))) throw new Error('Settlement receipt mismatch');
   if (!recovery && receipt.success === true) await confirmSolanaTransaction(config, transaction);
   const proof = await inspectOriginalTransaction(config, transaction, transactionMessageHash(payload.payload.transaction));
   if (proof.status === 'FAILED') {
@@ -59,7 +59,7 @@ export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId:
     const signer = await loadBuyerSigner(config.buyer);
     ledger.assertCanSign(approvalId);
     const payload = await prepareSolanaPayment(config, signer, record.quote, () => ledger.assertCanSign(approvalId));
-    if (Date.now() >= record.purchase.expiresAt) throw new Error('Approval expired before submission');
+    if (Date.now() >= record.intent.expiresAt) throw new Error('Approval expired before submission');
     ledger.savePayload(approvalId, payload);
     trace('SIGNED');
     return await receivePayment(ledger, record, config, endpoint, payload, false, trace);

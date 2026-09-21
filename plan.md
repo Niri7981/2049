@@ -26,6 +26,8 @@
 
 2026-09-18 收缩：报价与回执头、付款凭据和测试 Paid API 的协议编解码改用官方 x402 客户端；App 和旧任务入口改为复用同一个市场快照购买服务，App 真实测试入口不再经过模型规划与资源发现。钱包、授权、共享额度、持久状态和原付款恢复仍由 2049 维护。
 
+2026-09-21 Authority Core 阶段一：新增通用 `SpendIntent`、`AuthorityDecision` 和 `SpendReservation`，决策统一为 `APPROVED`、`DENIED`、`REQUIRES_APPROVAL`。行情 resource/provider/SOL 与报价一致性校验移入 market resource adapter；market snapshot Demo 继续经原子预算预占和 `approvalId` 付款边界执行。MCP、Jev、第二 provider、UI 和新支付轨道不在本阶段范围。详见 [Authority Core（阶段一）](docs/architecture/authority-core.md)。
+
 2026-09-18 M3 验收：产品钱包 `Hr937hUNE1yHzjDLhZngWn8rHUWGTuTRLMJoTzi9BUeH` 在真实 Devnet 模式完成购买 `m3-20260918-final-1`。付款交易为 `42qEJgZfZbWbf8FRwuKvJ2mfMwyi5evrZr2r9cNfriocGxN4gt5jfAAjKiDBjKn2Tpx9ihbdMHu2zbKKK5GfAVkr`；RPC 确认买方 `10000 → 0`、商家 `130000 → 140000` 最小单位。当前进程重放和重新打开账本后的重放均返回同一交易，购买记录始终只有一条；App 界面显示付款已确认、结果已交付、当日已消费 0.01 测试 USDC。
 
 新 App 开发以本文和 [AGENTS.md](AGENTS.md) 为依据；`docs/architecture/` 中原 V0 文档保留为测试网 Demo 的历史设计。旧文档中的固定资源、固定预算、不使用 MCP 等限定不自动延续到新 App；钱包隔离、报价校验、幂等和恢复要求继续保留。

@@ -1,5 +1,7 @@
 # D1-09 PurchaseRequest Schema
 
+> 本文记录旧 V0 PurchaseRequest。当前实现使用通用 `SpendIntent` 表示消费请求，并在 market resource adapter 中保留行情专属校验；详见 [Authority Core（阶段一）](authority-core.md)。旧 SQLite 记录仍可读取和恢复。
+
 ## 目标
 
 PurchaseRequest 是 Agent 推理区域与可信支付区域之间的安全边界。

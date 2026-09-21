@@ -4,6 +4,7 @@ import {
 } from "./resource-schema";
 
 export const PREMIUM_SOL_MARKET_SNAPSHOT_ID = "premium-sol-market-snapshot";
+export const DEMO_MARKET_DATA_PROVIDER_ID = "demo-market-data-provider";
 
 export type StaticResourceRegistryConfig = Pick<
   ResourceMetadata,
@@ -21,7 +22,7 @@ export function createStaticResourceRegistry(
     description:
       "Returns a timestamped SOL market snapshot with price, volume, volatility, and technical indicators.",
     capability: "crypto.market.snapshot",
-    provider_id: "demo-market-data-provider",
+    provider_id: DEMO_MARKET_DATA_PROVIDER_ID,
     endpoint: config.endpoint,
     method: "GET",
     input_schema: "MarketSnapshotInput",

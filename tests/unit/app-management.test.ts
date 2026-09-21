@@ -9,7 +9,8 @@ import { requireManagementRequest } from '../../src/modules/app/management-auth'
 import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT } from '../../src/modules/payment/payment-config';
 import { createStaticResourceRegistry } from '../../src/modules/resources/static-resource-registry';
-import { hash, PurchaseSchema } from '../../src/modules/purchases/spending-policy';
+import { createMarketSnapshotSpendIntent } from '../../src/modules/resources/market-spend-adapter';
+import { hash } from '../../src/modules/purchases/spending-policy';
 import { paymentBinding, paymentEndpoint, recoverApprovedPayment } from '../../src/modules/purchases/approved-payment';
 import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
 import { demoSnapshot } from '../../src/modules/paid-market-api/paid-market-api';
@@ -72,7 +73,9 @@ describe('managed budget and Devnet test records', () => {
     const quote = { scheme: 'exact', network: config.network, asset: config.mint, amount: '10000', payTo: config.merchant, maxTimeoutSeconds: 300, extra: {} };
     const now = Date.now();
     app.setDailyLimit('100000');
-    const record = app.ledger.reserve(PurchaseSchema.parse({ id: randomUUID(), taskId: 'startup-original', taskHash: hash('task'), resourceId: resource.resource_id, providerId: resource.provider_id, input: { asset: 'SOL' }, amount: 10000, currency: 'USDC', decimals: 6, mint: config.mint, network: config.network, payTo: config.merchant, scheme: 'exact', quoteFingerprint: hash(quote), createdAt: now, expiresAt: now + 300000, binding: paymentBinding(config, paymentEndpoint(origin)) }), quote, resource);
+    const intent = createMarketSnapshotSpendIntent({ idempotencyKey: 'startup-original', request: { asset: 'SOL' }, requestHash: hash('task'), resource, quote,
+      executionBinding: paymentBinding(config, paymentEndpoint(origin)), now });
+    const record = app.ledger.reserve(intent, quote, now);
     app.ledger.claim(record.approvalId);
     app.ledger.savePayload(record.approvalId, { x402Version: 2, accepted: quote, payload: { transaction: 'test-wire' } });
     app.setPaused(true);
@@ -147,13 +150,11 @@ describe('managed budget and Devnet test records', () => {
     const resource = createStaticResourceRegistry({ endpoint: 'https://purchase.local.invalid/api/paid/market-snapshot', asset_id: DEVNET_USDC_MINT, network: DEVNET_NETWORK, allowed_pay_to: merchant })[0];
     const quote: PaymentRequirements = { scheme: 'exact', network: DEVNET_NETWORK, asset: DEVNET_USDC_MINT, amount: '10000', payTo: merchant, maxTimeoutSeconds: 300, extra: { feePayer: address, memo: `app-test:${id}` } };
     const now = Date.now();
-    const purchase = PurchaseSchema.parse({ id: randomUUID(), taskId: id, taskHash: hash('2049 App test purchase'), resourceId: resource.resource_id,
-      providerId: resource.provider_id, input: { asset: 'SOL' }, amount: 10000, currency: 'USDC', decimals: 6, mint: DEVNET_USDC_MINT,
-      network: DEVNET_NETWORK, payTo: merchant, scheme: 'exact', quoteFingerprint: hash(quote), createdAt: now, expiresAt: now + 300_000,
-      binding: hash(['simulated-devnet', address, merchant]) });
+    const intent = createMarketSnapshotSpendIntent({ idempotencyKey: id, request: { asset: 'SOL' }, requestHash: hash('2049 App test purchase'), resource, quote,
+      executionBinding: hash(['simulated-devnet', address, merchant]), now });
     try {
       app.setDailyLimit('20000');
-      const reserved = app.ledger.reserve(purchase, quote, resource, now);
+      const reserved = app.ledger.reserve(intent, quote, now);
       app.ledger.claim(reserved.approvalId, now);
       app.ledger.finish(reserved.approvalId, { transaction: `simulated-${id}`, data: demoSnapshot }, now);
       const replay = await app.createTestPurchase(id, 'http://127.0.0.1:3049');
@@ -184,7 +185,7 @@ describe('managed budget and Devnet test records', () => {
     try {
       first.setDailyLimit('10000');
       const results = await Promise.all([first.createTestPurchase(`app-${randomUUID()}`, 'http://127.0.0.1:3049'), second.createTestPurchase(`app-${randomUUID()}`, 'http://127.0.0.1:3049')]);
-      expect(results.map(result => result.status).sort()).toEqual(['PAID', 'REJECTED']);
+      expect(results.map(result => result.status).sort()).toEqual(['DENIED', 'PAID']);
       expect(first.ledger.managedSummary()).toMatchObject({ paid: '10000', remaining: '0' });
     } finally { first.ledger.close(); second.ledger.close(); }
   });
@@ -195,11 +196,10 @@ describe('managed budget and Devnet test records', () => {
     const merchant = '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
     const resource = createStaticResourceRegistry({ endpoint: 'https://purchase.local.invalid/api/paid/market-snapshot', asset_id: DEVNET_USDC_MINT, network: DEVNET_NETWORK, allowed_pay_to: merchant })[0];
     const quote: PaymentRequirements = { scheme: 'exact', network: DEVNET_NETWORK, asset: DEVNET_USDC_MINT, amount: '10000', payTo: merchant, maxTimeoutSeconds: 300, extra: {} };
-    const purchase = PurchaseSchema.parse({ id: randomUUID(), taskId: 'pause-race', taskHash: hash('task'), resourceId: resource.resource_id, providerId: resource.provider_id,
-      input: { asset: 'SOL' }, amount: 10000, currency: 'USDC', decimals: 6, mint: DEVNET_USDC_MINT, network: DEVNET_NETWORK, payTo: merchant,
-      scheme: 'exact', quoteFingerprint: hash(quote), createdAt: now, expiresAt: now + 300_000, binding: 'test' });
+    const intent = createMarketSnapshotSpendIntent({ idempotencyKey: 'pause-race', request: { asset: 'SOL' }, requestHash: hash('task'), resource, quote,
+      executionBinding: 'test', now });
     try {
-      ledger.setDailyLimit('20000'); const reserved = ledger.reserve(purchase, quote, resource, now);
+      ledger.setDailyLimit('20000'); const reserved = ledger.reserve(intent, quote, now);
       ledger.setPaused(true); expect(() => ledger.claim(reserved.approvalId, now)).toThrow('paused');
       ledger.setPaused(false); ledger.setDailyLimit('5000'); expect(() => ledger.claim(reserved.approvalId, now)).toThrow('no longer covers');
       ledger.setDailyLimit('20000'); ledger.claim(reserved.approvalId, now); ledger.setPaused(true);

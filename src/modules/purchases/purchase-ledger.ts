@@ -3,12 +3,21 @@ import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
-import type { ResourceMetadata, MarketSnapshotOutput } from '../resources/resource-schema';
-import { evaluatePurchase, nextSpendingDayBoundary, spendingDay, POLICY, type Purchase, type PolicyDecision, type SpendingControls } from './spending-policy';
+import { DEFAULT_SPENDING_POLICY, evaluateSpendAuthority, parseStoredAuthorityDecision, type AuthorityDecision, type SpendingControls } from '../authority/authority-policy';
+import { parseStoredSpendIntent, type SpendIntent } from '../authority/spend-intent';
+import type { MarketSnapshotOutput } from '../resources/resource-schema';
+import { nextSpendingDayBoundary, spendingDay } from './spending-policy';
 
 export type DeliveryStatus = 'NOT_PAID' | 'PENDING' | 'COMPLETE';
-export type PurchaseRecord = { purchase: Purchase; quote: PaymentRequirements; approvalId: string; decision: PolicyDecision; status: string; deliveryStatus: DeliveryStatus; transaction?: string; data?: MarketSnapshotOutput; answer?: string };
+export type SpendReservation = { intent: SpendIntent; quote: PaymentRequirements; approvalId: string; decision: AuthorityDecision; status: string; deliveryStatus: DeliveryStatus; transaction?: string; data?: MarketSnapshotOutput; answer?: string };
+/** Compatibility name for callers that still expose the market purchase use case. */
+export type PurchaseRecord = SpendReservation;
 export type PurchaseLedgerOptions = { managed?: boolean; timeZone?: () => string; now?: () => number };
+function currentAuthorityStatus(status: string) {
+  if (status === 'REJECTED') return 'DENIED';
+  if (status === 'NEEDS_CONFIRMATION') return 'REQUIRES_APPROVAL';
+  return status;
+}
 /** SQLite owns approval, budget reservation and the unique task purchase. No model writes. */
 export class PurchaseLedger {
   private db: DatabaseSync;
@@ -65,9 +74,9 @@ export class PurchaseLedger {
     return String(row.spending_day);
   }
   controls(): SpendingControls {
-    if (!this.managed) return { dailyBudget: POLICY.dailyBudget, paused: false, singleLimit: POLICY.singleLimit };
+    if (!this.managed) return { dailyBudget: DEFAULT_SPENDING_POLICY.dailyBudget, paused: false, singleLimit: DEFAULT_SPENDING_POLICY.singleLimit };
     const row = this.db.prepare('SELECT daily_limit,paused FROM app_settings WHERE id=1').get()!;
-    return { dailyBudget: row.daily_limit === null ? null : Number(row.daily_limit), paused: Boolean(row.paused), singleLimit: POLICY.singleLimit };
+    return { dailyBudget: row.daily_limit === null ? null : Number(row.daily_limit), paused: Boolean(row.paused), singleLimit: DEFAULT_SPENDING_POLICY.singleLimit };
   }
   setDailyLimit(value: string | null) {
     const parsed = value === null ? null : Number(value);
@@ -86,7 +95,7 @@ export class PurchaseLedger {
     if (this.stopping) throw new Error('Service is stopping');
     const row = this.db.prepare('SELECT task_id FROM purchases WHERE approval_id=?').get(approvalId);
     const record = row ? this.get(String(row.task_id)) : undefined;
-    if (record?.status !== 'PAYING' || record.purchase.expiresAt <= now) throw new Error('Approval inactive or expired');
+    if (record?.status !== 'PAYING' || record.intent.expiresAt <= now) throw new Error('Approval inactive or expired');
     if (this.managed) {
       const controls = this.controls();
       if (controls.paused) throw new Error('Payments were paused before submission');
@@ -106,29 +115,29 @@ export class PurchaseLedger {
   pendingRecovery() {
     return this.db.prepare("SELECT task_id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND data IS NULL)").all().map(row => String(row.task_id));
   }
-  get(taskId: string): PurchaseRecord | undefined {
-    const row = this.db.prepare('SELECT * FROM purchases WHERE task_id=?').get(taskId);
+  get(idempotencyKey: string): SpendReservation | undefined {
+    const row = this.db.prepare('SELECT * FROM purchases WHERE task_id=?').get(idempotencyKey);
     if (!row) return undefined;
-    return { purchase: JSON.parse(String(row.purchase)), quote: JSON.parse(String(row.quote)), approvalId: String(row.approval_id), decision: JSON.parse(String(row.decision)), status: String(row.status),
+    return { intent: parseStoredSpendIntent(JSON.parse(String(row.purchase))), quote: JSON.parse(String(row.quote)), approvalId: String(row.approval_id), decision: parseStoredAuthorityDecision(JSON.parse(String(row.decision))), status: currentAuthorityStatus(String(row.status)),
       deliveryStatus: row.status === 'PAID' ? (row.data ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
       ...(this.db.prepare("SELECT answer FROM purchase_answers WHERE purchase_id=?").get(String(row.id)) as { answer: string } | undefined),
       ...(row.transaction_id ? { transaction: String(row.transaction_id) } : {}), ...(row.data ? { data: JSON.parse(String(row.data)) } : {}) };
   }
-  reserve(purchase: Purchase, quote: PaymentRequirements, resource: ResourceMetadata, now = Date.now()): PurchaseRecord {
+  reserve(intent: SpendIntent, quote: PaymentRequirements, now = Date.now()): SpendReservation {
     return this.atomic(() => {
       this.expireUnclaimed(now);
-      const existing = this.get(purchase.taskId);
+      const existing = this.get(intent.idempotencyKey);
       if (existing) {
-        if (existing.purchase.taskHash !== purchase.taskHash || existing.purchase.binding !== purchase.binding) throw new Error('Task ID belongs to another task or wallet configuration');
+        if (existing.intent.requestHash !== intent.requestHash || existing.intent.executionBinding !== intent.executionBinding) throw new Error('Idempotency key belongs to another request or execution configuration');
         return existing;
       }
       const row = this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?)`).get(this.activeDay(now))!;
       const unresolved = this.db.prepare(`SELECT id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN') LIMIT 1`).get();
-      const decision = evaluatePurchase(purchase, resource, quote, { committed: Number(row.total), hasUnknown: Boolean(unresolved) }, now, this.controls());
+      const decision = evaluateSpendAuthority(intent, { committed: Number(row.total), hasUnknownPayment: Boolean(unresolved) }, now, this.controls());
       this.db.prepare('INSERT INTO purchases (id,task_id,approval_id,purchase,quote,decision,status,amount) VALUES (?,?,?,?,?,?,?,?)')
-        .run(purchase.id, purchase.taskId, randomUUID(), JSON.stringify(purchase), JSON.stringify(quote), JSON.stringify(decision), decision.decision, purchase.amount);
-      this.event(purchase.id, `policy.${decision.decision}`);
-      return this.get(purchase.taskId)!;
+        .run(intent.id, intent.idempotencyKey, randomUUID(), JSON.stringify(intent), JSON.stringify(quote), JSON.stringify(decision), decision.decision, intent.amount);
+      this.event(intent.id, `authority.${decision.decision}`);
+      return this.get(intent.idempotencyKey)!;
     });
   }
   /** Release only approvals that never reached the signer. Caller holds the write lock. */
@@ -142,17 +151,17 @@ export class PurchaseLedger {
     this.atomic(() => {
       const record = this.get(taskId);
       if (record?.status !== 'PAID' || !record.data) throw new Error('Answer requires paid data');
-      const result = this.db.prepare('INSERT OR IGNORE INTO purchase_answers (purchase_id,answer) VALUES (?,?)').run(record.purchase.id, answer);
-      if (result.changes) this.event(record.purchase.id, 'task.ANSWERED');
+      const result = this.db.prepare('INSERT OR IGNORE INTO purchase_answers (purchase_id,answer) VALUES (?,?)').run(record.intent.id, answer);
+      if (result.changes) this.event(record.intent.id, 'task.ANSWERED');
     });
   }
-  claim(approvalId: string, now = Date.now()): PurchaseRecord {
+  claim(approvalId: string, now = Date.now()): SpendReservation {
     return this.atomic(() => {
       if (this.stopping) throw new Error('Service is stopping');
       const row = this.db.prepare('SELECT task_id FROM purchases WHERE approval_id=?').get(approvalId);
       if (!row) throw new Error('Unknown approval');
       const record = this.get(String(row.task_id))!;
-      if (record.status !== 'APPROVED' || record.decision.decision !== 'APPROVED' || record.purchase.expiresAt <= now) throw new Error('Approval inactive or expired');
+      if (record.status !== 'APPROVED' || record.decision.decision !== 'APPROVED' || record.intent.expiresAt <= now) throw new Error('Approval inactive or expired');
       if (this.managed) {
         const controls = this.controls();
         if (controls.paused) throw new Error('Payments are paused');
@@ -162,8 +171,8 @@ export class PurchaseLedger {
       }
       if (this.db.prepare("SELECT id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN') LIMIT 1").get()) throw new Error('Another payment requires reconciliation');
       this.db.prepare("UPDATE purchases SET status='PAYING' WHERE approval_id=? AND status='APPROVED'").run(approvalId);
-      this.event(record.purchase.id, 'payment.PAYING');
-      return this.get(record.purchase.taskId)!;
+      this.event(record.intent.id, 'payment.PAYING');
+      return this.get(record.intent.idempotencyKey)!;
     });
   }
   savePayload(approvalId: string, payload: unknown) {
@@ -232,7 +241,7 @@ export class PurchaseLedger {
   list(limit = 50) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid record limit');
     return this.db.prepare('SELECT task_id,status,amount,transaction_id,data IS NOT NULL AS delivered,json_extract(purchase,\'$.createdAt\') AS created_at FROM purchases ORDER BY created_at DESC LIMIT ?').all(limit)
-      .map(row => ({ purchaseId: String(row.task_id), status: String(row.status), deliveryStatus: row.status === 'PAID' ? (row.delivered ? 'COMPLETE' : 'PENDING') : 'NOT_PAID', amount: String(row.amount), createdAt: Number(row.created_at), transaction: row.transaction_id ? String(row.transaction_id) : null }));
+      .map(row => ({ purchaseId: String(row.task_id), status: currentAuthorityStatus(String(row.status)), deliveryStatus: row.status === 'PAID' ? (row.delivered ? 'COMPLETE' : 'PENDING') : 'NOT_PAID', amount: String(row.amount), createdAt: Number(row.created_at), transaction: row.transaction_id ? String(row.transaction_id) : null }));
   }
   events(taskId: string) { return this.db.prepare('SELECT e.sequence,e.type,e.at FROM purchase_events e JOIN purchases p ON p.id=e.purchase_id WHERE p.task_id=? ORDER BY e.sequence').all(taskId); }
   close() { this.db.close(); }

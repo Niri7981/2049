@@ -48,7 +48,7 @@ describe('Purchase discovery → policy → payment → cached result', () => {
       const task = { taskId: 'unknown', task: '分析 SOL 市场价格' };
       expect((await runTask(task, options(ledger, pay))).status).toBe('PAYMENT_UNKNOWN');
       expect((await runTask(task, options(ledger, pay))).status).toBe('PAYMENT_UNKNOWN');
-      expect((await runTask({ ...task, taskId: 'another' }, options(ledger, pay))).status).toBe('REJECTED');
+      expect((await runTask({ ...task, taskId: 'another' }, options(ledger, pay))).status).toBe('DENIED');
       expect(pay).toHaveBeenCalledTimes(1);
     } finally { ledger.close(); }
   });

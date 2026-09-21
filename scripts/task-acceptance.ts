@@ -7,7 +7,6 @@ import { openAICapabilityPlanner } from '../src/modules/agent/openai-capability-
 import { openAIMarketAnswer } from '../src/modules/agent/openai-market-answer';
 import { PurchaseLedger } from '../src/modules/purchases/purchase-ledger';
 import { executeApprovedPayment, recoverApprovedPayment, paymentEndpoint } from '../src/modules/purchases/approved-payment';
-import { createStaticResourceRegistry } from '../src/modules/resources/static-resource-registry';
 import { spendingDay } from '../src/modules/purchases/spending-policy';
 import { createPaidMarketApi } from '../src/modules/paid-market-api/paid-market-api';
 import { SettlementStore } from '../src/modules/paid-market-api/settlement-store';
@@ -66,12 +65,11 @@ async function main() {
     // records stay intact. Recovery talks to the live API using the exact original payload.
     const shadow = new PurchaseLedger(':memory:');
     try {
-      const resource = createStaticResourceRegistry({ endpoint: 'https://acceptance.local.invalid/api/paid/market-snapshot', asset_id: config.mint, network: config.network, allowed_pay_to: config.merchant })[0];
-      const reserved = shadow.reserve(first.purchase, first.quote, resource, first.purchase.createdAt);
-      shadow.claim(reserved.approvalId, first.purchase.createdAt); shadow.savePayload(reserved.approvalId, payload); shadow.unknown(reserved.approvalId);
-      await recoverApprovedPayment(shadow, first.purchase.taskId, config, paymentEndpoint(origin));
-      assert.equal(shadow.get(first.purchase.taskId)?.status, 'PAID');
-      assert.equal(shadow.get(first.purchase.taskId)?.transaction, first.transaction);
+      const reserved = shadow.reserve(first.intent, first.quote, first.intent.createdAt);
+      shadow.claim(reserved.approvalId, first.intent.createdAt); shadow.savePayload(reserved.approvalId, payload); shadow.unknown(reserved.approvalId);
+      await recoverApprovedPayment(shadow, first.intent.idempotencyKey, config, paymentEndpoint(origin));
+      assert.equal(shadow.get(first.intent.idempotencyKey)?.status, 'PAID');
+      assert.equal(shadow.get(first.intent.idempotencyKey)?.transaction, first.transaction);
     } finally { shadow.close(); }
     // Reconstruct a server that lost the settlement receipt. No facilitator method may
     // run. It must find the original transaction on the real chain by the unique memo.
@@ -80,7 +78,7 @@ async function main() {
       const wire = String(payload.payload.transaction);
       const messageHash = transactionMessageHash(wire);
       const memo = String(first.quote.extra?.memo);
-      store.saveQuote({ id: memo, resource: '/api/paid/market-snapshot?asset=SOL', requirements: first.quote, expiresAt: first.purchase.expiresAt });
+      store.saveQuote({ id: memo, resource: '/api/paid/market-snapshot?asset=SOL', requirements: first.quote, expiresAt: first.intent.expiresAt });
       store.claim(messageHash, memo, createHash('sha256').update(Buffer.from(wire, 'base64')).digest('hex'), JSON.stringify(first.data));
       const forbidden = async (): Promise<never> => { throw new Error('Recovery tried to contact facilitator'); };
       const handler = createPaidMarketApi(config, { getSupported: forbidden, verify: forbidden, settle: forbidden }, store);

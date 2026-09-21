@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { PaymentRequirements } from '@x402/core/types';
 import type { Trace } from '../demo/trace';
 import { demoSnapshot } from '../paid-market-api/paid-market-api';
@@ -6,9 +5,10 @@ import { DEVNET_NETWORK, DEVNET_USDC_MINT, PAYMENT_AMOUNT, type PaymentConfig } 
 import { runPaymentPreflight } from '../payment/payment-preflight';
 import { selectPaymentQuote } from '../payment/solana-payment';
 import { createStaticResourceRegistry } from '../resources/static-resource-registry';
+import { createMarketSnapshotSpendIntent } from '../resources/market-spend-adapter';
 import { executeApprovedPayment, paymentBinding, paymentEndpoint, recoverApprovedPayment } from './approved-payment';
 import { PurchaseLedger, type PurchaseRecord } from './purchase-ledger';
-import { hash, PurchaseSchema } from './spending-policy';
+import { hash } from './spending-policy';
 
 export type MarketSnapshotPurchaseMode = 'live_devnet' | 'simulated';
 export type MarketSnapshotPurchaseOptions = {
@@ -46,7 +46,7 @@ export async function purchaseMarketSnapshot(
   const existing = ledger.get(input.purchaseId);
   if (existing) {
     const acceptedBindings = [binding, ...(options.legacyBindings ?? [])];
-    if (existing.purchase.taskHash !== hash(input.intent) || !acceptedBindings.includes(existing.purchase.binding)) {
+    if (existing.intent.requestHash !== hash(input.intent) || !acceptedBindings.includes(existing.intent.executionBinding)) {
       throw new Error('Purchase ID already belongs to different input or configuration');
     }
     if (options.mode === 'live_devnet') await recoverApprovedPayment(ledger, input.purchaseId, config, endpoint, trace);
@@ -77,16 +77,19 @@ export async function purchaseMarketSnapshot(
   }
   trace('QUOTE_RECEIVED', '0.01 测试 USDC · Solana Devnet');
   const now = options.now?.() ?? Date.now();
-  const purchase = PurchaseSchema.parse({
-    id: randomUUID(), taskId: input.purchaseId, taskHash: hash(input.intent), resourceId: resources[0].resource_id,
-    providerId: resources[0].provider_id, input: { asset: 'SOL' }, amount: Number(quote.amount), currency: 'USDC', decimals: 6,
-    mint: quote.asset, network: quote.network, payTo: quote.payTo, scheme: quote.scheme, quoteFingerprint: hash(quote),
-    createdAt: now, expiresAt: now + Math.min(quote.maxTimeoutSeconds, 300) * 1000, binding,
+  const spendIntent = createMarketSnapshotSpendIntent({
+    idempotencyKey: input.purchaseId,
+    request: { asset: 'SOL' },
+    requestHash: hash(input.intent),
+    resource: resources[0],
+    quote,
+    executionBinding: binding,
+    now,
   });
-  const reserved = ledger.reserve(purchase, quote, resources[0], now);
+  const reserved = ledger.reserve(spendIntent, quote, now);
   trace(reserved.status === 'APPROVED' ? 'POLICY_APPROVED' : 'POLICY_STOPPED', reserved.decision.reason);
-  if (reserved.purchase.id !== purchase.id || reserved.status !== 'APPROVED') {
-    return { record: reserved, reused: reserved.purchase.id !== purchase.id, simulated: options.mode === 'simulated' };
+  if (reserved.intent.id !== spendIntent.id || reserved.status !== 'APPROVED') {
+    return { record: reserved, reused: reserved.intent.id !== spendIntent.id, simulated: options.mode === 'simulated' };
   }
 
   if (options.mode === 'simulated') {

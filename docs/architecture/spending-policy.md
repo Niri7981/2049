@@ -1,5 +1,7 @@
 # D1-10 Spending Policy
 
+> 本文记录旧 V0 的单一行情 Demo 设计。当前通用权限边界、三种 decision 名称和迁移状态以 [Authority Core（阶段一）](authority-core.md) 为准；下文的 `REJECTED` / `NEEDS_CONFIRMATION` 及固定行情 allowlist 不再是当前 Authority Core 接口。
+
 ## 目标
 
 Spending Policy 是 V0 唯一的消费授权边界。

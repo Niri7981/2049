@@ -3,13 +3,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { inspectOriginalTransaction } from '../../src/modules/payment/reconcile-transaction';
 vi.mock('../../src/modules/payment/reconcile-transaction', () => ({ inspectOriginalTransaction: vi.fn(), transactionMessageHash: () => 'original-message' }));
-import { randomUUID } from 'node:crypto';
 import { generateKeyPairSigner } from '@solana/kit';
 import { afterEach, expect, it, vi } from 'vitest';
 import { loadBuyerSigner } from '../../src/modules/payment/wallet';
 import { prepareSolanaPayment, confirmSolanaTransaction } from '../../src/modules/payment/solana-payment';
 import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
 import { createStaticResourceRegistry } from '../../src/modules/resources/static-resource-registry';
+import { createMarketSnapshotSpendIntent } from '../../src/modules/resources/market-spend-adapter';
 import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';
 import { executeApprovedPayment, recoverApprovedPayment, paymentBinding } from '../../src/modules/purchases/approved-payment';
 import { hash } from '../../src/modules/purchases/spending-policy';
@@ -26,7 +26,9 @@ async function fixture(path = ':memory:', managed = false) {
   vi.mocked(prepareSolanaPayment).mockResolvedValue({ x402Version: 2, accepted: quote, payload: { transaction: 'test-wire' } });
   const ledger = new PurchaseLedger(path, { managed }); const now = Date.now();
   if (managed) ledger.setDailyLimit('100000');
-  const record = ledger.reserve({ id: randomUUID(), taskId: 'task', taskHash: hash('task'), resourceId: resource.resource_id, providerId: resource.provider_id, input: { asset: 'SOL' }, amount: 10000, currency: 'USDC', decimals: 6, mint: config.mint, network: config.network, payTo: config.merchant, scheme: 'exact', quoteFingerprint: hash(quote), createdAt: now, expiresAt: now + 300000, binding: paymentBinding(config, endpoint) }, quote, resource);
+  const intent = createMarketSnapshotSpendIntent({ idempotencyKey: 'task', request: { asset: 'SOL' }, requestHash: hash('task'), resource, quote,
+    executionBinding: paymentBinding(config, endpoint), now });
+  const record = ledger.reserve(intent, quote, now);
   return { ledger, record, config };
 }
 afterEach(() => vi.unstubAllGlobals());
