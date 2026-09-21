@@ -75,7 +75,7 @@ function buildMenu() {
 }
 
 ipcMain.handle('app2049:request', async (_event, route, options = {}) => {
-  const allowed = new Map([['/api/app/overview', ['GET']], ['/api/app/settings', ['PUT']], ['/api/app/test-purchases', ['POST']]]);
+  const allowed = new Map([['/api/app/overview', ['GET']], ['/api/app/settings', ['PUT']], ['/api/app/connection', ['PUT']], ['/api/app/test-purchases', ['POST']]]);
   const method = typeof options.method === 'string' ? options.method : 'GET';
   if (typeof route !== 'string' || !allowed.get(route)?.includes(method)) return { ok: false, status: 400, body: { error: '不支持的管理操作。' } };
   try {

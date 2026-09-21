@@ -26,9 +26,11 @@
     "demo:preflight": "node scripts/run.mjs demo-preflight",
     "task:acceptance": "node scripts/run.mjs task-acceptance",
     "model:check": "node scripts/run.mjs model-check",
-    "agent:run": "node scripts/run.mjs agent"
+    "agent:run": "node scripts/run.mjs agent",
+    "mcp": "node --import tsx scripts/mcp.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.27.1",
     "@openai/agents": "^0.17.0",
     "@solana-program/token": "0.9.0",
     "@solana/kit": "^5.5.1",

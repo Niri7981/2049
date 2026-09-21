@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type Overview = {
+  connection: { enabled: boolean; lastSeen: number | null; access: 'read_only' };
   service: { status: string; network: string; testEnvironment: boolean; purchaseMode: 'simulated' | 'live_devnet' };
   wallet: { address: string; reused: boolean; balance: { amount: string | null; display: string; available: boolean } };
   budget: { day: string; timeZone: string; dailyLimit: string | null; paidDisplay: string; reservedDisplay: string; remainingDisplay: string; dailyLimitDisplay: string; paused: boolean; unresolved: number };
@@ -63,6 +64,9 @@ export function AppDashboard() {
     <section><h2>每日共用额度</h2><div className="limit-row"><label><span>额度（test USDC）</span><input value={limit} onChange={event => setLimit(event.target.value)} placeholder="例如 1.00" inputMode="decimal" /></label><button disabled={busy} onClick={() => void saveLimit()}>保存额度</button></div>
       <div className="metrics"><div><span>今日已消费</span><strong>{data?.budget.paidDisplay || '—'}</strong></div><div><span>预占</span><strong>{data?.budget.reservedDisplay || '—'}</strong></div><div><span>剩余</span><strong>{data?.budget.remainingDisplay || '—'}</strong></div></div><p className="hint">{data ? `${data.budget.day} · ${data.budget.timeZone}` : '读取中…'}。修改额度不会清空今天的消费。</p>
       <button className="secondary" disabled={busy} onClick={() => void mutate('/api/app/settings', { paused: !data?.budget.paused })}>{data?.budget.paused ? '继续付款' : '暂停付款'}</button></section>
+    <section><h2>Agent 连接</h2><p>{data?.connection.enabled ? '已启用，只读访问' : '未启用'}</p>
+      <p className="hint">{data?.connection.lastSeen ? `最近收到请求：${new Date(data.connection.lastSeen).toLocaleString()}` : '尚未收到 Agent 请求。'} 当前可查询额度与报价，尚未开放付款。</p>
+      <button className="secondary" disabled={busy} onClick={() => void mutate('/api/app/connection', { enabled: !data?.connection.enabled })}>{data?.connection.enabled ? '撤销 Agent 连接' : '启用 Agent 连接'}</button></section>
     <section><h2>测试购买</h2><p className="hint">仅限 Solana Devnet。默认模拟模式不会签名或提交交易；真实测试需要显式启用。</p><button disabled={busy || !data?.budget.dailyLimit || data?.budget.paused} onClick={() => void buy()}>{purchaseLabel}</button></section>
     <section><h2>购买记录</h2>{data?.purchases.length ? <ul className="records">{data.purchases.map(item => <li key={item.purchaseId}><div><strong>{item.status === 'PAID' ? '付款已确认' : item.status}</strong><span>{new Date(item.createdAt).toLocaleString()}</span></div><span>{item.deliveryStatus === 'COMPLETE' ? '结果已交付' : item.deliveryStatus === 'PENDING' ? '结果待恢复' : '尚未确认付款'}</span><code>{item.purchaseId}</code><span>{(Number(item.amount) / 1_000_000).toFixed(2)} test USDC</span></li>)}</ul> : <p className="hint">还没有购买记录。</p>}</section>
   </main>;

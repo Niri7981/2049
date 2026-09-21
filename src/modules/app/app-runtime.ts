@@ -8,6 +8,7 @@ import { PurchaseLedger } from '../purchases/purchase-ledger';
 import { paymentEndpoint, recoverApprovedPayment } from '../purchases/approved-payment';
 import { purchaseMarketSnapshot } from '../purchases/purchase-market-snapshot';
 import { hash } from '../purchases/spending-policy';
+import { AgentConnection } from '../mcp/connection';
 
 type RuntimeState = { runtime?: AppRuntime };
 export type TestPurchaseResult = { purchaseId: string; status: string; deliveryStatus: string; policy: { decision: string; reason: string }; transaction: string | null; simulated: boolean; warning?: string };
@@ -26,12 +27,14 @@ function localTimeZone() {
 
 export class AppRuntime {
   readonly ledger: PurchaseLedger;
+  readonly agentConnection: AgentConnection;
   private accepting = true;
   private active = new Set<Promise<unknown>>();
   private startup?: Promise<void>;
   private recoveryStatus: 'idle' | 'running' | 'complete' | 'pending' = 'idle';
   private wallet?: Promise<{ address: string; reused: boolean }>;
   constructor(readonly directory = dataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number } = {}) {
+    this.agentConnection = new AgentConnection(directory);
     this.ledger = new PurchaseLedger(join(directory, 'app-ledger.sqlite'), { managed: true, timeZone: dependencies.timeZone ?? localTimeZone, now: dependencies.now });
   }
   async initializeWallet() {
@@ -75,6 +78,7 @@ export class AppRuntime {
   }
   async prepareQuit() {
     this.accepting = false;
+    this.agentConnection.setEnabled(false, '');
     this.ledger.stopPayments();
     await Promise.allSettled([...this.active]);
   }
@@ -108,7 +112,7 @@ export class AppRuntime {
     return { service: { status: this.accepting ? 'running' : 'stopping', recoveryStatus: this.recoveryStatus, network: 'Solana Devnet', testEnvironment: true,
         purchaseMode: process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1' ? 'live_devnet' : 'simulated' },
       wallet: { address: wallet.address, reused: wallet.reused, balance }, budget: { ...budget, dailyLimitDisplay: display(budget.dailyLimit),
-        paidDisplay: display(budget.paid), reservedDisplay: display(budget.reserved), remainingDisplay: display(budget.remaining) }, purchases: this.ledger.list() };
+        paidDisplay: display(budget.paid), reservedDisplay: display(budget.reserved), remainingDisplay: display(budget.remaining) }, purchases: this.ledger.list(), connection: this.agentConnection.status() };
   }
   setDailyLimit(value: string | null) { return this.ledger.setDailyLimit(value); }
   setPaused(value: boolean) { return this.ledger.setPaused(value); }
