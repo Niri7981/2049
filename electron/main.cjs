@@ -37,7 +37,7 @@ function startService() {
   const next = path.join(process.cwd(), 'node_modules', 'next', 'dist', 'bin', 'next');
   const command = app.isPackaged ? 'start' : 'dev';
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', APP2049_MANAGEMENT_TOKEN: token,
-    APP2049_DATA_DIR: app.getPath('userData'), NODE_USE_ENV_PROXY: '1' };
+    APP2049_DATA_DIR: process.env.APP2049_DATA_DIR || app.getPath('userData'), NODE_USE_ENV_PROXY: '1' };
   if (process.platform === 'darwin' && !env.HTTPS_PROXY && !env.https_proxy) {
     try {
       const settings = execFileSync('/usr/sbin/scutil', ['--proxy'], { encoding: 'utf8', timeout: 3000 });

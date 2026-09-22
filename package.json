@@ -15,6 +15,7 @@
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "payment:preflight": "node scripts/run.mjs preflight",
+    "e2e:evidence": "node scripts/run.mjs e2e-evidence",
     "localnet:start": "NO_DNA=1 solana-test-validator --ledger .data/solana-ledger --bind-address 127.0.0.1",
     "localnet:init": "bash scripts/localnet-init.sh",
     "payment:pay": "node scripts/run.mjs pay",

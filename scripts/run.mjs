@@ -17,7 +17,7 @@ if (process.platform === 'darwin' && !env.HTTPS_PROXY && !env.https_proxy) {
 env.NODE_USE_ENV_PROXY = '1';
 env.NO_PROXY = [env.NO_PROXY || env.no_proxy, 'localhost', '127.0.0.1', '::1'].filter(Boolean).join(',');
 const [target, ...args] = process.argv.slice(2);
-const entries = { 'demo-preflight': 'scripts/demo-preflight.ts', 'task-acceptance': 'scripts/task-acceptance.ts', 'model-check': 'scripts/model-check.ts', agent: 'scripts/agent-task.ts', wallet: 'scripts/wallet-setup.ts', accounts: 'scripts/wallet-accounts.ts', preflight: 'scripts/payment-preflight.mjs', pay: 'scripts/pay.ts' };
+const entries = { 'demo-preflight': 'scripts/demo-preflight.ts', 'task-acceptance': 'scripts/task-acceptance.ts', 'model-check': 'scripts/model-check.ts', agent: 'scripts/agent-task.ts', wallet: 'scripts/wallet-setup.ts', accounts: 'scripts/wallet-accounts.ts', preflight: 'scripts/payment-preflight.mjs', pay: 'scripts/pay.ts', 'e2e-evidence': 'scripts/e2e-evidence.ts' };
 if (!['server', 'demo'].includes(target) && !entries[target]) throw new Error('Unknown demo command');
 const command = ['server', 'demo'].includes(target)
   ? ['node_modules/next/dist/bin/next', target === 'demo' ? 'start' : 'dev', '--hostname', '127.0.0.1', ...args]

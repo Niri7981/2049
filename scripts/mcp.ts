@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createAgentServer } from '../src/modules/mcp/server';
 import { readConnection } from '../src/modules/mcp/connection';
+import { appRequestTimeout } from '../src/modules/mcp/request-timeout';
 
 const directory = process.env.APP2049_DATA_DIR || join(homedir(), 'Library', 'Application Support', '2049');
 // Capture one connection capability. Revocation/re-enable requires a new MCP session.
@@ -11,7 +12,7 @@ async function callApp(path: string, init?: RequestInit) {
   connection ??= readConnection(directory);
   const response = await fetch(`${connection.origin}${path}`, {
     headers: { authorization: `Bearer ${connection.token}` },
-    redirect: 'error', signal: AbortSignal.timeout(20_000), ...init,
+    redirect: 'error', signal: AbortSignal.timeout(appRequestTimeout(path)), ...init,
     ...(init?.body ? { headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' } } : {}),
   });
   if (!response.ok) throw new Error('APP_UNAVAILABLE');

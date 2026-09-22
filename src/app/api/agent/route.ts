@@ -14,7 +14,8 @@ export async function GET(request: Request) {
     if (operation === 'status') {
       const overview = await app.overview();
       return Response.json({ wallet: overview.wallet, budget: overview.budget, grant: overview.grant,
-        spendingAuthorized: overview.connection.access === 'spending_request' && overview.grant?.status === 'ACTIVE', paymentEnabled: false }, { headers: { 'cache-control': 'no-store' } });
+        spendingAuthorized: overview.connection.access === 'spending_request' && overview.grant?.status === 'ACTIVE',
+        paymentEnabled: overview.service.purchaseMode === 'live_devnet' }, { headers: { 'cache-control': 'no-store' } });
     }
     if (operation !== 'quote') return Response.json({ code: 'UNKNOWN_OPERATION' }, { status: 400 });
     await app.initializeWallet();
