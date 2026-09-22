@@ -69,6 +69,18 @@ it('serializes the lifetime total across two ledger clients', () => {
   } finally { first.close(); second.close(); }
 });
 
+it('does not reuse an idempotent request across connection owners', () => {
+  const value = ledger();
+  try {
+    const first = authority(value);
+    value.reserve(intent('owned-request', 200_000, first), quote, now);
+    const replacementPrincipal = { connectionId: randomUUID(), connectionGeneration: 1 };
+    value.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 60 * 60 * 1000 }, replacementPrincipal, scope, now + 1);
+    const replacement = value.spendAuthority(replacementPrincipal, MARKET_SNAPSHOT_OPERATION, now + 1);
+    expect(() => value.reserve(intent('owned-request', 200_000, replacement), quote, now + 1)).toThrow('PURCHASE_REQUEST_OWNER_MISMATCH');
+  } finally { value.close(); }
+});
+
 it('rechecks revocation and expiry before a reserved payment can sign', () => {
   const value = ledger();
   try {

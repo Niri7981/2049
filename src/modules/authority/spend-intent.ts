@@ -13,6 +13,8 @@ export const SpendIntentSchema = z.object({
   requestHash: z.string().min(1),
   resourceId: boundedIdentifier,
   providerId: boundedIdentifier,
+  offerId: boundedIdentifier.optional(),
+  reason: z.string().trim().min(1).max(240).optional(),
   amount: z.number().int().positive().safe(),
   currency: boundedIdentifier,
   assetDecimals: z.number().int().nonnegative().max(255),

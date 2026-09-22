@@ -9,9 +9,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   const query = new URL(request.url).searchParams;
-  if ([...query.keys()].length !== 1 || !query.has("asset")) {
-    return Response.json({ error: "Exactly one asset parameter is required" }, { status: 400 });
+  if (![1, 2].includes([...query.keys()].length) || !query.has("asset") || ([...query.keys()].length === 2 && !query.has("offer"))) {
+    return Response.json({ error: "Asset and optional offer parameters are required" }, { status: 400 });
   }
   const asset = query.get("asset");
-  return paidMarketSnapshotResponse({ asset }, request.headers.get(PAYMENT_SIGNATURE_HEADER) ?? undefined, request.headers.get(PAYMENT_RECOVERY_HEADER) === "1");
+  const offer = query.get("offer") ?? undefined;
+  return paidMarketSnapshotResponse({ asset, ...(offer ? { offer } : {}) }, request.headers.get(PAYMENT_SIGNATURE_HEADER) ?? undefined, request.headers.get(PAYMENT_RECOVERY_HEADER) === "1");
 }

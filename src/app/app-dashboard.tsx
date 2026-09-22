@@ -7,7 +7,7 @@ type Overview = {
   wallet: { address: string; reused: boolean; balance: { amount: string | null; display: string; available: boolean } };
   budget: { day: string; timeZone: string; dailyLimit: string | null; paidDisplay: string; reservedDisplay: string; remainingDisplay: string; dailyLimitDisplay: string; paused: boolean; unresolved: number };
   grant: null | { id: string; status: 'ACTIVE' | 'REVOKED' | 'EXPIRED'; totalLimit: string; singleLimit: string; committed: string; remaining: string; expiresAt: number; operation: string };
-  purchases: Array<{ purchaseId: string; status: string; deliveryStatus: 'NOT_PAID' | 'PENDING' | 'COMPLETE'; amount: string; createdAt: number; transaction: string | null }>;
+  purchases: Array<{ purchaseId: string; status: string; deliveryStatus: 'NOT_PAID' | 'PENDING' | 'COMPLETE'; amount: string; createdAt: number; transaction: string | null; offerId?: string; reason?: string; decisionReason?: string; grantId?: string }>;
 };
 type BridgeResponse = { ok: boolean; status: number; body: unknown };
 declare global { interface Window { app2049?: { request(path: string, options?: { method?: string; body?: unknown }): Promise<BridgeResponse> } } }
@@ -20,6 +20,18 @@ function toMinor(input: string) {
   return value;
 }
 function fromMinor(input: string | null) { return input === null ? '' : (Number(input) / 1_000_000).toString(); }
+function decisionLabel(reason?: string) {
+  if (!reason) return '';
+  const labels: Record<string, string> = {
+    AUTHORITY_BUDGET_AND_GRANT_PASSED: '授权、每日额度与报价检查通过',
+    SPEND_GRANT_SINGLE_LIMIT_EXCEEDED: '超过授权单笔上限',
+    SPEND_GRANT_TOTAL_LIMIT_EXCEEDED: '超过授权剩余额度',
+    DAILY_BUDGET_EXCEEDED: '超过今日剩余额度',
+    DAILY_LIMIT_NOT_SET: '尚未设置每日额度',
+    PAYMENTS_PAUSED: '付款已暂停',
+  };
+  return labels[reason] ?? '策略未通过';
+}
 function defaultExpiry() {
   const date = new Date(Date.now() + 8 * 60 * 60 * 1000);
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
@@ -90,6 +102,6 @@ export function AppDashboard() {
       <div className="limit-row"><button disabled={busy || !data?.connection.enabled} onClick={() => void createGrant()}>{data?.grant?.status === 'ACTIVE' ? '替换授权' : '创建授权'}</button><button className="secondary" disabled={busy || data?.grant?.status !== 'ACTIVE'} onClick={() => void mutate('/api/app/grant', { action: 'revoke' })}>撤销授权</button></div>
     </section>
     <section><h2>测试购买</h2><p className="hint">仅限 Solana Devnet。默认模拟模式不会签名或提交交易；真实测试需要显式启用。</p><button disabled={busy || !data?.budget.dailyLimit || data?.budget.paused || data?.grant?.status !== 'ACTIVE'} onClick={() => void buy()}>{purchaseLabel}</button></section>
-    <section><h2>购买记录</h2>{data?.purchases.length ? <ul className="records">{data.purchases.map(item => <li key={item.purchaseId}><div><strong>{item.status === 'PAID' ? '付款已确认' : item.status}</strong><span>{new Date(item.createdAt).toLocaleString()}</span></div><span>{item.deliveryStatus === 'COMPLETE' ? '结果已交付' : item.deliveryStatus === 'PENDING' ? '结果待恢复' : '尚未确认付款'}</span><code>{item.purchaseId}</code><span>{(Number(item.amount) / 1_000_000).toFixed(2)} test USDC</span></li>)}</ul> : <p className="hint">还没有购买记录。</p>}</section>
+    <section><h2>购买记录</h2>{data?.purchases.length ? <ul className="records">{data.purchases.map(item => <li key={item.purchaseId}><div><strong>{item.status === 'PAID' ? '付款已确认' : item.status}</strong><span>{new Date(item.createdAt).toLocaleString()}</span></div>{item.reason && <span>{item.reason}</span>}<span>{item.deliveryStatus === 'COMPLETE' ? '结果已交付' : item.deliveryStatus === 'PENDING' ? '结果待恢复' : '付款未开始'}</span><code>{item.purchaseId}</code><span>{item.offerId ? `${item.offerId} · ` : ''}{(Number(item.amount) / 1_000_000).toFixed(2)} test USDC</span>{item.decisionReason && <span>{decisionLabel(item.decisionReason)}</span>}</li>)}</ul> : <p className="hint">还没有购买记录。</p>}</section>
   </main>;
 }

@@ -12,6 +12,7 @@ import { AgentConnection } from '../mcp/connection';
 import { MARKET_SNAPSHOT_OPERATION, SpendGrantInputSchema, type SpendPrincipal } from '../authority/spend-grant';
 import { DEMO_MARKET_DATA_PROVIDER_ID, PREMIUM_SOL_MARKET_SNAPSHOT_ID } from '../resources/static-resource-registry';
 import { DEVNET_NETWORK } from '../payment/payment-config';
+import { requestMarketPurchase, type PurchaseRequestResult } from '../purchases/request-market-purchase';
 
 type RuntimeState = { runtime?: AppRuntime };
 export type TestPurchaseResult = { purchaseId: string; status: string; deliveryStatus: string; policy: { decision: string; reason: string }; transaction: string | null; simulated: boolean; warning?: string };
@@ -36,7 +37,8 @@ export class AppRuntime {
   private startup?: Promise<void>;
   private recoveryStatus: 'idle' | 'running' | 'complete' | 'pending' = 'idle';
   private wallet?: Promise<{ address: string; reused: boolean }>;
-  constructor(readonly directory = dataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number } = {}) {
+  private walletAddress?: string;
+  constructor(readonly directory = dataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number; fetcher?: typeof fetch } = {}) {
     this.ledger = new PurchaseLedger(join(directory, 'app-ledger.sqlite'), { managed: true, requireSpendGrant: true, timeZone: dependencies.timeZone ?? localTimeZone, now: dependencies.now });
     this.agentConnection = new AgentConnection(directory);
     // Connection tokens intentionally do not survive a backend restart. A grant
@@ -45,6 +47,7 @@ export class AppRuntime {
   }
   async initializeWallet() {
     this.wallet ??= (this.dependencies.initializeWallet ?? initializeProductWallet)().then(wallet => {
+      this.walletAddress = wallet.address;
       process.env.DEMO_BUYER_PUBLIC_KEY = wallet.address;
       process.env.APP2049_USE_PRODUCT_WALLET = '1';
       return wallet;
@@ -163,6 +166,20 @@ export class AppRuntime {
     const current = principal ?? this.agentConnection.principal('request_purchase');
     if (!current) throw new Error('当前 Agent 连接没有消费权限。');
     return this.ledger.spendAuthority(current, MARKET_SNAPSHOT_OPERATION, this.dependencies.now?.() ?? Date.now());
+  }
+  requestPurchase(input: unknown, origin: string, principal: SpendPrincipal): Promise<PurchaseRequestResult> {
+    if (!this.accepting) return Promise.reject(new Error('服务正在退出，不能创建购买请求。'));
+    return this.track(this.performPurchaseRequest(input, origin, principal));
+  }
+  private async performPurchaseRequest(input: unknown, origin: string, principal: SpendPrincipal) {
+    if (!this.accepting) throw new Error('服务正在退出，不能创建购买请求。');
+    // A SpendGrant can only be created from the initialized App session. Keep
+    // this policy-only path away from Keychain and all signer construction.
+    const buyer = this.walletAddress;
+    if (!buyer) throw new Error('产品钱包尚未初始化。');
+    const config = loadPaymentConfig();
+    if (config.cluster !== 'devnet' || config.buyer !== buyer) throw new Error('Devnet 钱包配置不匹配。');
+    return requestMarketPurchase(input, { config, ledger: this.ledger, origin, principal, fetcher: this.dependencies.fetcher, now: this.dependencies.now });
   }
   createTestPurchase(id: string, origin: string): Promise<TestPurchaseResult> {
     if (!this.accepting) return Promise.reject(new Error('服务正在退出，不能开始新付款。'));

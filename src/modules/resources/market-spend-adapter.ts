@@ -15,6 +15,8 @@ export function createMarketSnapshotSpendIntent(input: {
   executionBinding: string;
   now?: number;
   authority?: SpendAuthorityBinding;
+  offerId?: string;
+  reason?: string;
 }): SpendIntent {
   const now = input.now ?? Date.now();
   const resource = input.resource;
@@ -33,6 +35,8 @@ export function createMarketSnapshotSpendIntent(input: {
     requestHash: input.requestHash,
     resourceId: resource.resource_id,
     providerId: resource.provider_id,
+    ...(input.offerId ? { offerId: input.offerId } : {}),
+    ...(input.reason ? { reason: input.reason } : {}),
     amount: resource.expected_price_minor,
     currency: resource.currency,
     assetDecimals: resource.asset_decimals,

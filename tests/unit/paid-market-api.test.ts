@@ -91,6 +91,21 @@ describe("x402 paid market API", () => {
     expect(await (await handler({ asset: "SOL" })).text()).toBe("");
   });
 
+  it.each([
+    ['basic', '200000', '/api/paid/market-snapshot?asset=SOL&offer=basic'],
+    ['premium', '20000000', '/api/paid/market-snapshot?asset=SOL&offer=premium'],
+  ] as const)('issues a real x402 quote for the %s offer without verifying or settling', async (offer, amount, resource) => {
+    const { handler, facilitator } = setup();
+    const response = await handler({ asset: 'SOL', offer });
+    expect(response.status).toBe(402);
+    const required = JSON.parse(Buffer.from(response.headers.get(PAYMENT_REQUIRED_HEADER)!, 'base64').toString()) as PaymentRequired;
+    expect(required.resource.url).toBe(resource);
+    expect(required.accepts).toHaveLength(1);
+    expect(required.accepts[0]).toMatchObject({ scheme: 'exact', amount, payTo: config.merchant, asset: config.mint, network: config.network });
+    expect(facilitator.verify).not.toHaveBeenCalled();
+    expect(facilitator.settle).not.toHaveBeenCalled();
+  });
+
   it("verifies and settles before returning data and PAYMENT-RESPONSE", async () => {
     const { handler, facilitator } = setup();
     const { header, payload } = await paymentFor(handler);

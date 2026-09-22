@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DemoStore, safeText } from "../../src/modules/demo/demo-store";
 import {
+  localRequestOrigin,
   requireLocalRequest,
   smallJson,
 } from "../../src/modules/demo/local-request";
@@ -27,6 +28,7 @@ function request(
 describe("Demo local wallet boundary", () => {
   it("accepts Next normalized localhost with the real loopback Host and matching Origin", () => {
     expect(() => requireLocalRequest(request(), true)).not.toThrow();
+    expect(localRequestOrigin(request())).toBe("http://127.0.0.1:3000");
   });
   it.each<Record<string, string>>([
     { host: "evil.example:3000" },

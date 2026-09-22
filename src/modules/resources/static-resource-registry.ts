@@ -3,7 +3,9 @@ import {
   type ResourceMetadata,
 } from "./resource-schema";
 
-export const PREMIUM_SOL_MARKET_SNAPSHOT_ID = "premium-sol-market-snapshot";
+export const SOL_MARKET_SNAPSHOT_RESOURCE_ID = "premium-sol-market-snapshot";
+/** Compatibility export for callers written before offers were separated. */
+export const PREMIUM_SOL_MARKET_SNAPSHOT_ID = SOL_MARKET_SNAPSHOT_RESOURCE_ID;
 export const DEMO_MARKET_DATA_PROVIDER_ID = "demo-market-data-provider";
 
 export type StaticResourceRegistryConfig = Pick<

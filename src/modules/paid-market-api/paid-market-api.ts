@@ -9,7 +9,9 @@ import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymen
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { loadPaymentConfig, type PaymentConfig } from "../payment/payment-config";
 import { MarketSnapshotInputSchema, MarketSnapshotOutputSchema } from "../resources/resource-schema";
+import { MarketOfferIdSchema, marketOffer } from "../resources/market-offers";
 import { SettlementStore, type StoredSettlement } from "./settlement-store";
+import { z } from "zod";
 
 export const PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
 export const PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE";
@@ -17,6 +19,19 @@ export const PAYMENT_RECOVERY_HEADER = "PAYMENT-RECOVERY";
 export const PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
 export const MARKET_RESOURCE_URL = "/api/paid/market-snapshot?asset=SOL";
 export const PAYMENT_AMOUNT = "10000";
+export const MARKET_OFFER_RESOURCE_URLS = Object.freeze({
+  basic: "/api/paid/market-snapshot?asset=SOL&offer=basic",
+  premium: "/api/paid/market-snapshot?asset=SOL&offer=premium",
+});
+
+const PaidMarketInputSchema = MarketSnapshotInputSchema.extend({ offer: MarketOfferIdSchema.optional() }).strict();
+type PaidMarketInput = z.infer<typeof PaidMarketInputSchema>;
+
+function terms(input: PaidMarketInput) {
+  if (!input.offer) return { amount: PAYMENT_AMOUNT, resource: MARKET_RESOURCE_URL, description: "Premium SOL market snapshot (demo fixture)" };
+  const offer = marketOffer(input.offer);
+  return { amount: offer.amount, resource: MARKET_OFFER_RESOURCE_URLS[input.offer], description: `${input.offer} SOL market snapshot offer (demo fixture)` };
+}
 
 export const demoSnapshot = MarketSnapshotOutputSchema.parse({
   asset: "SOL", as_of: "2026-09-05T08:00:00.000Z", spot_price_usd: 140,
@@ -77,21 +92,22 @@ export function createPaidMarketApi(
     await initialized;
   }
 
-  async function quote(error?: string) {
+  async function quote(input: PaidMarketInput, error?: string) {
     await initialize();
+    const selected = terms(input);
     // 128-bit nonce in 22 ASCII characters keeps Memo within the SDK's 20k CU budget.
     const memo = `day4:${randomBytes(16).toString("base64url")}`;
     const requirements = await server.buildPaymentRequirements({
       scheme: "exact", network: config.network, payTo: config.merchant,
-      price: { amount: PAYMENT_AMOUNT, asset: config.mint }, maxTimeoutSeconds: 300,
+      price: { amount: selected.amount, asset: config.mint }, maxTimeoutSeconds: 300,
       extra: { memo },
     });
     if (requirements.length !== 1 || typeof requirements[0].extra.feePayer !== "string") {
       return jsonError(503, "Facilitator does not support the configured test payment");
     }
-    store.saveQuote({ id: memo, resource: MARKET_RESOURCE_URL, requirements: requirements[0], expiresAt: Date.now() + 300_000 });
+    store.saveQuote({ id: memo, resource: selected.resource, requirements: requirements[0], expiresAt: Date.now() + 300_000 });
     const required = await server.createPaymentRequiredResponse(requirements, {
-      url: MARKET_RESOURCE_URL, description: "Premium SOL market snapshot (demo fixture)", mimeType: "application/json",
+      url: selected.resource, description: selected.description, mimeType: "application/json",
     }, error);
     return new Response(null, { status: 402, headers: {
       [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(required), "cache-control": "no-store",
@@ -99,22 +115,25 @@ export function createPaidMarketApi(
   }
 
   return async (input, payment, recoveryOnly = false) => {
-    if (!MarketSnapshotInputSchema.safeParse(input).success) return jsonError(400, "Unsupported asset");
+    const parsed = PaidMarketInputSchema.safeParse(input);
+    if (!parsed.success) return jsonError(400, "Unsupported market offer");
+    const request = parsed.data;
     try {
-      if (!payment) return recoveryOnly ? jsonError(400, "Recovery requires original payment") : await quote();
+      if (!payment) return recoveryOnly ? jsonError(400, "Recovery requires original payment") : await quote(request);
       const payload = decodePayment(payment);
-      if (!payload) return await quote("Invalid x402 V2 payment payload");
+      if (!payload) return await quote(request, "Invalid x402 V2 payment payload");
       const memo = payload.accepted.extra?.memo;
       const storedQuote = typeof memo === "string" ? store.getQuote(memo) : undefined;
-      if (!storedQuote || storedQuote.resource !== MARKET_RESOURCE_URL ||
-          (payload.resource && payload.resource.url !== MARKET_RESOURCE_URL) ||
+      const expected = terms(request);
+      if (!storedQuote || storedQuote.resource !== expected.resource ||
+          (payload.resource && payload.resource.url !== expected.resource) ||
           !isDeepStrictEqual(payload.accepted, storedQuote.requirements) ||
-          !matchesConfig(storedQuote.requirements, config)) {
-        return await quote("Payment does not match the server-issued quote");
+          !matchesConfig(storedQuote.requirements, config, expected.amount)) {
+        return await quote(request, "Payment does not match the server-issued quote");
       }
       const transaction = payload.payload.transaction;
       if (typeof transaction !== "string" || transaction.length > 2_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(transaction)) {
-        return await quote("Invalid Solana payment transaction");
+        return await quote(request, "Invalid Solana payment transaction");
       }
       let messageHash: string;
       let payloadHash: string;
@@ -124,7 +143,7 @@ export function createPaidMarketApi(
         if (!Buffer.from(decoded.serialize()).equals(bytes)) throw new Error("Noncanonical transaction");
         messageHash = createHash("sha256").update(decoded.message.serialize()).digest("hex");
         payloadHash = createHash("sha256").update(bytes).digest("hex");
-      } catch { return await quote("Invalid Solana payment transaction"); }
+      } catch { return await quote(request, "Invalid Solana payment transaction"); }
 
       const previous = store.get(messageHash);
       if (previous) {
@@ -134,7 +153,7 @@ export function createPaidMarketApi(
           const outcome = await reconcileOriginalTransaction(config, messageHash, storedQuote.id, previous.receipt?.transaction);
           if (outcome.status !== "UNKNOWN") {
             const receipt: SettleResponse = { success: outcome.status === "CONFIRMED", transaction: outcome.transaction,
-              network: config.network, payer: config.buyer, amount: PAYMENT_AMOUNT };
+              network: config.network, payer: config.buyer, amount: storedQuote.requirements.amount };
             if (outcome.status === "CONFIRMED") store.confirm(messageHash, receipt, previous.body ?? snapshotBody);
             else store.fail(messageHash, { ...receipt, errorReason: "transaction_failed_on_chain" });
           }
@@ -144,11 +163,11 @@ export function createPaidMarketApi(
       // Recovery must never turn an unsubmitted payload into a first payment.
       if (recoveryOnly) return jsonError(202, "No settlement claim found; payment remains unresolved");
       if (store.getByQuote(storedQuote.id)) return jsonError(409, "Quote already claimed; do not create another payment");
-      if (storedQuote.expiresAt <= Date.now()) return await quote("Payment quote expired");
+      if (storedQuote.expiresAt <= Date.now()) return await quote(request, "Payment quote expired");
 
       await initialize();
       const verification = await server.verifyPayment(payload, storedQuote.requirements);
-      if (!verification.isValid || verification.payer !== config.buyer) return await quote("Payment verification rejected");
+      if (!verification.isValid || verification.payer !== config.buyer) return await quote(request, "Payment verification rejected");
 
       // Prepare output first. Commit the durable UNKNOWN claim before calling
       // settlement: timeouts, process exits and write failures never permit re-pay.
@@ -167,7 +186,7 @@ export function createPaidMarketApi(
           return jsonError(402, "Settlement failed; no market data released");
         }
         if (!receipt.transaction || receipt.network !== config.network || receipt.payer !== config.buyer ||
-            (receipt.amount !== undefined && receipt.amount !== PAYMENT_AMOUNT)) {
+            (receipt.amount !== undefined && receipt.amount !== storedQuote.requirements.amount)) {
           return previousResponse(store.get(messageHash)!, payloadHash);
         }
         store.confirm(messageHash, receipt, snapshotBody);
@@ -181,15 +200,15 @@ export function createPaidMarketApi(
   };
 }
 
-function matchesConfig(requirements: PaymentRequirements, config: PaymentConfig) {
+function matchesConfig(requirements: PaymentRequirements, config: PaymentConfig, amount: string) {
   return requirements.scheme === "exact" && requirements.network === config.network &&
-    requirements.asset === config.mint && requirements.payTo === config.merchant && requirements.amount === PAYMENT_AMOUNT;
+    requirements.asset === config.mint && requirements.payTo === config.merchant && requirements.amount === amount;
 }
 
 let configuredHandler: ReturnType<typeof createPaidMarketApi> | undefined;
 
 export async function paidMarketSnapshotResponse(input: unknown, payment?: string, recoveryOnly = false) {
-  if (!MarketSnapshotInputSchema.safeParse(input).success) return jsonError(400, "Unsupported asset");
+  if (!PaidMarketInputSchema.safeParse(input).success) return jsonError(400, "Unsupported market offer");
   try {
     configuredHandler ??= createPaidMarketApi(loadPaymentConfig());
     return await configuredHandler(input, payment, recoveryOnly);

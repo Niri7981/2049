@@ -48,3 +48,43 @@ it('connects the real stdio bridge from another cwd and does not reacquire revok
     rmSync(directory, { recursive: true, force: true });
   }
 }, 15_000);
+
+it('sends request_purchase through the spend-authorized POST bridge without payment fields', async () => {
+  const directory = mkdtempSync(join(tmpdir(), '2049-stdio-request-'));
+  const connection = new AgentConnection(directory);
+  let received: { url?: string; method?: string; body?: unknown } = {};
+  const http = createServer((incoming, outgoing) => {
+    const address = http.address();
+    if (!address || typeof address === 'string') throw new Error('Missing test port');
+    const url = new URL(incoming.url ?? '/', `http://127.0.0.1:${address.port}`);
+    try {
+      connection.authenticate(new Request(url, { headers: { authorization: incoming.headers.authorization ?? '' } }), 'request_purchase');
+      const chunks: Buffer[] = [];
+      incoming.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      incoming.on('end', () => {
+        received = { url: url.pathname, method: incoming.method, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) };
+        outgoing.setHeader('content-type', 'application/json');
+        outgoing.end(JSON.stringify({ status: 'APPROVED', paymentStatus: 'NOT_STARTED' }));
+      });
+    } catch { outgoing.writeHead(401); outgoing.end(); }
+  });
+  http.listen(0, '127.0.0.1'); await once(http, 'listening');
+  const address = http.address();
+  if (!address || typeof address === 'string') throw new Error('Missing test port');
+  const origin = `http://127.0.0.1:${address.port}`;
+  connection.setEnabled(true, origin); connection.rotateForSpending();
+  const client = new Client({ name: 'stdio-request-test', version: '1' });
+  const transport = new StdioClientTransport({ command: process.execPath,
+    args: ['--import', resolve('node_modules/tsx/dist/loader.mjs'), resolve('scripts/mcp.ts')], cwd: tmpdir(),
+    env: { APP2049_DATA_DIR: directory }, stderr: 'pipe' });
+  try {
+    await client.connect(transport);
+    const result = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'stdio-request-1', offerId: 'basic', reason: 'Need SOL data' } });
+    expect(result.isError).not.toBe(true);
+    expect(received).toEqual({ url: '/api/agent/purchases', method: 'POST', body: { requestId: 'stdio-request-1', offerId: 'basic', reason: 'Need SOL data' } });
+  } finally {
+    await client.close(); await transport.close();
+    await new Promise<void>(done => http.close(() => done()));
+    rmSync(directory, { recursive: true, force: true });
+  }
+}, 15_000);

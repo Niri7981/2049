@@ -224,6 +224,10 @@ export class PurchaseLedger {
       this.expireUnclaimed(now);
       const existing = this.get(intent.idempotencyKey);
       if (existing) {
+        if (this.requireSpendGrant && (existing.intent.authority?.connectionId !== intent.authority?.connectionId ||
+          existing.intent.authority?.connectionGeneration !== intent.authority?.connectionGeneration)) {
+          throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
+        }
         if (existing.intent.requestHash !== intent.requestHash || existing.intent.executionBinding !== intent.executionBinding) throw new Error('Idempotency key belongs to another request or execution configuration');
         return existing;
       }
@@ -339,8 +343,13 @@ export class PurchaseLedger {
   }
   list(limit = 50) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid record limit');
-    return this.db.prepare('SELECT task_id,status,amount,transaction_id,data IS NOT NULL AS delivered,json_extract(purchase,\'$.createdAt\') AS created_at FROM purchases ORDER BY created_at DESC LIMIT ?').all(limit)
-      .map(row => ({ purchaseId: String(row.task_id), status: currentAuthorityStatus(String(row.status)), deliveryStatus: row.status === 'PAID' ? (row.delivered ? 'COMPLETE' : 'PENDING') : 'NOT_PAID', amount: String(row.amount), createdAt: Number(row.created_at), transaction: row.transaction_id ? String(row.transaction_id) : null }));
+    return this.db.prepare(`SELECT task_id,status,amount,transaction_id,data IS NOT NULL AS delivered,json_extract(purchase,'$.createdAt') AS created_at,
+      json_extract(purchase,'$.offerId') AS offer_id,json_extract(purchase,'$.reason') AS reason,json_extract(decision,'$.reason') AS decision_reason,
+      json_extract(purchase,'$.authority.grantId') AS grant_id FROM purchases ORDER BY created_at DESC LIMIT ?`).all(limit)
+      .map(row => ({ purchaseId: String(row.task_id), status: currentAuthorityStatus(String(row.status)), deliveryStatus: row.status === 'PAID' ? (row.delivered ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
+        amount: String(row.amount), createdAt: Number(row.created_at), transaction: row.transaction_id ? String(row.transaction_id) : null,
+        ...(row.offer_id ? { offerId: String(row.offer_id) } : {}), ...(row.reason ? { reason: String(row.reason) } : {}),
+        ...(row.decision_reason ? { decisionReason: String(row.decision_reason) } : {}), ...(row.grant_id ? { grantId: String(row.grant_id) } : {}) }));
   }
   events(taskId: string) { return this.db.prepare('SELECT e.sequence,e.type,e.at FROM purchase_events e JOIN purchases p ON p.id=e.purchase_id WHERE p.task_id=? ORDER BY e.sequence').all(taskId); }
   private denied(reason: string, committed: number, controls: SpendingControls): AuthorityDecision {

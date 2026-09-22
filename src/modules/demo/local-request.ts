@@ -23,6 +23,13 @@ export function requireLocalRequest(request: Request, mutation = false) {
   )
     throw new Error("需要同源 JSON 请求。");
 }
+
+/** Return the validated socket origin; Next may normalize Request.url to localhost. */
+export function localRequestOrigin(request: Request) {
+  requireLocalRequest(request);
+  const url = new URL(request.url);
+  return new URL(`http://${request.headers.get("host") ?? url.host}`).origin;
+}
 export async function smallJson(request: Request) {
   const reader = request.body?.getReader();
   if (!reader) throw new Error("缺少请求内容。");

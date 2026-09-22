@@ -55,6 +55,18 @@ describe('authenticated local management boundary', () => {
 });
 
 describe('managed budget and Devnet test records', () => {
+  it('keeps a policy-only purchase request away from wallet initialization', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'app2049-request-wallet-')); dirs.push(dir);
+    const initializeWallet = vi.fn(async () => ({ address, reused: true }));
+    const app = new AppRuntime(dir, { initializeWallet });
+    try {
+      await expect(app.requestPurchase({ requestId: 'no-wallet', offerId: 'basic', reason: 'Need data' }, origin,
+        { connectionId: randomUUID(), connectionGeneration: 1 })).rejects.toThrow('尚未初始化');
+      expect(initializeWallet).not.toHaveBeenCalled();
+      expect(app.ledger.list()).toHaveLength(0);
+    } finally { app.ledger.close(); }
+  });
+
   it('binds a finite grant to the current Agent and reports successful authorization', () => {
     const app = runtime(); const now = Date.now();
     try {

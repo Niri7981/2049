@@ -69,20 +69,24 @@ it('rotates the credential when spending is granted or revoked', () => {
   expect(() => connection.authenticate(request(spending.token), 'request_purchase')).toThrow();
 });
 
-it('uses the official MCP handshake and exposes only two read tools, with sanitized failures', async () => {
+it('uses the official MCP handshake and exposes a request-only purchase tool with sanitized failures', async () => {
   const read = vi.fn().mockResolvedValue({ amount: '10000', paymentEnabled: false });
-  const server = createAgentServer(read);
+  const requestPurchase = vi.fn().mockResolvedValue({ status: 'APPROVED', paymentStatus: 'NOT_STARTED' });
+  const server = createAgentServer(read, requestPurchase);
   const client = new Client({ name: 'test', version: '1' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(serverTransport); await client.connect(clientTransport);
     const tools = await client.listTools();
-    expect(tools.tools.map(tool => tool.name)).toEqual(['get_spending_status', 'get_market_quote']);
+    expect(tools.tools.map(tool => tool.name)).toEqual(['get_spending_status', 'get_market_quote', 'request_purchase']);
     const results = await Promise.all(Array.from({ length: 3 }, () => client.callTool({ name: 'get_market_quote', arguments: {} })));
     expect(results.every(result => !result.isError)).toBe(true);
     expect(read.mock.calls).toEqual([['quote'], ['quote'], ['quote']]);
     const unknown = await client.callTool({ name: 'pay', arguments: { approved: true } });
     expect(unknown.isError).toBe(true); expect(read).toHaveBeenCalledTimes(3);
+    const requested = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'request-1', offerId: 'basic', reason: 'Need SOL data' } });
+    expect(requested.isError).not.toBe(true);
+    expect(requestPurchase).toHaveBeenCalledWith({ requestId: 'request-1', offerId: 'basic', reason: 'Need SOL data' });
     read.mockRejectedValueOnce(new Error('secret-token-and-rpc-url'));
     const failed = await client.callTool({ name: 'get_spending_status', arguments: {} });
     expect(failed.isError).toBe(true); expect(JSON.stringify(failed)).not.toContain('secret-token');
