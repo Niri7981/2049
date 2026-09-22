@@ -19,6 +19,9 @@ const config: PaymentConfig = { cluster: 'devnet', rpcUrl: 'https://api.devnet.s
   mint: DEVNET_USDC_MINT, buyer, merchant, facilitatorUrl: 'https://facilitator.invalid' };
 const principal = { connectionId: '2c187121-f6f1-49a3-aea4-821c4bc0a662', connectionGeneration: 2 };
 const now = Date.parse('2026-09-22T08:00:00Z');
+const snapshot = { asset: 'SOL' as const, as_of: '2026-09-05T08:00:00Z', spot_price_usd: 140, change_24h_pct: 2.4,
+  volume_24h_usd: 3_000_000_000, market_cap_usd: 75_000_000_000, volatility_7d_pct: 5.8, rsi_14d: 57,
+  support_levels_usd: [132, 136], resistance_levels_usd: [145, 151], source_label: 'Demo snapshot fixture', is_demo_snapshot: true as const };
 
 function facilitator() {
   return {
@@ -52,9 +55,9 @@ it('runs real quote → SpendGrant → policy for APPROVED and DENIED without pa
   const claim = vi.spyOn(ledger, 'claim');
   try {
     const basic = await requestMarketPurchase({ requestId: 'request-basic', offerId: 'basic', reason: 'Need the SOL snapshot' },
-      { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now });
+      { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now });
     const premium = await requestMarketPurchase({ requestId: 'request-premium', offerId: 'premium', reason: 'Compare the premium offer' },
-      { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now });
+      { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now });
     expect(basic).toMatchObject({ amount: '200000', status: 'APPROVED', paymentStatus: 'NOT_STARTED', decision: { decision: 'APPROVED', reason: 'AUTHORITY_BUDGET_AND_GRANT_PASSED' } });
     expect(premium).toMatchObject({ amount: '20000000', status: 'DENIED', paymentStatus: 'NOT_STARTED', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_SINGLE_LIMIT_EXCEEDED' } });
     expect(basic.quote).toMatchObject({ resourceId: SOL_MARKET_SNAPSHOT_RESOURCE_ID, network: config.network, assetId: config.mint, payTo: config.merchant, amount: '200000' });
@@ -68,18 +71,76 @@ it('runs real quote → SpendGrant → policy for APPROVED and DENIED without pa
   } finally { ledger.close(); store.close(); }
 });
 
+it('bridges basic APPROVED through the existing claim path using the one persisted 0.20 quote', async () => {
+  const { ledger, remote, fetcher, store } = setup();
+  const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string, _config: PaymentConfig, endpoint: string) => {
+    const claimed = paymentLedger.claim(approvalId);
+    expect(claimed.quote.amount).toBe('200000');
+    expect(endpoint).toBe('http://127.0.0.1:3049/api/paid/market-snapshot?asset=SOL&offer=basic');
+    paymentLedger.finish(approvalId, { transaction: '1'.repeat(88), data: snapshot }, now);
+    return { transaction: '1'.repeat(88), data: snapshot };
+  });
+  const input = { requestId: 'executed-basic', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
+  try {
+    const first = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
+    const replay = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
+    expect(first).toMatchObject({ amount: '200000', status: 'PAID', paymentStatus: 'PAID', deliveryStatus: 'COMPLETE', reused: false });
+    expect(replay).toMatchObject({ purchaseId: first.purchaseId, paymentStatus: 'PAID', deliveryStatus: 'COMPLETE', reused: true });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(pay).toHaveBeenCalledOnce();
+    expect(remote.verify).not.toHaveBeenCalled();
+    expect(remote.settle).not.toHaveBeenCalled();
+  } finally { ledger.close(); store.close(); }
+});
+
+it('returns premium DENIED from durable policy facts without invoking payment or recovery', async () => {
+  const { ledger, remote, fetcher, store } = setup();
+  const pay = vi.fn();
+  const recover = vi.fn();
+  try {
+    const denied = await requestMarketPurchase({ requestId: 'denied-premium', offerId: 'premium', reason: 'Need premium data' },
+      { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay, recover });
+    expect(denied).toMatchObject({ amount: '20000000', status: 'DENIED', paymentStatus: 'NOT_STARTED', deliveryStatus: 'NOT_PAID' });
+    expect(pay).not.toHaveBeenCalled();
+    expect(recover).not.toHaveBeenCalled();
+    expect(remote.verify).not.toHaveBeenCalled();
+    expect(remote.settle).not.toHaveBeenCalled();
+  } finally { ledger.close(); store.close(); }
+});
+
 it('replays the same request without another quote and rejects changed input', async () => {
   const { ledger, remote, fetcher, store } = setup();
   const input = { requestId: 'stable-request', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
   try {
-    const first = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now });
-    const replay = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now });
+    const first = await requestMarketPurchase(input, { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now });
+    const replay = await requestMarketPurchase(input, { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now });
     expect(replay).toMatchObject({ purchaseId: first.purchaseId, status: 'APPROVED', reused: true });
     expect(fetcher).toHaveBeenCalledOnce();
-    await expect(requestMarketPurchase({ ...input, offerId: 'premium' }, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now })).rejects.toThrow('REQUEST_ID_CONFLICT');
-    await expect(requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal: { ...principal, connectionGeneration: 99 }, fetcher, now: () => now })).rejects.toThrow('PURCHASE_REQUEST_OWNER_MISMATCH');
+    await expect(requestMarketPurchase({ ...input, offerId: 'premium' }, { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now })).rejects.toThrow('REQUEST_ID_CONFLICT');
+    await expect(requestMarketPurchase(input, { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal: { ...principal, connectionGeneration: 99 }, fetcher, now: () => now })).rejects.toThrow('PURCHASE_REQUEST_OWNER_MISMATCH');
     expect(ledger.list()).toHaveLength(1);
     expect(remote.verify).not.toHaveBeenCalled(); expect(remote.settle).not.toHaveBeenCalled();
+  } finally { ledger.close(); store.close(); }
+});
+
+it('concurrent identical request IDs persist one quote and claim payment once', async () => {
+  const { ledger, fetcher, store } = setup();
+  const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
+    paymentLedger.claim(approvalId);
+    const transaction = '2'.repeat(88);
+    paymentLedger.finish(approvalId, { transaction, data: snapshot }, now);
+    return { transaction, data: snapshot };
+  });
+  const input = { requestId: 'concurrent-stable-id', offerId: 'basic' as const, reason: 'Need data' };
+  try {
+    const [first, second] = await Promise.all([
+      requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay }),
+      requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay }),
+    ]);
+    expect(first.purchaseId).toBe(second.purchaseId);
+    expect([first.reused, second.reused].sort()).toEqual([false, true]);
+    expect(ledger.list()).toHaveLength(1);
+    expect(pay).toHaveBeenCalledOnce();
   } finally { ledger.close(); store.close(); }
 });
 
@@ -88,7 +149,7 @@ it('rejects Agent-supplied payment terms before fetching a quote', async () => {
   try {
     await expect(requestMarketPurchase({ requestId: 'forged-terms', offerId: 'basic', reason: 'Need data',
       amount: '1', payTo: buyer, approved: true, transaction: 'forged' },
-    { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now })).rejects.toThrow();
+    { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now })).rejects.toThrow();
     expect(fetcher).not.toHaveBeenCalled();
     expect(ledger.list()).toHaveLength(0);
     expect(remote.verify).not.toHaveBeenCalled(); expect(remote.settle).not.toHaveBeenCalled();
@@ -105,7 +166,7 @@ it('rejects a changed server quote before reserving any budget', async () => {
   });
   try {
     await expect(requestMarketPurchase({ requestId: 'changed-quote', offerId: 'basic', reason: 'Need data' },
-      { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher: changed, now: () => now })).rejects.toThrow('INVALID_X402_QUOTE');
+      { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher: changed, now: () => now })).rejects.toThrow('INVALID_X402_QUOTE');
     expect(ledger.list()).toHaveLength(0);
     expect(ledger.spendGrantSummary(now)?.committed).toBe('0');
     expect(remote.verify).not.toHaveBeenCalled(); expect(remote.settle).not.toHaveBeenCalled();
@@ -116,7 +177,7 @@ it('atomically applies the grant total to concurrent quoted requests', async () 
   const { ledger, remote, fetcher, store } = setup('300000');
   try {
     const results = await Promise.all(['one', 'two'].map(id => requestMarketPurchase({ requestId: `request-${id}-${randomUUID()}`, offerId: 'basic', reason: 'Need data' },
-      { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now })));
+      { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now })));
     expect(results.map(value => value.decision.reason).sort()).toEqual(['AUTHORITY_BUDGET_AND_GRANT_PASSED', 'SPEND_GRANT_TOTAL_LIMIT_EXCEEDED']);
     expect(remote.verify).not.toHaveBeenCalled(); expect(remote.settle).not.toHaveBeenCalled();
   } finally { ledger.close(); store.close(); }
@@ -133,7 +194,7 @@ it('does not create a request when the grant is revoked while the quote is in fl
   });
   try {
     await expect(requestMarketPurchase({ requestId: 'revoked-during-quote', offerId: 'basic', reason: 'Need data' },
-      { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now + 2 })).rejects.toThrow('SPEND_GRANT_INACTIVE');
+      { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now + 2 })).rejects.toThrow('SPEND_GRANT_INACTIVE');
     expect(ledger.list()).toHaveLength(0);
     expect(remote.verify).not.toHaveBeenCalled(); expect(remote.settle).not.toHaveBeenCalled();
   } finally { ledger.close(); store.close(); }

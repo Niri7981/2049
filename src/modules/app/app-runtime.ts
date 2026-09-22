@@ -75,10 +75,9 @@ export class AppRuntime {
         const wallet = await this.initializeWallet();
         const config = loadPaymentConfig();
         if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Recovery wallet mismatch');
-        const endpoint = paymentEndpoint(origin);
         for (const id of pending) {
           if (!this.accepting) break;
-          try { await recoverApprovedPayment(this.ledger, id, config, endpoint); }
+          try { await recoverApprovedPayment(this.ledger, id, config, paymentEndpoint(origin, this.ledger.get(id)?.intent.offerId)); }
           catch { /* Keep mismatched or unavailable original payments frozen. */ }
         }
       }
@@ -174,12 +173,14 @@ export class AppRuntime {
   private async performPurchaseRequest(input: unknown, origin: string, principal: SpendPrincipal) {
     if (!this.accepting) throw new Error('服务正在退出，不能创建购买请求。');
     // A SpendGrant can only be created from the initialized App session. Keep
-    // this policy-only path away from Keychain and all signer construction.
+    // denied path away from Keychain and all signer construction.
     const buyer = this.walletAddress;
     if (!buyer) throw new Error('产品钱包尚未初始化。');
     const config = loadPaymentConfig();
     if (config.cluster !== 'devnet' || config.buyer !== buyer) throw new Error('Devnet 钱包配置不匹配。');
-    return requestMarketPurchase(input, { config, ledger: this.ledger, origin, principal, fetcher: this.dependencies.fetcher, now: this.dependencies.now });
+    await this.start(origin);
+    if (!this.accepting) throw new Error('服务正在退出，不能创建购买请求。');
+    return requestMarketPurchase(input, { config, ledger: this.ledger, origin, principal, execute: process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1', fetcher: this.dependencies.fetcher, now: this.dependencies.now });
   }
   createTestPurchase(id: string, origin: string): Promise<TestPurchaseResult> {
     if (!this.accepting) return Promise.reject(new Error('服务正在退出，不能开始新付款。'));

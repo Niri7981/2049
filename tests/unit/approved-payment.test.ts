@@ -39,7 +39,7 @@ it('unknown approval never accesses the wallet', async () => {
 });
 it('binding mismatch stops before key access', async () => {
   const f = await fixture();
-  try { await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, endpoint + '&changed=true')).rejects.toThrow('reconciliation'); expect(loadBuyerSigner).not.toHaveBeenCalled(); }
+  try { await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, endpoint + '&changed=true')).rejects.toThrow('Approval binding changed'); expect(loadBuyerSigner).not.toHaveBeenCalled(); }
   finally { f.ledger.close(); }
 });
 it('network timeout retains UNKNOWN and prevents a second signature', async () => {

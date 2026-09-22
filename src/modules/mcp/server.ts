@@ -18,7 +18,7 @@ export function createAgentServer(read: AgentRead, requestPurchase: AgentPurchas
     });
   }
   server.registerTool('request_purchase', {
-    description: 'Request a real x402 quote and a 2049 policy decision for a fixed SOL market offer. This tool never signs, submits, or settles a payment.',
+    description: 'Request a fixed SOL market offer. The local Bound backend obtains the x402 quote, applies the active SpendGrant, and may execute an approved purchase when Devnet payments are enabled. The Agent cannot provide payment terms or signing data.',
     inputSchema: {
       requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).describe('Stable idempotency key for this purchase request'),
       offerId: z.enum(['basic', 'premium']).describe('Server-defined offer; the Agent cannot provide an amount'),

@@ -186,11 +186,12 @@ export class PurchaseLedger {
   }
   stopPayments() { this.stopping = true; }
   /** Called synchronously immediately before the signer and before submission. */
-  assertCanSign(approvalId: string, now = this.now()) {
+  assertCanSign(approvalId: string, now = this.now(), validate?: (record: PurchaseRecord) => void) {
     if (this.stopping) throw new Error('Service is stopping');
     const row = this.db.prepare('SELECT task_id FROM purchases WHERE approval_id=?').get(approvalId);
     const record = row ? this.get(String(row.task_id)) : undefined;
     if (record?.status !== 'PAYING' || record.intent.expiresAt <= now) throw new Error('Approval inactive or expired');
+    validate?.(record);
     if (this.managed) {
       const controls = this.controls();
       if (controls.paused) throw new Error('Payments were paused before submission');
@@ -257,13 +258,14 @@ export class PurchaseLedger {
       if (result.changes) this.event(record.intent.id, 'task.ANSWERED');
     });
   }
-  claim(approvalId: string, now = Date.now()): SpendReservation {
+  claim(approvalId: string, now = this.now(), validate?: (record: PurchaseRecord) => void): SpendReservation {
     return this.atomic(() => {
       if (this.stopping) throw new Error('Service is stopping');
       const row = this.db.prepare('SELECT task_id FROM purchases WHERE approval_id=?').get(approvalId);
       if (!row) throw new Error('Unknown approval');
       const record = this.get(String(row.task_id))!;
       if (record.status !== 'APPROVED' || record.decision.decision !== 'APPROVED' || record.intent.expiresAt <= now) throw new Error('Approval inactive or expired');
+      validate?.(record);
       if (this.managed) {
         const controls = this.controls();
         if (controls.paused) throw new Error('Payments are paused');
@@ -278,9 +280,9 @@ export class PurchaseLedger {
       return this.get(record.intent.idempotencyKey)!;
     });
   }
-  savePayload(approvalId: string, payload: unknown) {
+  savePayload(approvalId: string, payload: unknown, validate?: (record: PurchaseRecord) => void) {
     this.atomic(() => {
-      this.assertCanSign(approvalId);
+      this.assertCanSign(approvalId, undefined, validate);
       if (this.db.prepare("UPDATE purchases SET payload=? WHERE approval_id=? AND status='PAYING' AND payload IS NULL").run(JSON.stringify(payload), approvalId).changes !== 1) throw new Error('Payment already signed or inactive');
     });
   }
@@ -382,6 +384,12 @@ export class PurchaseLedger {
     if (!grant || grant.status !== 'ACTIVE' || grant.expiresAt <= now) throw new Error('Spend grant is inactive or expired');
     if (grant.version !== binding.grantVersion || grant.connectionId !== binding.connectionId || grant.connectionGeneration !== binding.connectionGeneration || grant.operation !== binding.operation) {
       throw new Error('Spend grant principal changed');
+    }
+    const intent = record.intent;
+    if (grant.operation !== MARKET_SNAPSHOT_OPERATION || grant.resourceId !== intent.resourceId || grant.providerId !== intent.providerId ||
+      grant.network !== intent.network || grant.assetId !== intent.assetId || grant.assetDecimals !== intent.assetDecimals ||
+      grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme || intent.amount > grant.singleLimit) {
+      throw new Error('Spend grant scope or single limit changed');
     }
     const committed = this.grantCommitted(grant.id);
     if (!Number.isSafeInteger(committed) || committed < 0 || committed > grant.totalLimit) throw new Error('Spend grant no longer covers reserved payments');

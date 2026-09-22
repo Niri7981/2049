@@ -42,9 +42,10 @@ export async function solanaRpc<T>(config: Pick<PaymentConfig, "rpcUrl">, method
 export async function prepareSolanaPayment(
   config: PaymentConfig, signer: TransactionSigner, requirement: PaymentRequirements,
   onSimulation: () => void = () => {},
+  authorized: { amount: string; resource: string } = { amount: PAYMENT_AMOUNT, resource: MARKET_RESOURCE },
 ): Promise<PaymentPayload> {
   if (requirement.scheme !== "exact" || requirement.network !== config.network || requirement.asset !== config.mint ||
-      requirement.payTo !== config.merchant || requirement.amount !== PAYMENT_AMOUNT) {
+      requirement.payTo !== config.merchant || requirement.amount !== authorized.amount || !/^[1-9]\d*$/.test(authorized.amount)) {
     throw new Error("Signer rejected a payment outside the fixed payment configuration");
   }
   if (signer.address !== config.buyer || !("signTransactions" in signer)) {
@@ -74,12 +75,12 @@ export async function prepareSolanaPayment(
     .register(safeRequirement.network, scheme)
     .setSpendControls({
       maxAmountPerPayment: false,
-      allowedAssets: [{ network: safeRequirement.network, asset: safeRequirement.asset, maxAmountPerPayment: PAYMENT_AMOUNT }],
+      allowedAssets: [{ network: safeRequirement.network, asset: safeRequirement.asset, maxAmountPerPayment: authorized.amount }],
     })
     .registerPolicy((_version, requirements) => requirements.filter(candidate => isDeepStrictEqual(candidate, safeRequirement)));
   const created = await client.createPaymentPayload({
     x402Version: 2,
-    resource: { url: MARKET_RESOURCE },
+    resource: { url: authorized.resource },
     accepts: [safeRequirement],
   });
   return { ...created, accepted: requirement };

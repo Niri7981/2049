@@ -32,8 +32,10 @@ export type PaymentPreflightSummary = {
 /** Fail closed; never include RPC URLs, provider payloads, or credentials in errors. */
 export async function runPaymentPreflight(
   config: PaymentConfig,
-  dependencies: { fetch?: typeof fetch } = {},
+  dependencies: { fetch?: typeof fetch; amount?: string } = {},
 ): Promise<PaymentPreflightSummary> {
+  const amount = dependencies.amount ?? PAYMENT_AMOUNT;
+  if (!/^[1-9]\d*$/.test(amount)) throw new Error("Invalid payment amount");
   const fetcher = dependencies.fetch || fetch;
   async function json(url: string, label: string, init: RequestInit = {}): Promise<JsonObject> {
     try {
@@ -104,14 +106,14 @@ export async function runPaymentPreflight(
   }
   const buyerBalance = tokenBalance(buyerAccount, config.buyer, "Buyer");
   const merchantBalance = tokenBalance(merchantAccount, config.merchant, "Merchant");
-  if (BigInt(buyerBalance) < BigInt(PAYMENT_AMOUNT)) throw new Error("Buyer associated token account has less than 0.01 USDC");
+  if (BigInt(buyerBalance) < BigInt(amount)) throw new Error(amount === PAYMENT_AMOUNT ? "Buyer associated token account has less than 0.01 USDC" : "Buyer associated token account has less than the quoted amount");
   const feePayerLamports = object(feeBalance).value;
   // Two signatures at 5,000 lamports plus the SDK's minimal priority fee.
   if (typeof feePayerLamports !== "number" || !Number.isSafeInteger(feePayerLamports) || feePayerLamports < 10_001) {
     throw new Error("Facilitator fee payer must have SOL for transaction fees");
   }
   return {
-    cluster: config.cluster, network: config.network, mint: config.mint, paymentAmount: PAYMENT_AMOUNT,
+    cluster: config.cluster, network: config.network, mint: config.mint, paymentAmount: amount,
     buyer: { publicKey: config.buyer, ata: buyerAta, balanceBaseUnits: buyerBalance },
     merchant: { publicKey: config.merchant, ata: merchantAta, balanceBaseUnits: merchantBalance },
     facilitator: { feePayer, feePayerLamports }, readyForSettlement: true,

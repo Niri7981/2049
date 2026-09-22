@@ -154,6 +154,16 @@ describe("Payment simulation before signing", () => {
     expect(result).toMatchObject({ accepted: payment, resource: { url: MARKET_RESOURCE }, payload: { transaction: "signed-test-transaction" } });
   });
 
+  it("uses an authorized offer amount and resource in SDK spend controls", async () => {
+    mockRpc({ value: { err: null } });
+    const { signer } = setupSigning();
+    const payment = { ...requirement(), amount: "200000" };
+    const resource = `${MARKET_RESOURCE}&offer=basic`;
+    const result = await prepareSolanaPayment(config, signer, payment, () => {}, { amount: "200000", resource });
+    expect(sdk.createPaymentPayload.mock.lastCall![1].amount).toBe("200000");
+    expect(result).toMatchObject({ accepted: payment, resource: { url: resource } });
+  });
+
   it("rejects a buyer address mismatch before invoking the SDK", async () => {
     const { signer, signTransactions } = setupSigning();
     await expect(prepareSolanaPayment({ ...config, buyer: config.merchant }, signer, requirement())).rejects.toThrow("matching the configured buyer");

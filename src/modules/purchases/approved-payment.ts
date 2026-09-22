@@ -1,5 +1,5 @@
 import type { Trace } from '../demo/trace';
-import type { PaymentPayload } from '@x402/core/types';
+import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
 import type { PaymentConfig } from '../payment/payment-config';
 import { prepareSolanaPayment, confirmSolanaTransaction, MARKET_RESOURCE } from '../payment/solana-payment';
 import { inspectOriginalTransaction, transactionMessageHash } from '../payment/reconcile-transaction';
@@ -7,20 +7,28 @@ import { loadBuyerSigner } from '../payment/wallet';
 import { readMarketSnapshot } from '../resources/read-market-snapshot';
 import { PurchaseLedger, type PurchaseRecord } from './purchase-ledger';
 import { hash } from './spending-policy';
+import { runPaymentPreflight } from '../payment/payment-preflight';
+import { MarketOfferIdSchema, marketOffer } from '../resources/market-offers';
 import { paymentSignatureHeaders, readSettlementResponse } from '../payment/x402-client';
 
-export function paymentEndpoint(origin: string) {
+export function paymentEndpoint(origin: string, offerId?: string) {
   const url = new URL(origin);
   if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || url.username || url.password) throw new Error('Purchase only calls the configured local API');
-  return new URL(MARKET_RESOURCE, url).href;
+  return new URL(offerId ? `${MARKET_RESOURCE}&offer=${MarketOfferIdSchema.parse(offerId)}` : MARKET_RESOURCE, url).href;
 }
-export function paymentBinding(config: PaymentConfig, endpoint: string) {
-  return hash([config.cluster, config.network, config.mint, config.buyer, config.merchant, endpoint]);
+export function paymentBinding(config: PaymentConfig, endpoint: string, quote?: PaymentRequirements) {
+  const facts = [config.cluster, config.network, config.mint, config.buyer, config.merchant, endpoint];
+  return hash(quote ? [...facts, 'GET', quote] : facts);
 }
-function checkBinding(record: PurchaseRecord, config: PaymentConfig, endpoint: string) {
+export function checkPaymentBinding(record: PurchaseRecord, config: PaymentConfig, endpoint: string) {
   const intent = record.intent;
-  if (intent.executionBinding !== paymentBinding(config, endpoint) || intent.quoteFingerprint !== hash(record.quote) || intent.amount !== Number(record.quote.amount)
+  if (intent.executionBinding !== paymentBinding(config, endpoint, intent.offerId ? record.quote : undefined) || intent.quoteFingerprint !== hash(record.quote) || String(intent.amount) !== record.quote.amount
     || intent.assetId !== config.mint || intent.network !== config.network || intent.payTo !== config.merchant) throw new Error('Approval binding changed');
+  if (intent.paymentScheme !== record.quote.scheme || record.quote.asset !== intent.assetId || record.quote.network !== intent.network || record.quote.payTo !== intent.payTo) throw new Error('Approval terms changed');
+  if (intent.offerId) {
+    const offer = marketOffer(MarketOfferIdSchema.parse(intent.offerId));
+    if (endpoint !== paymentEndpoint(endpoint, intent.offerId) || record.quote.amount !== offer.amount) throw new Error('Offer binding changed');
+  }
 }
 async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, config: PaymentConfig, endpoint: string, payload: PaymentPayload, recovery: boolean, trace: Trace) {
   if (hash(payload.accepted) !== record.intent.quoteFingerprint || typeof payload.payload.transaction !== 'string') throw new Error('Saved payment changed');
@@ -52,15 +60,22 @@ async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, co
 }
 /** Internal approval ID is the only caller-supplied payment parameter. */
 export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId: string, config: PaymentConfig, endpoint: string, trace: Trace = () => {}) {
-  const record = ledger.claim(approvalId);
+  const validate = (record: PurchaseRecord) => checkPaymentBinding(record, config, endpoint);
+  const record = ledger.claim(approvalId, undefined, validate);
+  const beforeSign = () => ledger.assertCanSign(approvalId, undefined, validate);
   try {
-    checkBinding(record, config, endpoint);
+    checkPaymentBinding(record, config, endpoint);
+    if (record.intent.offerId) {
+      const preflight = await runPaymentPreflight(config, { amount: record.quote.amount });
+      if (preflight.facilitator.feePayer !== record.quote.extra?.feePayer) throw new Error('Quote fee payer changed');
+    }
+    beforeSign();
     trace('SIGNING');
     const signer = await loadBuyerSigner(config.buyer);
-    ledger.assertCanSign(approvalId);
-    const payload = await prepareSolanaPayment(config, signer, record.quote, () => ledger.assertCanSign(approvalId));
-    if (Date.now() >= record.intent.expiresAt) throw new Error('Approval expired before submission');
-    ledger.savePayload(approvalId, payload);
+    beforeSign();
+    const payload = await prepareSolanaPayment(config, signer, record.quote, beforeSign, record.intent.offerId ? { amount: record.quote.amount, resource: new URL(endpoint).pathname + new URL(endpoint).search } : undefined);
+    ledger.savePayload(approvalId, payload, validate);
+    beforeSign();
     trace('SIGNED');
     return await receivePayment(ledger, record, config, endpoint, payload, false, trace);
   } catch {
@@ -74,7 +89,7 @@ export async function recoverApprovedPayment(ledger: PurchaseLedger, taskId: str
   const record = ledger.get(taskId);
   if (!record || (!['PAYING', 'PAYMENT_UNKNOWN'].includes(record.status) && record.deliveryStatus !== 'PENDING')) return;
   trace('RECOVERY_STARTED');
-  checkBinding(record, config, endpoint);
+  checkPaymentBinding(record, config, endpoint);
   const payload = ledger.savedPayload(record.approvalId);
   // An in-flight signer may not have saved yet. No evidence of failure: keep frozen.
   if (!payload) return;

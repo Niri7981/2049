@@ -1,16 +1,18 @@
-# 2049 MCP 接入（更新于 2026-09-21）
+# 2049 MCP 接入（更新于 2026-09-22）
 
 ## 已实现的范围
 
 采用 x402 官方 MCP→HTTP 桥接示例的结构：官方 MCP SDK 负责工具注册、协议协商和 stdio；2049 的薄适配只调用运行中的本地后端。协议报价仍由现有 `@x402/core` HTTP 客户端解析。保留产品钥匙串钱包、共享额度和账本。
 
-当前开放两个只读工具和一个只做报价/策略决策的请求工具：
+当前开放两个只读工具和一个受 SpendGrant 约束的购买请求工具：
 
 - `get_spending_status`：查询产品钱包地址、余额和共用额度。
 - `get_market_quote`：向本机测试 Paid API 获取真实 402 报价，检查固定资源、网络、资产、收款方和金额。返回的是 Devnet 示例快照的报价，不是实时市场数据，也不产生购买授权。
-- `request_purchase`：只接受稳定 `requestId`、服务端 offer ID（`basic` / `premium`）和用途摘要。后端分别取得 0.20 / 20 test USDC 的真实 402，绑定当前连接的 SpendGrant 并持久写入 `APPROVED` / `DENIED`。返回 `paymentStatus: NOT_STARTED`，不会 claim、签名、提交或 settle。
+- `request_purchase`：只接受稳定 `requestId`、服务端 offer ID（`basic` / `premium`）和用途摘要。后端分别取得 0.20 / 20 test USDC 的真实 402，绑定当前连接的 SpendGrant 并持久写入 `APPROVED` / `DENIED`。显式启用 Devnet 付款时，`APPROVED` 的 basic 请求以该持久报价进入既有 claim、官方 x402 client、签名、结算、对账和交付路径；`DENIED` 的 premium 请求保持 `paymentStatus: NOT_STARTED`。
 
-没有开放付款、修改额度、管理连接、导出密钥或通用签名工具。Agent 不能提交金额、URL、收款方、资产、交易或 `approved`。用户先在 App 创建有限消费授权；创建、替换或撤销授权会轮换连接凭据。原对话确认和付款执行仍未实现，所以 M4 保持部分完成；App grant 是明确的预先委托，不冒充逐笔宿主确认。
+没有开放修改额度、管理连接、导出密钥或通用签名工具。Agent 不能提交金额、URL、收款方、资产、交易或 `approved`。用户先在 App 创建有限消费授权；创建、替换或撤销授权会轮换连接凭据。原对话确认仍未实现，所以 M4 保持部分完成；App grant 是明确的预先委托，不冒充逐笔宿主确认。
+
+付款执行使用报价时保存的完整 offer endpoint 和金额，不重新报价。执行绑定覆盖买方、HTTP 方法、完整 endpoint、网络、资产、收款方和完整 `PaymentRequirements`。账本在 claim、加载 signer 前、SDK 实际签名前、保存 payload 以及首次 HTTP 提交前重新检查暂停、到期、共享额度、Grant 状态/版本/主体/范围/单笔与总额、quote fingerprint 和 execution binding。已保存 payload 的超时与重启恢复只重用原 payload，不重新签名或创建替代付款。
 
 ## 官方能力与本地适配
 
@@ -37,7 +39,7 @@ App 显示“最近收到请求”，不把启用开关当作宿主已连接的�
 
 ## 验证与限制
 
-自动化覆盖官方 SDK 握手、三个工具、错误脱敏、Agent/管理权限隔离、跨站拒绝、授权创建/撤销时令牌轮换，以及真实 402 的 0.20 批准、20 拒绝、稳定 ID 重放、同键异参、并发预占和报价期间撤销。测试明确断言 Facilitator `verify` / `settle` 均未调用。产品进程同时停用旧 `/api/demo/tasks` 付款 worker，防止绕开 grant 使用另一份账本。
+自动化覆盖官方 SDK 握手、三个工具、错误脱敏、Agent/管理权限隔离、跨站拒绝、授权创建/撤销时令牌轮换，以及真实 402 的 0.20 批准与执行桥接、20 策略拒绝、稳定 ID 重放、同键异参、并发同 ID、并发预算、报价期间撤销、签名前撤销/过期/暂停/降额、付款事实篡改、提交超时和 SQLite 重启恢复。DENIED 测试明确断言付款与恢复入口、Facilitator `verify` / `settle` 均未调用。STEP 1 的付款依赖均为模拟，没有执行真实 Devnet 付款。产品进程同时停用旧 `/api/demo/tasks` 付款 worker，防止绕开 grant 使用另一份账本。
 
 2026-09-19 验证：当时的 229 项自动化、类型检查、lint 和 Next.js 生产构建通过；Electron 实际启动并显示只读 Agent 连接入口。本段是只读阶段的历史证据，不证明 9 月 21 日新增购买工具已在真实宿主运行。
 

@@ -141,6 +141,17 @@ describe("Payment read-only preflight", () => {
     await expect(runPaymentPreflight(loadPaymentConfig(env), { fetch: test.fetcher })).rejects.toThrow("less than 0.01 USDC");
   });
 
+  it("uses the persisted 200,000-unit quote as the exact balance boundary", async () => {
+    const test = fixture();
+    const config = loadPaymentConfig(env);
+    test.buyer.data.parsed.info.tokenAmount.amount = "200000";
+    await expect(runPaymentPreflight(config, { fetch: test.fetcher, amount: "200000" }))
+      .resolves.toMatchObject({ paymentAmount: "200000" });
+    test.buyer.data.parsed.info.tokenAmount.amount = "199999";
+    await expect(runPaymentPreflight(config, { fetch: test.fetcher, amount: "200000" }))
+      .rejects.toThrow("less than the quoted amount");
+  });
+
   it.each(["missing", "frozen", "wrong owner", "wrong mint"])("rejects a merchant ATA that is %s", async (condition) => {
     const test = fixture();
     if (condition === "missing") test.state.accounts[2] = null;
