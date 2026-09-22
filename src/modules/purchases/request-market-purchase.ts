@@ -7,6 +7,7 @@ import { DEVNET_NETWORK, DEVNET_USDC_MINT, type PaymentConfig } from '../payment
 import { readPaymentRequiredHeader } from '../payment/x402-client';
 import { MarketOfferIdSchema, marketOffer, marketOfferResource } from '../resources/market-offers';
 import { createMarketSnapshotSpendIntent } from '../resources/market-spend-adapter';
+import { MarketSnapshotOutputSchema, type MarketSnapshotOutput } from '../resources/resource-schema';
 import { PurchaseLedger, type SpendReservation } from './purchase-ledger';
 import { hash } from './spending-policy';
 
@@ -29,17 +30,22 @@ export type PurchaseRequestResult = {
   paymentStatus: 'NOT_STARTED' | 'PAYING' | 'PAYMENT_UNKNOWN' | 'PAID' | 'FAILED';
   deliveryStatus: SpendReservation['deliveryStatus'];
   reused: boolean;
+  resource?: MarketSnapshotOutput;
 };
 
 function result(record: SpendReservation, offerId: PurchaseRequestInput['offerId'], reused: boolean): PurchaseRequestResult {
   const offer = marketOffer(offerId);
   const authority = record.intent.authority;
   if (!authority) throw new Error('SPEND_GRANT_REQUIRED');
+  const resource = record.status === 'PAID' && record.deliveryStatus === 'COMPLETE'
+    ? MarketSnapshotOutputSchema.parse(record.data)
+    : undefined;
   return { purchaseId: record.intent.idempotencyKey, offerId, amount: String(record.intent.amount), display: offer.display,
     status: record.status, decision: record.decision,
     quote: { resourceId: record.intent.resourceId, providerId: record.intent.providerId, network: record.intent.network, assetId: record.intent.assetId,
       assetDecimals: record.intent.assetDecimals, payTo: record.intent.payTo, amount: String(record.intent.amount), expiresAt: record.intent.expiresAt, fingerprint: record.intent.quoteFingerprint },
-    grant: { id: authority.grantId, version: authority.grantVersion }, paymentStatus: record.status === 'PAID' ? 'PAID' : record.status === 'PAYING' ? 'PAYING' : record.status === 'PAYMENT_UNKNOWN' ? 'PAYMENT_UNKNOWN' : record.status === 'FAILED' ? 'FAILED' : 'NOT_STARTED', deliveryStatus: record.deliveryStatus, reused };
+    grant: { id: authority.grantId, version: authority.grantVersion }, paymentStatus: record.status === 'PAID' ? 'PAID' : record.status === 'PAYING' ? 'PAYING' : record.status === 'PAYMENT_UNKNOWN' ? 'PAYMENT_UNKNOWN' : record.status === 'FAILED' ? 'FAILED' : 'NOT_STARTED', deliveryStatus: record.deliveryStatus, reused,
+    ...(resource ? { resource } : {}) };
 }
 
 /** Reserves the server quote once; execution consumes only the persisted approval. */

@@ -6,7 +6,7 @@ import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
 import { DEFAULT_SPENDING_POLICY, evaluateSpendAuthority, parseStoredAuthorityDecision, type AuthorityDecision, type SpendingControls } from '../authority/authority-policy';
 import { parseStoredSpendIntent, type SpendIntent } from '../authority/spend-intent';
 import { MARKET_SNAPSHOT_OPERATION, SpendGrantInputSchema, SpendGrantSchema, SpendGrantScopeSchema, SpendPrincipalSchema, parseGrantAmount, type SpendAuthorityBinding, type SpendGrant, type SpendGrantInput, type SpendGrantScope, type SpendPrincipal } from '../authority/spend-grant';
-import type { MarketSnapshotOutput } from '../resources/resource-schema';
+import { MarketSnapshotOutputSchema, type MarketSnapshotOutput } from '../resources/resource-schema';
 import { nextSpendingDayBoundary, spendingDay } from './spending-policy';
 
 export type DeliveryStatus = 'NOT_PAID' | 'PENDING' | 'COMPLETE';
@@ -218,7 +218,8 @@ export class PurchaseLedger {
     return { intent: parseStoredSpendIntent(JSON.parse(String(row.purchase))), quote: JSON.parse(String(row.quote)), approvalId: String(row.approval_id), decision: parseStoredAuthorityDecision(JSON.parse(String(row.decision))), status: currentAuthorityStatus(String(row.status)),
       deliveryStatus: row.status === 'PAID' ? (row.data ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
       ...(this.db.prepare("SELECT answer FROM purchase_answers WHERE purchase_id=?").get(String(row.id)) as { answer: string } | undefined),
-      ...(row.transaction_id ? { transaction: String(row.transaction_id) } : {}), ...(row.data ? { data: JSON.parse(String(row.data)) } : {}) };
+      ...(row.transaction_id ? { transaction: String(row.transaction_id) } : {}),
+      ...(row.data ? { data: MarketSnapshotOutputSchema.parse(JSON.parse(String(row.data))) } : {}) };
   }
   reserve(intent: SpendIntent, quote: PaymentRequirements, now = Date.now()): SpendReservation {
     return this.atomic(() => {
@@ -316,7 +317,8 @@ export class PurchaseLedger {
   finish(approvalId: string, result: { transaction: string; data: MarketSnapshotOutput }, now = Date.now()) {
     this.atomic(() => {
       this.recordConfirmation(approvalId, result.transaction, now);
-      const row = this.db.prepare('UPDATE purchases SET data=? WHERE approval_id=? AND data IS NULL RETURNING id').get(JSON.stringify(result.data), approvalId);
+      const data = MarketSnapshotOutputSchema.parse(result.data);
+      const row = this.db.prepare('UPDATE purchases SET data=? WHERE approval_id=? AND data IS NULL RETURNING id').get(JSON.stringify(data), approvalId);
       if (row) this.event(String(row.id), 'delivery.COMPLETE');
     });
   }

@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type { FacilitatorClient } from '@x402/core/server';
 import { encodePaymentRequiredHeader } from '@x402/core/http';
 import { Keypair } from '@solana/web3.js';
@@ -31,8 +35,8 @@ function facilitator() {
   } satisfies FacilitatorClient;
 }
 
-function setup(totalLimit = '5000000') {
-  const ledger = new PurchaseLedger(':memory:', { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+function setup(totalLimit = '5000000', ledgerPath = ':memory:') {
+  const ledger = new PurchaseLedger(ledgerPath, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
   ledger.setDailyLimit('50000000');
   ledger.createSpendGrant({ totalLimit, singleLimit: String(Math.min(Number(totalLimit), 500_000)), expiresAt: now + 60 * 60 * 1000 }, principal, {
     resourceId: SOL_MARKET_SNAPSHOT_RESOURCE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation: MARKET_SNAPSHOT_OPERATION,
@@ -84,8 +88,9 @@ it('bridges basic APPROVED through the existing claim path using the one persist
   try {
     const first = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
     const replay = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
-    expect(first).toMatchObject({ amount: '200000', status: 'PAID', paymentStatus: 'PAID', deliveryStatus: 'COMPLETE', reused: false });
-    expect(replay).toMatchObject({ purchaseId: first.purchaseId, paymentStatus: 'PAID', deliveryStatus: 'COMPLETE', reused: true });
+    expect(first).toMatchObject({ amount: '200000', status: 'PAID', paymentStatus: 'PAID', deliveryStatus: 'COMPLETE', reused: false, resource: snapshot });
+    expect(replay).toMatchObject({ purchaseId: first.purchaseId, paymentStatus: 'PAID', deliveryStatus: 'COMPLETE', reused: true, resource: snapshot });
+    expect(replay.resource).toEqual(first.resource);
     expect(fetcher).toHaveBeenCalledOnce();
     expect(pay).toHaveBeenCalledOnce();
     expect(remote.verify).not.toHaveBeenCalled();
@@ -101,11 +106,54 @@ it('returns premium DENIED from durable policy facts without invoking payment or
     const denied = await requestMarketPurchase({ requestId: 'denied-premium', offerId: 'premium', reason: 'Need premium data' },
       { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay, recover });
     expect(denied).toMatchObject({ amount: '20000000', status: 'DENIED', paymentStatus: 'NOT_STARTED', deliveryStatus: 'NOT_PAID' });
+    expect(denied).not.toHaveProperty('resource');
     expect(pay).not.toHaveBeenCalled();
     expect(recover).not.toHaveBeenCalled();
     expect(remote.verify).not.toHaveBeenCalled();
     expect(remote.settle).not.toHaveBeenCalled();
   } finally { ledger.close(); store.close(); }
+});
+
+it('does not return a resource while payment is unknown', async () => {
+  const { ledger, fetcher, store } = setup();
+  const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
+    paymentLedger.claim(approvalId);
+    paymentLedger.unknown(approvalId);
+    throw new Error('Submission outcome unknown');
+  });
+  try {
+    const result = await requestMarketPurchase({ requestId: 'unknown-basic', offerId: 'basic', reason: 'Need the SOL snapshot' },
+      { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
+    expect(result).toMatchObject({ paymentStatus: 'PAYMENT_UNKNOWN', deliveryStatus: 'NOT_PAID', reused: false });
+    expect(result).not.toHaveProperty('resource');
+  } finally { ledger.close(); store.close(); }
+});
+
+it('rejects malformed persisted resources instead of returning unvalidated database JSON', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bound-purchase-resource-'));
+  const ledgerPath = join(directory, 'ledger.sqlite');
+  const { ledger, fetcher, store } = setup('5000000', ledgerPath);
+  const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
+    paymentLedger.claim(approvalId);
+    paymentLedger.finish(approvalId, { transaction: '3'.repeat(88), data: snapshot }, now);
+    return { transaction: '3'.repeat(88), data: snapshot };
+  });
+  const input = { requestId: 'malformed-resource', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
+  try {
+    await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
+    const database = new DatabaseSync(ledgerPath);
+    try { database.prepare('UPDATE purchases SET data=? WHERE task_id=?').run('{"asset":"BTC"}', input.requestId); }
+    finally { database.close(); }
+
+    await expect(requestMarketPurchase(input,
+      { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay })).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(pay).toHaveBeenCalledOnce();
+  } finally {
+    ledger.close();
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 it('replays the same request without another quote and rejects changed input', async () => {
