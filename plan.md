@@ -1,6 +1,6 @@
 # 2049 macOS 第一版实施计划
 
-更新日期：2026-09-20。
+更新日期：2026-09-21。
 
 本文记录本轮确认的目标架构、实施顺序和当前证据。状态以本页“实施状态”和实际测试为准；任何开发进度都不代表付款、部署或推送授权。
 
@@ -19,7 +19,7 @@
 - [x] M1：完成开发态 Electron 壳、本机认证管理 API、单实例、窗口关闭后后台存活、菜单栏入口与退出停服。安装包仍属于 M7。
 - [x] M2：完成产品专用钥匙串钱包、后端余额读取、无默认值的持久额度、暂停、电脑本地时区预算窗口和并发事务测试。
 - [ ] M3（真实付款已验证，验收待补齐）：App 共用后端已完成 0.01 测试 USDC 购买；链上余额、同一购买号重放、关闭并重建 AppRuntime 后复用原交易及界面展示已验证。此前没有完整验证按钮重复点击和整个 App 退出重启，不能用运行时重建代替这些场景。默认启动仍为模拟模式。
-- [ ] M4（部分完成）：已接入官方 MCP SDK 的 stdio 桥接，开放额度与真实 x402 报价查询，App 可启用或撤销只读连接。已在实际 Codex 宿主调用只读工具；原对话确认仍待宿主能力开启与验收，未开放 Agent 付款。详见 [MCP 接入](docs/architecture/mcp-integration.md)。
+- [ ] M4（部分完成）：已接入官方 MCP SDK 的 stdio 桥接，开放额度与真实 x402 报价查询。App 可创建一份绑定当前连接代次的有限消费授权，设置授权总额、单笔硬上限和到期时间，并随时撤销；后端可读回 Agent 已获授权，旧只读凭据在创建或撤销授权时轮换。产品进程停用旧任务付款入口。自动化已覆盖无授权、越额、错误范围、并发总额、撤销、到期和重启记录。Agent 购买工具、0.20/20 两档报价和原对话确认仍待实现与验收。详见 [MCP 接入](docs/architecture/mcp-integration.md)。
 - [ ] M5–M7：未开始。
 
 2026-09-15 修复：补齐实际签名前暂停检查、退出等待进行中操作、启动时原订单恢复；已付款与交付状态分开，交付失败不再改写付款结果。未提交崩溃记录的预占可安全释放，未知付款保留原凭据。当时尚未执行真实 Devnet 购买；有次数上限的自动交付重试仍属于 M5。
@@ -27,6 +27,8 @@
 2026-09-18 收缩：报价与回执头、付款凭据和测试 Paid API 的协议编解码改用官方 x402 客户端；App 和旧任务入口改为复用同一个市场快照购买服务，App 真实测试入口不再经过模型规划与资源发现。钱包、授权、共享额度、持久状态和原付款恢复仍由 2049 维护。
 
 2026-09-21 Authority Core 阶段一：新增通用 `SpendIntent`、`AuthorityDecision` 和 `SpendReservation`，决策统一为 `APPROVED`、`DENIED`、`REQUIRES_APPROVAL`。行情 resource/provider/SOL 与报价一致性校验移入 market resource adapter；market snapshot Demo 继续经原子预算预占和 `approvalId` 付款边界执行。MCP、Jev、第二 provider、UI 和新支付轨道不在本阶段范围。详见 [Authority Core（阶段一）](docs/architecture/authority-core.md)。
+
+2026-09-21 有限消费授权：新增持久 `SpendGrant` 和管理界面。授权固定到市场快照 operation、Provider、资源、Devnet、测试 USDC、收款方、支付方式及连接代次；总额按授权生命周期累计，不随每日额度重置。本阶段只验证授权成功、策略边界和旧凭据失效；MCP 仍只有查询工具，不代表 Agent 购买、0.20/20 报价、真实 Codex 宿主或新 Devnet 交易已验收。
 
 2026-09-18 M3 验收：产品钱包 `Hr937hUNE1yHzjDLhZngWn8rHUWGTuTRLMJoTzi9BUeH` 在真实 Devnet 模式完成购买 `m3-20260918-final-1`。付款交易为 `42qEJgZfZbWbf8FRwuKvJ2mfMwyi5evrZr2r9cNfriocGxN4gt5jfAAjKiDBjKn2Tpx9ihbdMHu2zbKKK5GfAVkr`；RPC 确认买方 `10000 → 0`、商家 `130000 → 140000` 最小单位。当前进程重放和重新打开账本后的重放均返回同一交易，购买记录始终只有一条；App 界面显示付款已确认、结果已交付、当日已消费 0.01 测试 USDC。
 

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
 import { DEFAULT_SPENDING_POLICY, evaluateSpendAuthority, parseStoredAuthorityDecision, type AuthorityDecision, type SpendingControls } from '../authority/authority-policy';
 import { parseStoredSpendIntent, type SpendIntent } from '../authority/spend-intent';
+import { MARKET_SNAPSHOT_OPERATION, SpendGrantInputSchema, SpendGrantSchema, SpendGrantScopeSchema, SpendPrincipalSchema, parseGrantAmount, type SpendAuthorityBinding, type SpendGrant, type SpendGrantInput, type SpendGrantScope, type SpendPrincipal } from '../authority/spend-grant';
 import type { MarketSnapshotOutput } from '../resources/resource-schema';
 import { nextSpendingDayBoundary, spendingDay } from './spending-policy';
 
@@ -12,7 +13,12 @@ export type DeliveryStatus = 'NOT_PAID' | 'PENDING' | 'COMPLETE';
 export type SpendReservation = { intent: SpendIntent; quote: PaymentRequirements; approvalId: string; decision: AuthorityDecision; status: string; deliveryStatus: DeliveryStatus; transaction?: string; data?: MarketSnapshotOutput; answer?: string };
 /** Compatibility name for callers that still expose the market purchase use case. */
 export type PurchaseRecord = SpendReservation;
-export type PurchaseLedgerOptions = { managed?: boolean; timeZone?: () => string; now?: () => number };
+export type PurchaseLedgerOptions = { managed?: boolean; requireSpendGrant?: boolean; timeZone?: () => string; now?: () => number };
+export type SpendGrantSummary = {
+  id: string; version: number; status: SpendGrant['status']; resourceId: string; providerId: string; operation: string;
+  network: string; assetId: string; assetDecimals: number; payTo: string; paymentScheme: string; totalLimit: string; singleLimit: string;
+  committed: string; remaining: string; createdAt: number; expiresAt: number; revokedAt: number | null;
+};
 function currentAuthorityStatus(status: string) {
   if (status === 'REJECTED') return 'DENIED';
   if (status === 'NEEDS_CONFIRMATION') return 'REQUIRES_APPROVAL';
@@ -22,11 +28,14 @@ function currentAuthorityStatus(status: string) {
 export class PurchaseLedger {
   private db: DatabaseSync;
   private managed: boolean;
+  private requireSpendGrant: boolean;
   private timeZone: () => string;
   private now: () => number;
   private stopping = false;
   constructor(path = '.data/day5-ledger.sqlite', options: PurchaseLedgerOptions = {}) {
     this.managed = options.managed ?? false;
+    this.requireSpendGrant = options.requireSpendGrant ?? false;
+    if (this.requireSpendGrant && !this.managed) throw new Error('Spend grant enforcement requires a managed ledger');
     this.timeZone = options.timeZone ?? (() => 'Asia/Shanghai');
     this.now = options.now ?? Date.now;
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -44,7 +53,15 @@ export class PurchaseLedger {
         CREATE TABLE IF NOT EXISTS app_settings (id INTEGER PRIMARY KEY CHECK(id=1), daily_limit INTEGER, paused INTEGER NOT NULL DEFAULT 0 CHECK(paused IN (0,1)));
         INSERT OR IGNORE INTO app_settings (id,daily_limit,paused) VALUES (1,NULL,0);
         CREATE TABLE IF NOT EXISTS app_budget_clock (id INTEGER PRIMARY KEY CHECK(id=1), spending_day TEXT NOT NULL, time_zone TEXT NOT NULL, next_boundary INTEGER NOT NULL, last_seen INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS spend_grants (id TEXT PRIMARY KEY, version INTEGER NOT NULL UNIQUE, connection_id TEXT NOT NULL, connection_generation INTEGER NOT NULL,
+          resource_id TEXT NOT NULL, provider_id TEXT NOT NULL, operation TEXT NOT NULL, network TEXT NOT NULL, asset_id TEXT NOT NULL, asset_decimals INTEGER NOT NULL,
+          pay_to TEXT NOT NULL, payment_scheme TEXT NOT NULL,
+          total_limit INTEGER NOT NULL, single_limit INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('ACTIVE','REVOKED','EXPIRED')),
+          created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER);
+        CREATE UNIQUE INDEX IF NOT EXISTS one_active_spend_grant ON spend_grants(status) WHERE status='ACTIVE';
+        CREATE TABLE IF NOT EXISTS spend_grant_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, grant_id TEXT NOT NULL, type TEXT NOT NULL, at INTEGER NOT NULL);
         INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('001_app_controls',unixepoch('now') * 1000);
+        INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('002_spend_grants',unixepoch('now') * 1000);
         COMMIT;`);
       const now = this.now(); const zone = this.timeZone();
       this.db.prepare('INSERT OR IGNORE INTO app_budget_clock (id,spending_day,time_zone,next_boundary,last_seen) VALUES (1,?,?,?,?)')
@@ -57,6 +74,84 @@ export class PurchaseLedger {
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   private event(id: string, type: string) { this.db.prepare('INSERT INTO purchase_events (purchase_id,type,at) VALUES (?,?,?)').run(id, type, Date.now()); }
+  private grantEvent(id: string, type: string, at = this.now()) { this.db.prepare('INSERT INTO spend_grant_events (grant_id,type,at) VALUES (?,?,?)').run(id, type, at); }
+  private expireGrants(now: number) {
+    if (!this.managed) return;
+    const rows = this.db.prepare("UPDATE spend_grants SET status='EXPIRED' WHERE status='ACTIVE' AND expires_at<=? RETURNING id").all(now);
+    for (const row of rows) this.grantEvent(String(row.id), 'grant.EXPIRED', now);
+  }
+  private parseGrantRow(row: Record<string, unknown>): SpendGrant {
+    return SpendGrantSchema.parse({
+      id: String(row.id), version: Number(row.version), connectionId: String(row.connection_id), connectionGeneration: Number(row.connection_generation),
+      resourceId: String(row.resource_id), providerId: String(row.provider_id), operation: String(row.operation), network: String(row.network), assetId: String(row.asset_id),
+      assetDecimals: Number(row.asset_decimals), payTo: String(row.pay_to), paymentScheme: String(row.payment_scheme), totalLimit: Number(row.total_limit), singleLimit: Number(row.single_limit), status: String(row.status),
+      createdAt: Number(row.created_at), expiresAt: Number(row.expires_at), revokedAt: row.revoked_at === null ? null : Number(row.revoked_at),
+    });
+  }
+  private grantById(id: string) {
+    const row = this.db.prepare('SELECT * FROM spend_grants WHERE id=?').get(id);
+    return row ? this.parseGrantRow(row) : undefined;
+  }
+  private grantCommitted(id: string) {
+    return Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases
+      WHERE json_extract(purchase,'$.authority.grantId')=? AND status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN','PAID')`).get(id)!.total);
+  }
+  createSpendGrant(raw: SpendGrantInput, rawPrincipal: SpendPrincipal, rawScope: SpendGrantScope, now = this.now()) {
+    if (!this.managed) throw new Error('Spend grants require a managed ledger');
+    const input = SpendGrantInputSchema.parse(raw); const principal = SpendPrincipalSchema.parse(rawPrincipal); const scope = SpendGrantScopeSchema.parse(rawScope);
+    const totalLimit = parseGrantAmount(input.totalLimit, 'totalLimit'); const singleLimit = parseGrantAmount(input.singleLimit, 'singleLimit');
+    if (singleLimit > totalLimit) throw new Error('单笔上限不能大于授权总额。');
+    if (input.expiresAt <= now + 60_000 || input.expiresAt > now + 7 * 24 * 60 * 60 * 1000) throw new Error('授权有效期必须在 1 分钟到 7 天之间。');
+    return this.atomic(() => {
+      this.expireGrants(now);
+      const previous = this.db.prepare("UPDATE spend_grants SET status='REVOKED',revoked_at=? WHERE status='ACTIVE' RETURNING id").all(now);
+      for (const row of previous) this.grantEvent(String(row.id), 'grant.REVOKED_REPLACED', now);
+      const version = Number(this.db.prepare('SELECT COALESCE(MAX(version),0)+1 AS version FROM spend_grants').get()!.version);
+      const id = randomUUID();
+      this.db.prepare(`INSERT INTO spend_grants (id,version,connection_id,connection_generation,resource_id,provider_id,operation,network,asset_id,asset_decimals,pay_to,payment_scheme,total_limit,single_limit,status,created_at,expires_at,revoked_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE',?,?,NULL)`).run(id, version, principal.connectionId, principal.connectionGeneration, scope.resourceId, scope.providerId,
+        scope.operation, scope.network, scope.assetId, scope.assetDecimals, scope.payTo, scope.paymentScheme, totalLimit, singleLimit, now, input.expiresAt);
+      this.grantEvent(id, 'grant.CREATED', now);
+      return this.latestGrantSummary(now)!;
+    });
+  }
+  revokeActiveSpendGrant(now = this.now(), event = 'grant.REVOKED') {
+    if (!this.managed) return false;
+    return this.atomic(() => {
+      const rows = this.db.prepare("UPDATE spend_grants SET status='REVOKED',revoked_at=? WHERE status='ACTIVE' RETURNING id").all(now);
+      for (const row of rows) this.grantEvent(String(row.id), event, now);
+      return rows.length > 0;
+    });
+  }
+  activeSpendGrant(now = this.now()) {
+    if (!this.managed) return undefined;
+    return this.atomic(() => {
+      this.expireGrants(now);
+      const row = this.db.prepare("SELECT * FROM spend_grants WHERE status='ACTIVE' ORDER BY version DESC LIMIT 1").get();
+      return row ? this.parseGrantRow(row) : undefined;
+    });
+  }
+  spendAuthority(principal: SpendPrincipal, operation: string, now = this.now()): SpendAuthorityBinding {
+    const parsed = SpendPrincipalSchema.parse(principal); const grant = this.activeSpendGrant(now);
+    if (!grant || grant.connectionId !== parsed.connectionId || grant.connectionGeneration !== parsed.connectionGeneration || grant.operation !== operation) {
+      throw new Error('当前 Agent 连接没有可用的消费授权。');
+    }
+    return { grantId: grant.id, grantVersion: grant.version, connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation };
+  }
+  spendGrantSummary(now = this.now()): SpendGrantSummary | null {
+    if (!this.managed) return null;
+    return this.atomic(() => this.latestGrantSummary(now));
+  }
+  private latestGrantSummary(now: number): SpendGrantSummary | null {
+    this.expireGrants(now);
+    const row = this.db.prepare('SELECT * FROM spend_grants ORDER BY version DESC LIMIT 1').get();
+    if (!row) return null;
+    const grant = this.parseGrantRow(row); const committed = this.grantCommitted(grant.id);
+    return { id: grant.id, version: grant.version, status: grant.status, resourceId: grant.resourceId, providerId: grant.providerId, operation: grant.operation,
+      network: grant.network, assetId: grant.assetId, assetDecimals: grant.assetDecimals, payTo: grant.payTo, paymentScheme: grant.paymentScheme,
+      totalLimit: String(grant.totalLimit), singleLimit: String(grant.singleLimit),
+      committed: String(committed), remaining: String(Math.max(0, grant.totalLimit - committed)), createdAt: grant.createdAt, expiresAt: grant.expiresAt, revokedAt: grant.revokedAt };
+  }
   private activeDay(now: number) {
     if (!this.managed) return spendingDay(now, this.timeZone());
     const row = this.db.prepare('SELECT spending_day,time_zone,next_boundary,last_seen FROM app_budget_clock WHERE id=1').get()!;
@@ -101,6 +196,7 @@ export class PurchaseLedger {
       if (controls.paused) throw new Error('Payments were paused before submission');
       const committed = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?)`).get(this.activeDay(now))!.total);
       if (controls.dailyBudget === null || committed > controls.dailyBudget) throw new Error('Daily limit no longer covers reserved payments');
+      if (this.requireSpendGrant) this.assertGrantCovers(record, now);
     }
   }
   /** Only the sole service owner calls this before accepting any requests.
@@ -133,7 +229,9 @@ export class PurchaseLedger {
       }
       const row = this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?)`).get(this.activeDay(now))!;
       const unresolved = this.db.prepare(`SELECT id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN') LIMIT 1`).get();
-      const decision = evaluateSpendAuthority(intent, { committed: Number(row.total), hasUnknownPayment: Boolean(unresolved) }, now, this.controls());
+      const controls = this.controls();
+      let decision = evaluateSpendAuthority(intent, { committed: Number(row.total), hasUnknownPayment: Boolean(unresolved) }, now, controls);
+      if (this.requireSpendGrant) decision = this.evaluateGrant(intent, decision, Number(row.total), controls, now);
       this.db.prepare('INSERT INTO purchases (id,task_id,approval_id,purchase,quote,decision,status,amount) VALUES (?,?,?,?,?,?,?,?)')
         .run(intent.id, intent.idempotencyKey, randomUUID(), JSON.stringify(intent), JSON.stringify(quote), JSON.stringify(decision), decision.decision, intent.amount);
       this.event(intent.id, `authority.${decision.decision}`);
@@ -168,6 +266,7 @@ export class PurchaseLedger {
         if (controls.dailyBudget === null) throw new Error('Daily limit is not set');
         const committed = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?)`).get(this.activeDay(now))!.total);
         if (committed > controls.dailyBudget) throw new Error('Daily limit no longer covers reserved payments');
+        if (this.requireSpendGrant) this.assertGrantCovers(record, now);
       }
       if (this.db.prepare("SELECT id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN') LIMIT 1").get()) throw new Error('Another payment requires reconciliation');
       this.db.prepare("UPDATE purchases SET status='PAYING' WHERE approval_id=? AND status='APPROVED'").run(approvalId);
@@ -244,5 +343,39 @@ export class PurchaseLedger {
       .map(row => ({ purchaseId: String(row.task_id), status: currentAuthorityStatus(String(row.status)), deliveryStatus: row.status === 'PAID' ? (row.delivered ? 'COMPLETE' : 'PENDING') : 'NOT_PAID', amount: String(row.amount), createdAt: Number(row.created_at), transaction: row.transaction_id ? String(row.transaction_id) : null }));
   }
   events(taskId: string) { return this.db.prepare('SELECT e.sequence,e.type,e.at FROM purchase_events e JOIN purchases p ON p.id=e.purchase_id WHERE p.task_id=? ORDER BY e.sequence').all(taskId); }
+  private denied(reason: string, committed: number, controls: SpendingControls): AuthorityDecision {
+    return { decision: 'DENIED', reason, committedBefore: committed, remainingAfter: controls.dailyBudget === null ? 0 : Math.max(0, controls.dailyBudget - committed) };
+  }
+  private evaluateGrant(intent: SpendIntent, base: AuthorityDecision, committed: number, controls: SpendingControls, now: number): AuthorityDecision {
+    const binding = intent.authority;
+    if (!binding) return this.denied('SPEND_GRANT_REQUIRED', committed, controls);
+    this.expireGrants(now);
+    const grant = this.grantById(binding.grantId);
+    if (!grant || grant.status !== 'ACTIVE') return this.denied('SPEND_GRANT_INACTIVE', committed, controls);
+    if (grant.expiresAt <= now) return this.denied('SPEND_GRANT_EXPIRED', committed, controls);
+    if (grant.version !== binding.grantVersion || grant.connectionId !== binding.connectionId || grant.connectionGeneration !== binding.connectionGeneration) return this.denied('SPEND_GRANT_PRINCIPAL_MISMATCH', committed, controls);
+    if (grant.operation !== binding.operation || grant.operation !== MARKET_SNAPSHOT_OPERATION || grant.resourceId !== intent.resourceId || grant.providerId !== intent.providerId || grant.network !== intent.network || grant.assetId !== intent.assetId || grant.assetDecimals !== intent.assetDecimals || grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme) {
+      return this.denied('SPEND_GRANT_SCOPE_MISMATCH', committed, controls);
+    }
+    if (intent.amount > grant.singleLimit) return this.denied('SPEND_GRANT_SINGLE_LIMIT_EXCEEDED', committed, controls);
+    const grantCommitted = this.grantCommitted(grant.id);
+    if (!Number.isSafeInteger(grantCommitted) || grantCommitted < 0 || !Number.isSafeInteger(grantCommitted + intent.amount)) return this.denied('SPEND_GRANT_ACCOUNTING_INVALID', committed, controls);
+    if (grantCommitted + intent.amount > grant.totalLimit) return this.denied('SPEND_GRANT_TOTAL_LIMIT_EXCEEDED', committed, controls);
+    if (base.decision === 'REQUIRES_APPROVAL' && base.reason === 'SINGLE_LIMIT_EXCEEDED') {
+      return { decision: 'APPROVED', reason: 'AUTHORITY_BUDGET_AND_GRANT_PASSED', committedBefore: base.committedBefore, remainingAfter: base.remainingAfter };
+    }
+    return base.decision === 'APPROVED' ? { ...base, reason: 'AUTHORITY_BUDGET_AND_GRANT_PASSED' } : base;
+  }
+  private assertGrantCovers(record: SpendReservation, now: number) {
+    const binding = record.intent.authority;
+    if (!binding) throw new Error('Spend grant is missing');
+    const grant = this.grantById(binding.grantId);
+    if (!grant || grant.status !== 'ACTIVE' || grant.expiresAt <= now) throw new Error('Spend grant is inactive or expired');
+    if (grant.version !== binding.grantVersion || grant.connectionId !== binding.connectionId || grant.connectionGeneration !== binding.connectionGeneration || grant.operation !== binding.operation) {
+      throw new Error('Spend grant principal changed');
+    }
+    const committed = this.grantCommitted(grant.id);
+    if (!Number.isSafeInteger(committed) || committed < 0 || committed > grant.totalLimit) throw new Error('Spend grant no longer covers reserved payments');
+  }
   close() { this.db.close(); }
 }

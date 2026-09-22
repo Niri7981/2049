@@ -14,6 +14,9 @@ import { hash } from '../../src/modules/purchases/spending-policy';
 import { paymentBinding, paymentEndpoint, recoverApprovedPayment } from '../../src/modules/purchases/approved-payment';
 import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
 import { demoSnapshot } from '../../src/modules/paid-market-api/paid-market-api';
+import { MARKET_SNAPSHOT_OPERATION } from '../../src/modules/authority/spend-grant';
+import { legacyDemoPurchasesAllowed } from '../../src/modules/app/product-mode';
+import { readConnection } from '../../src/modules/mcp/connection';
 
 vi.mock('../../src/modules/purchases/approved-payment', async importOriginal => {
   const original = await importOriginal<typeof import('../../src/modules/purchases/approved-payment')>();
@@ -27,6 +30,14 @@ function runtime(timeZone = 'America/Los_Angeles', now?: () => number) {
   const dir = mkdtempSync(join(tmpdir(), 'app2049-')); dirs.push(dir);
   return new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }), timeZone: () => timeZone, now });
 }
+const origin = 'http://127.0.0.1:3049';
+function authorize(app: AppRuntime, now = Date.now(), totalLimit = '1000000') {
+  app.setAgentConnection(true, origin);
+  const grant = app.createSpendGrant({ totalLimit, singleLimit: totalLimit, expiresAt: now + 24 * 60 * 60 * 1000 });
+  const principal = app.agentConnection.principal('request_purchase');
+  if (!principal) throw new Error('test connection was not authorized');
+  return { grant, principal, authority: app.ledger.spendAuthority(principal, MARKET_SNAPSHOT_OPERATION, now) };
+}
 
 describe('authenticated local management boundary', () => {
   it('rejects missing, wrong, and cross-site credentials', () => {
@@ -37,9 +48,30 @@ describe('authenticated local management boundary', () => {
     expect(() => requireManagementRequest(request(`Bearer ${'a'.repeat(32)}`, 'cross-site'))).toThrow('跨站');
     expect(() => requireManagementRequest(request(`Bearer ${'a'.repeat(32)}`))).not.toThrow();
   });
+  it('disables the legacy payment worker inside the product service', () => {
+    expect(legacyDemoPurchasesAllowed({})).toBe(true);
+    expect(legacyDemoPurchasesAllowed({ APP2049_MANAGEMENT_TOKEN: 'product-token' })).toBe(false);
+  });
 });
 
 describe('managed budget and Devnet test records', () => {
+  it('binds a finite grant to the current Agent and reports successful authorization', () => {
+    const app = runtime(); const now = Date.now();
+    try {
+      app.setAgentConnection(true, origin);
+      const readOnly = readConnection(app.directory);
+      const grant = app.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 8 * 60 * 60 * 1000 });
+      const authorized = readConnection(app.directory);
+      expect(authorized).toMatchObject({ connectionId: readOnly.connectionId, generation: readOnly.generation + 1, capabilities: ['read', 'request_purchase'] });
+      expect(authorized.token).not.toBe(readOnly.token);
+      expect(app.agentConnection.status()).toMatchObject({ enabled: true, access: 'spending_request' });
+      expect(grant).toMatchObject({ status: 'ACTIVE', totalLimit: '5000000', singleLimit: '500000' });
+      expect(app.ledger.spendGrantSummary()).toMatchObject({ id: grant.id, status: 'ACTIVE', remaining: '5000000' });
+      app.setAgentConnection(false, origin);
+      expect(app.ledger.spendGrantSummary()?.status).toBe('REVOKED');
+    } finally { app.ledger.close(); }
+  });
+
   it('quit waits for a request loading its wallet and prevents it from making a purchase', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'app2049-drain-')); dirs.push(dir);
     let release!: () => void;
@@ -51,6 +83,7 @@ describe('managed budget and Devnet test records', () => {
     } });
     try {
       app.setDailyLimit('100000');
+      authorize(app);
       const payment = app.createTestPurchase('quit-race', 'http://127.0.0.1:3049');
       const rejected = expect(payment).rejects.toThrow('正在退出');
       await loading;
@@ -67,14 +100,14 @@ describe('managed budget and Devnet test records', () => {
     vi.stubEnv('DEMO_MERCHANT_PUBLIC_KEY', '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs');
     vi.stubEnv('SOLANA_CLUSTER', 'devnet');
     const app = runtime();
-    const origin = 'http://127.0.0.1:3049';
     const config = loadPaymentConfig({ DEMO_BUYER_PUBLIC_KEY: address, DEMO_MERCHANT_PUBLIC_KEY: '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs' });
     const resource = createStaticResourceRegistry({ endpoint: 'https://example.com', asset_id: config.mint, network: config.network, allowed_pay_to: config.merchant })[0];
     const quote = { scheme: 'exact', network: config.network, asset: config.mint, amount: '10000', payTo: config.merchant, maxTimeoutSeconds: 300, extra: {} };
     const now = Date.now();
     app.setDailyLimit('100000');
+    const { authority } = authorize(app, now);
     const intent = createMarketSnapshotSpendIntent({ idempotencyKey: 'startup-original', request: { asset: 'SOL' }, requestHash: hash('task'), resource, quote,
-      executionBinding: paymentBinding(config, paymentEndpoint(origin)), now });
+      executionBinding: paymentBinding(config, paymentEndpoint(origin)), authority, now });
     const record = app.ledger.reserve(intent, quote, now);
     app.ledger.claim(record.approvalId);
     app.ledger.savePayload(record.approvalId, { x402Version: 2, accepted: quote, payload: { transaction: 'test-wire' } });
@@ -111,6 +144,7 @@ describe('managed budget and Devnet test records', () => {
   it('starts without an implicit limit and blocks zero-limit and paused purchases', async () => {
     const app = runtime();
     try {
+      authorize(app);
       expect(app.ledger.managedSummary().dailyLimit).toBeNull();
       let result = await app.createTestPurchase(`app-${randomUUID()}`, 'http://127.0.0.1:3049');
       expect(result.policy.reason).toBe('DAILY_LIMIT_NOT_SET');
@@ -129,6 +163,7 @@ describe('managed budget and Devnet test records', () => {
     const app = create(); const id = `app-${randomUUID()}`;
     try {
       app.setDailyLimit('20000');
+      authorize(app);
       const first = await app.createTestPurchase(id, 'http://127.0.0.1:3049');
       const replay = await app.createTestPurchase(id, 'http://127.0.0.1:3049');
       expect(first.status).toBe('PAID'); expect(replay.status).toBe('PAID');
@@ -150,10 +185,11 @@ describe('managed budget and Devnet test records', () => {
     const resource = createStaticResourceRegistry({ endpoint: 'https://purchase.local.invalid/api/paid/market-snapshot', asset_id: DEVNET_USDC_MINT, network: DEVNET_NETWORK, allowed_pay_to: merchant })[0];
     const quote: PaymentRequirements = { scheme: 'exact', network: DEVNET_NETWORK, asset: DEVNET_USDC_MINT, amount: '10000', payTo: merchant, maxTimeoutSeconds: 300, extra: { feePayer: address, memo: `app-test:${id}` } };
     const now = Date.now();
-    const intent = createMarketSnapshotSpendIntent({ idempotencyKey: id, request: { asset: 'SOL' }, requestHash: hash('2049 App test purchase'), resource, quote,
-      executionBinding: hash(['simulated-devnet', address, merchant]), now });
     try {
       app.setDailyLimit('20000');
+      const { authority } = authorize(app, now);
+      const intent = createMarketSnapshotSpendIntent({ idempotencyKey: id, request: { asset: 'SOL' }, requestHash: hash('2049 App test purchase'), resource, quote,
+        executionBinding: hash(['simulated-devnet', address, merchant]), authority, now });
       const reserved = app.ledger.reserve(intent, quote, now);
       app.ledger.claim(reserved.approvalId, now);
       app.ledger.finish(reserved.approvalId, { transaction: `simulated-${id}`, data: demoSnapshot }, now);
@@ -178,16 +214,17 @@ describe('managed budget and Devnet test records', () => {
     finally { app.ledger.close(); }
   });
 
-  it('serializes two clients against one shared managed limit', async () => {
+  it('serializes concurrent App requests against one shared managed limit', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'app2049-concurrent-')); dirs.push(dir);
     const make = () => new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }), timeZone: () => 'Asia/Shanghai' });
-    const first = make(); const second = make();
+    const first = make();
     try {
       first.setDailyLimit('10000');
-      const results = await Promise.all([first.createTestPurchase(`app-${randomUUID()}`, 'http://127.0.0.1:3049'), second.createTestPurchase(`app-${randomUUID()}`, 'http://127.0.0.1:3049')]);
+      authorize(first, Date.now(), '20000');
+      const results = await Promise.all([first.createTestPurchase(`app-${randomUUID()}`, origin), first.createTestPurchase(`app-${randomUUID()}`, origin)]);
       expect(results.map(result => result.status).sort()).toEqual(['DENIED', 'PAID']);
       expect(first.ledger.managedSummary()).toMatchObject({ paid: '10000', remaining: '0' });
-    } finally { first.ledger.close(); second.ledger.close(); }
+    } finally { first.ledger.close(); }
   });
 
   it('rechecks pause and a lowered limit before signing and before submission', () => {

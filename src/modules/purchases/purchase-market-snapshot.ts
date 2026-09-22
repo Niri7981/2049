@@ -9,6 +9,7 @@ import { createMarketSnapshotSpendIntent } from '../resources/market-spend-adapt
 import { executeApprovedPayment, paymentBinding, paymentEndpoint, recoverApprovedPayment } from './approved-payment';
 import { PurchaseLedger, type PurchaseRecord } from './purchase-ledger';
 import { hash } from './spending-policy';
+import type { SpendAuthorityBinding } from '../authority/spend-grant';
 
 export type MarketSnapshotPurchaseMode = 'live_devnet' | 'simulated';
 export type MarketSnapshotPurchaseOptions = {
@@ -21,6 +22,7 @@ export type MarketSnapshotPurchaseOptions = {
   trace?: Trace;
   now?: () => number;
   legacyBindings?: string[];
+  authority?: SpendAuthorityBinding;
 };
 
 export type MarketSnapshotPurchaseResult = {
@@ -50,7 +52,8 @@ export async function purchaseMarketSnapshot(
       throw new Error('Purchase ID already belongs to different input or configuration');
     }
     if (options.mode === 'live_devnet') await recoverApprovedPayment(ledger, input.purchaseId, config, endpoint, trace);
-    return { record: ledger.get(input.purchaseId)!, reused: true, simulated: options.mode === 'simulated' };
+    const saved = ledger.get(input.purchaseId)!;
+    return { record: saved, reused: true, simulated: saved.transaction?.startsWith('simulated-') ?? options.mode === 'simulated' };
   }
 
   const resources = createStaticResourceRegistry({
@@ -85,6 +88,7 @@ export async function purchaseMarketSnapshot(
     quote,
     executionBinding: binding,
     now,
+    authority: options.authority,
   });
   const reserved = ledger.reserve(spendIntent, quote, now);
   trace(reserved.status === 'APPROVED' ? 'POLICY_APPROVED' : 'POLICY_STOPPED', reserved.decision.reason);

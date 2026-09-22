@@ -9,6 +9,9 @@ import { paymentEndpoint, recoverApprovedPayment } from '../purchases/approved-p
 import { purchaseMarketSnapshot } from '../purchases/purchase-market-snapshot';
 import { hash } from '../purchases/spending-policy';
 import { AgentConnection } from '../mcp/connection';
+import { MARKET_SNAPSHOT_OPERATION, SpendGrantInputSchema, type SpendPrincipal } from '../authority/spend-grant';
+import { DEMO_MARKET_DATA_PROVIDER_ID, PREMIUM_SOL_MARKET_SNAPSHOT_ID } from '../resources/static-resource-registry';
+import { DEVNET_NETWORK } from '../payment/payment-config';
 
 type RuntimeState = { runtime?: AppRuntime };
 export type TestPurchaseResult = { purchaseId: string; status: string; deliveryStatus: string; policy: { decision: string; reason: string }; transaction: string | null; simulated: boolean; warning?: string };
@@ -34,8 +37,11 @@ export class AppRuntime {
   private recoveryStatus: 'idle' | 'running' | 'complete' | 'pending' = 'idle';
   private wallet?: Promise<{ address: string; reused: boolean }>;
   constructor(readonly directory = dataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number } = {}) {
+    this.ledger = new PurchaseLedger(join(directory, 'app-ledger.sqlite'), { managed: true, requireSpendGrant: true, timeZone: dependencies.timeZone ?? localTimeZone, now: dependencies.now });
     this.agentConnection = new AgentConnection(directory);
-    this.ledger = new PurchaseLedger(join(directory, 'app-ledger.sqlite'), { managed: true, timeZone: dependencies.timeZone ?? localTimeZone, now: dependencies.now });
+    // Connection tokens intentionally do not survive a backend restart. A grant
+    // bound to the previous connection must not remain apparently usable.
+    this.ledger.revokeActiveSpendGrant(dependencies.now?.() ?? Date.now(), 'grant.REVOKED_BACKEND_RESTART');
   }
   async initializeWallet() {
     this.wallet ??= (this.dependencies.initializeWallet ?? initializeProductWallet)().then(wallet => {
@@ -78,6 +84,7 @@ export class AppRuntime {
   }
   async prepareQuit() {
     this.accepting = false;
+    this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED_SERVICE_EXIT');
     this.agentConnection.setEnabled(false, '');
     this.ledger.stopPayments();
     await Promise.allSettled([...this.active]);
@@ -112,10 +119,51 @@ export class AppRuntime {
     return { service: { status: this.accepting ? 'running' : 'stopping', recoveryStatus: this.recoveryStatus, network: 'Solana Devnet', testEnvironment: true,
         purchaseMode: process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1' ? 'live_devnet' : 'simulated' },
       wallet: { address: wallet.address, reused: wallet.reused, balance }, budget: { ...budget, dailyLimitDisplay: display(budget.dailyLimit),
-        paidDisplay: display(budget.paid), reservedDisplay: display(budget.reserved), remainingDisplay: display(budget.remaining) }, purchases: this.ledger.list(), connection: this.agentConnection.status() };
+        paidDisplay: display(budget.paid), reservedDisplay: display(budget.reserved), remainingDisplay: display(budget.remaining) }, grant: this.ledger.spendGrantSummary(),
+      purchases: this.ledger.list(), connection: this.agentConnection.status() };
   }
   setDailyLimit(value: string | null) { return this.ledger.setDailyLimit(value); }
   setPaused(value: boolean) { return this.ledger.setPaused(value); }
+  setAgentConnection(enabled: boolean, origin: string) {
+    this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED_CONNECTION_CHANGED');
+    this.agentConnection.setEnabled(enabled, origin);
+    return this.agentConnection.status();
+  }
+  createSpendGrant(raw: unknown) {
+    const input = SpendGrantInputSchema.parse(raw);
+    const now = this.dependencies.now?.() ?? Date.now();
+    const total = Number(input.totalLimit); const single = Number(input.singleLimit);
+    if (total <= 0 || single <= 0 || single > total) throw new Error('授权金额必须为正数，且单笔上限不能大于授权总额。');
+    if (input.expiresAt <= now + 60_000 || input.expiresAt > now + 7 * 24 * 60 * 60 * 1000) throw new Error('授权有效期必须在 1 分钟到 7 天之间。');
+    const principal = this.agentConnection.rotateForSpending();
+    try {
+      const payTo = process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
+      return this.ledger.createSpendGrant(input, principal, {
+        resourceId: PREMIUM_SOL_MARKET_SNAPSHOT_ID,
+        providerId: DEMO_MARKET_DATA_PROVIDER_ID,
+        operation: MARKET_SNAPSHOT_OPERATION,
+        network: DEVNET_NETWORK,
+        assetId: DEVNET_USDC_MINT,
+        assetDecimals: 6,
+        payTo,
+        paymentScheme: 'exact',
+      }, now);
+    } catch (error) {
+      this.ledger.revokeActiveSpendGrant(now, 'grant.REVOKED_CONNECTION_ROTATION_FAILED');
+      this.agentConnection.downgradeToReadOnly();
+      throw error;
+    }
+  }
+  revokeSpendGrant() {
+    const revoked = this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now());
+    this.agentConnection.downgradeToReadOnly();
+    return revoked;
+  }
+  private authority(principal?: SpendPrincipal) {
+    const current = principal ?? this.agentConnection.principal('request_purchase');
+    if (!current) throw new Error('当前 Agent 连接没有消费权限。');
+    return this.ledger.spendAuthority(current, MARKET_SNAPSHOT_OPERATION, this.dependencies.now?.() ?? Date.now());
+  }
   createTestPurchase(id: string, origin: string): Promise<TestPurchaseResult> {
     if (!this.accepting) return Promise.reject(new Error('服务正在退出，不能开始新付款。'));
     return this.track(this.performTestPurchase(id, origin));
@@ -132,8 +180,10 @@ export class AppRuntime {
       ? loadPaymentConfig()
       : loadPaymentConfig({ ...process.env, SOLANA_CLUSTER: 'devnet', DEMO_BUYER_PUBLIC_KEY: wallet.address, DEMO_MERCHANT_PUBLIC_KEY: merchant });
     if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Devnet 钱包配置不匹配。');
+    const authority = this.ledger.get(id) ? undefined : this.authority();
     const result = await purchaseMarketSnapshot({ purchaseId: id, intent: '2049 App test purchase' }, {
       config, ledger: this.ledger, origin, mode,
+      authority,
       legacyBindings: mode === 'simulated' ? [hash(['simulated-devnet', wallet.address, merchant])] : undefined,
     });
     const saved = result.record;

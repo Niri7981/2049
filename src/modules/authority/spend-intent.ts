@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SpendAuthorityBindingSchema } from './spend-grant';
 
 const boundedIdentifier = z.string().min(1).max(200);
 
@@ -23,6 +24,7 @@ export const SpendIntentSchema = z.object({
   createdAt: z.number().int(),
   expiresAt: z.number().int(),
   executionBinding: z.string().min(1),
+  authority: SpendAuthorityBindingSchema.optional(),
 }).strict();
 
 export type SpendIntent = z.infer<typeof SpendIntentSchema>;

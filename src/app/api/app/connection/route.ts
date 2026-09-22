@@ -9,7 +9,6 @@ export async function PUT(request: Request) {
     requireManagementRequest(request, true);
     const { enabled } = z.object({ enabled: z.boolean() }).strict().parse(await smallJson(request));
     const app = appRuntime();
-    app.agentConnection.setEnabled(enabled, new URL(request.headers.get('origin')!).origin);
-    return Response.json({ connection: app.agentConnection.status() });
+    return Response.json({ connection: app.setAgentConnection(enabled, new URL(request.headers.get('origin')!).origin) });
   } catch (error) { return managementError(error); }
 }

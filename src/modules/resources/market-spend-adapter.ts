@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PaymentRequirements } from '@x402/core/types';
 import { SpendIntentSchema, type SpendIntent } from '../authority/spend-intent';
 import { hash } from '../authority/authority-policy';
+import type { SpendAuthorityBinding } from '../authority/spend-grant';
 import { MarketSnapshotInputSchema, type ResourceMetadata } from './resource-schema';
 import { DEMO_MARKET_DATA_PROVIDER_ID, PREMIUM_SOL_MARKET_SNAPSHOT_ID } from './static-resource-registry';
 
@@ -13,6 +14,7 @@ export function createMarketSnapshotSpendIntent(input: {
   quote: PaymentRequirements;
   executionBinding: string;
   now?: number;
+  authority?: SpendAuthorityBinding;
 }): SpendIntent {
   const now = input.now ?? Date.now();
   const resource = input.resource;
@@ -42,5 +44,6 @@ export function createMarketSnapshotSpendIntent(input: {
     createdAt: now,
     expiresAt: now + Math.min(quote.maxTimeoutSeconds, 300) * 1000,
     executionBinding: input.executionBinding,
+    ...(input.authority ? { authority: input.authority } : {}),
   });
 }

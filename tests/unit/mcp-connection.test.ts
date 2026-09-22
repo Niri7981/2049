@@ -53,6 +53,22 @@ it('revokes old credentials across disable, re-enable and backend restart', () =
   expect(existsSync(connectionFile(dir))).toBe(false);
 });
 
+it('rotates the credential when spending is granted or revoked', () => {
+  const { dir, connection } = fixture();
+  connection.setEnabled(true, origin);
+  const readOnly = readConnection(dir);
+  expect(() => connection.authenticate(request(readOnly.token), 'request_purchase')).toThrow();
+  const principal = connection.rotateForSpending();
+  const spending = readConnection(dir);
+  expect(spending.token).not.toBe(readOnly.token);
+  expect(spending.capabilities).toEqual(['read', 'request_purchase']);
+  expect(principal).toEqual({ connectionId: spending.connectionId, connectionGeneration: spending.generation });
+  expect(() => connection.authenticate(request(readOnly.token))).toThrow();
+  connection.authenticate(request(spending.token), 'request_purchase');
+  connection.downgradeToReadOnly();
+  expect(() => connection.authenticate(request(spending.token), 'request_purchase')).toThrow();
+});
+
 it('uses the official MCP handshake and exposes only two read tools, with sanitized failures', async () => {
   const read = vi.fn().mockResolvedValue({ amount: '10000', paymentEnabled: false });
   const server = createAgentServer(read);
