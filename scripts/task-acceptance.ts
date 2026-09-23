@@ -65,7 +65,7 @@ async function main() {
     // records stay intact. Recovery talks to the live API using the exact original payload.
     const shadow = new PurchaseLedger(':memory:');
     try {
-      const reserved = shadow.reserve(first.intent, first.quote, first.intent.createdAt);
+      const reserved = shadow.reserve(first.intent, first.quote, first.intent.createdAt, first.executionMode);
       shadow.claim(reserved.approvalId, first.intent.createdAt); shadow.savePayload(reserved.approvalId, payload); shadow.unknown(reserved.approvalId);
       await recoverApprovedPayment(shadow, first.intent.idempotencyKey, config, paymentEndpoint(origin));
       assert.equal(shadow.get(first.intent.idempotencyKey)?.status, 'PAID');

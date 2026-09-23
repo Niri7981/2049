@@ -24,6 +24,9 @@ function dataDirectory() {
   mkdirSync(value, { recursive: true, mode: 0o700 });
   return value;
 }
+function purchaseExecutionMode() {
+  return process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1' ? 'live_devnet' as const : 'simulated' as const;
+}
 
 function localTimeZone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -117,15 +120,20 @@ export class AppRuntime {
   async overview(fetcher: typeof fetch = fetch) {
     const wallet = await this.initializeWallet();
     const balance = await this.balance(wallet.address, fetcher);
-    const budget = this.ledger.managedSummary();
+    const mode = purchaseExecutionMode();
+    const now = this.dependencies.now?.() ?? Date.now();
+    const budget = this.ledger.managedSummary(now, mode);
     const display = (value: string | null) => value === null ? '未设置' : `${(Number(value) / 1_000_000).toFixed(2)} test USDC`;
     return { service: { status: this.accepting ? 'running' : 'stopping', recoveryStatus: this.recoveryStatus, network: 'Solana Devnet', testEnvironment: true,
-        purchaseMode: process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1' ? 'live_devnet' : 'simulated' },
+        purchaseMode: mode },
       wallet: { address: wallet.address, reused: wallet.reused, balance }, budget: { ...budget, dailyLimitDisplay: display(budget.dailyLimit),
-        paidDisplay: display(budget.paid), reservedDisplay: display(budget.reserved), remainingDisplay: display(budget.remaining) }, grant: this.ledger.spendGrantSummary(),
+        paidDisplay: display(budget.paid), reservedDisplay: display(budget.reserved), remainingDisplay: display(budget.remaining) }, grant: this.ledger.spendGrantSummary(now, mode),
       purchases: this.ledger.list(), connection: this.agentConnection.status() };
   }
   setDailyLimit(value: string | null) { return this.ledger.setDailyLimit(value); }
+  spendGrantSummary() {
+    return this.ledger.spendGrantSummary(this.dependencies.now?.() ?? Date.now(), purchaseExecutionMode());
+  }
   setPaused(value: boolean) { return this.ledger.setPaused(value); }
   setAgentConnection(enabled: boolean, origin: string) {
     this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED_CONNECTION_CHANGED');
@@ -150,7 +158,7 @@ export class AppRuntime {
         assetDecimals: 6,
         payTo,
         paymentScheme: 'exact',
-      }, now);
+      }, now, purchaseExecutionMode());
     } catch (error) {
       this.ledger.revokeActiveSpendGrant(now, 'grant.REVOKED_CONNECTION_ROTATION_FAILED');
       this.agentConnection.downgradeToReadOnly();
@@ -181,7 +189,7 @@ export class AppRuntime {
     if (config.cluster !== 'devnet' || config.buyer !== buyer) throw new Error('Devnet 钱包配置不匹配。');
     await this.start(origin);
     if (!this.accepting) throw new Error('服务正在退出，不能创建购买请求。');
-    return requestMarketPurchase(input, { config, ledger: this.ledger, origin, principal, execute: process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1', fetcher: this.dependencies.fetcher, now: this.dependencies.now });
+    return requestMarketPurchase(input, { config, ledger: this.ledger, origin, principal, execute: purchaseExecutionMode() === 'live_devnet', fetcher: this.dependencies.fetcher, now: this.dependencies.now });
   }
   createTestPurchase(id: string, origin: string): Promise<TestPurchaseResult> {
     if (!this.accepting) return Promise.reject(new Error('服务正在退出，不能开始新付款。'));
@@ -194,7 +202,7 @@ export class AppRuntime {
     const wallet = await this.initializeWallet();
     if (!this.accepting) throw new Error('服务正在退出，不能开始新付款。');
     const merchant = process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
-    const mode = process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1' ? 'live_devnet' : 'simulated';
+    const mode = purchaseExecutionMode();
     const config = mode === 'live_devnet'
       ? loadPaymentConfig()
       : loadPaymentConfig({ ...process.env, SOLANA_CLUSTER: 'devnet', DEMO_BUYER_PUBLIC_KEY: wallet.address, DEMO_MERCHANT_PUBLIC_KEY: merchant });

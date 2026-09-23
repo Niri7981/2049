@@ -7,11 +7,11 @@ import { selectPaymentQuote } from '../payment/solana-payment';
 import { createStaticResourceRegistry } from '../resources/static-resource-registry';
 import { createMarketSnapshotSpendIntent } from '../resources/market-spend-adapter';
 import { executeApprovedPayment, paymentBinding, paymentEndpoint, recoverApprovedPayment } from './approved-payment';
-import { PurchaseLedger, type PurchaseRecord } from './purchase-ledger';
+import { PurchaseLedger, type PurchaseExecutionMode, type PurchaseRecord } from './purchase-ledger';
 import { hash } from './spending-policy';
 import type { SpendAuthorityBinding } from '../authority/spend-grant';
 
-export type MarketSnapshotPurchaseMode = 'live_devnet' | 'simulated';
+export type MarketSnapshotPurchaseMode = PurchaseExecutionMode;
 export type MarketSnapshotPurchaseOptions = {
   config: PaymentConfig;
   ledger: PurchaseLedger;
@@ -44,18 +44,17 @@ export async function purchaseMarketSnapshot(
   const trace = options.trace ?? (() => {});
   const endpoint = paymentEndpoint(options.origin);
   const binding = paymentBinding(config, endpoint);
-  ledger.releaseExpired();
   const existing = ledger.get(input.purchaseId);
   if (existing) {
+    ledger.assertReplayAllowed(existing, options.mode);
     const acceptedBindings = [binding, ...(options.legacyBindings ?? [])];
     if (existing.intent.requestHash !== hash(input.intent) || !acceptedBindings.includes(existing.intent.executionBinding)) {
       throw new Error('Purchase ID already belongs to different input or configuration');
     }
     if (options.mode === 'live_devnet') await recoverApprovedPayment(ledger, input.purchaseId, config, endpoint, trace);
     const saved = ledger.get(input.purchaseId)!;
-    return { record: saved, reused: true, simulated: saved.transaction?.startsWith('simulated-') ?? options.mode === 'simulated' };
+    return { record: saved, reused: true, simulated: saved.executionMode === 'simulated' };
   }
-
   const resources = createStaticResourceRegistry({
     endpoint: 'https://purchase.local.invalid/api/paid/market-snapshot',
     asset_id: config.mint,
@@ -90,7 +89,7 @@ export async function purchaseMarketSnapshot(
     now,
     authority: options.authority,
   });
-  const reserved = ledger.reserve(spendIntent, quote, now);
+  const reserved = ledger.reserve(spendIntent, quote, now, options.mode);
   trace(reserved.status === 'APPROVED' ? 'POLICY_APPROVED' : 'POLICY_STOPPED', reserved.decision.reason);
   if (reserved.intent.id !== spendIntent.id || reserved.status !== 'APPROVED') {
     return { record: reserved, reused: reserved.intent.id !== spendIntent.id, simulated: options.mode === 'simulated' };

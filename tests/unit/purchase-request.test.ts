@@ -53,6 +53,14 @@ function setup(totalLimit = '5000000', ledgerPath = ':memory:') {
   return { ledger, remote, fetcher, store };
 }
 
+function finishLivePurchase(ledger: PurchaseLedger, approvalId: string, transaction: string, now: number) {
+  const record = ledger.claim(approvalId);
+  const payload = { x402Version: 2, accepted: record.quote, payload: { transaction: 'signed-fixture-wire' } };
+  ledger.savePayload(approvalId, payload);
+  ledger.confirmPayment(approvalId, transaction, { messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true }, now);
+  ledger.finish(approvalId, { transaction, data: snapshot }, now);
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 it('runs real quote → SpendGrant → policy for APPROVED and DENIED without payment', async () => {
@@ -81,10 +89,11 @@ it('bridges basic APPROVED through the existing claim path using the one persist
   const signer = vi.fn();
   const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string, _config: PaymentConfig, endpoint: string) => {
     signer();
-    const claimed = paymentLedger.claim(approvalId);
+    const claimed = paymentLedger.get('executed-basic');
+    if (!claimed) throw new Error('purchase reservation missing');
     expect(claimed.quote.amount).toBe('200000');
     expect(endpoint).toBe('http://127.0.0.1:3049/api/paid/market-snapshot?asset=SOL&offer=basic');
-    paymentLedger.finish(approvalId, { transaction: '1'.repeat(88), data: snapshot }, now);
+    finishLivePurchase(paymentLedger, approvalId, '1'.repeat(88), now);
     return { transaction: '1'.repeat(88), data: snapshot };
   });
   const input = { requestId: 'executed-basic', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
@@ -111,8 +120,7 @@ it('blocks a different active CardMember from reading or replaying a completed p
   const ledgerPath = join(directory, 'ledger.sqlite');
   const { ledger, fetcher, store } = setup('5000000', ledgerPath);
   const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
-    paymentLedger.claim(approvalId);
-    paymentLedger.finish(approvalId, { transaction: '4'.repeat(88), data: snapshot }, now);
+    finishLivePurchase(paymentLedger, approvalId, '4'.repeat(88), now);
     return { transaction: '4'.repeat(88), data: snapshot };
   });
   const input = { requestId: 'member-owned-resource', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
@@ -137,8 +145,7 @@ it('blocks a different active CardMember from reading or replaying a completed p
 it('CardMember revoke blocks new spending and completed resource access without erasing ownership', async () => {
   const { ledger, fetcher, store } = setup();
   const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
-    paymentLedger.claim(approvalId);
-    paymentLedger.finish(approvalId, { transaction: '5'.repeat(88), data: snapshot }, now);
+    finishLivePurchase(paymentLedger, approvalId, '5'.repeat(88), now);
     return { transaction: '5'.repeat(88), data: snapshot };
   });
   const input = { requestId: 'revoked-member-resource', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
@@ -192,8 +199,7 @@ it('rejects malformed persisted resources instead of returning unvalidated datab
   const ledgerPath = join(directory, 'ledger.sqlite');
   const { ledger, fetcher, store } = setup('5000000', ledgerPath);
   const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
-    paymentLedger.claim(approvalId);
-    paymentLedger.finish(approvalId, { transaction: '3'.repeat(88), data: snapshot }, now);
+    finishLivePurchase(paymentLedger, approvalId, '3'.repeat(88), now);
     return { transaction: '3'.repeat(88), data: snapshot };
   });
   const input = { requestId: 'malformed-resource', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
@@ -231,12 +237,34 @@ it('replays the same request without another quote and rejects changed input', a
   } finally { ledger.close(); store.close(); }
 });
 
+it('rejects simulated APPROVED replay in live mode before payment, recovery, or another quote', async () => {
+  const { ledger, remote, fetcher, store } = setup();
+  const input = { requestId: 'simulated-approved-replay', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
+  const pay = vi.fn();
+  const recover = vi.fn();
+  try {
+    const simulated = await requestMarketPurchase(input, {
+      config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now,
+    });
+    await expect(requestMarketPurchase(input, {
+      config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay, recover,
+    })).rejects.toThrow('PURCHASE_EXECUTION_MODE_MISMATCH');
+
+    expect(simulated).toMatchObject({ status: 'APPROVED', executionMode: 'simulated', reused: false });
+    expect(ledger.get(input.requestId)).toMatchObject({ status: 'APPROVED', executionMode: 'simulated', paymentPayloadPresent: false });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(pay).not.toHaveBeenCalled();
+    expect(recover).not.toHaveBeenCalled();
+    expect(remote.verify).not.toHaveBeenCalled();
+    expect(remote.settle).not.toHaveBeenCalled();
+  } finally { ledger.close(); store.close(); }
+});
+
 it('concurrent identical request IDs persist one quote and claim payment once', async () => {
   const { ledger, fetcher, store } = setup();
   const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
-    paymentLedger.claim(approvalId);
     const transaction = '2'.repeat(88);
-    paymentLedger.finish(approvalId, { transaction, data: snapshot }, now);
+    finishLivePurchase(paymentLedger, approvalId, transaction, now);
     return { transaction, data: snapshot };
   });
   const input = { requestId: 'concurrent-stable-id', offerId: 'basic' as const, reason: 'Need data' };

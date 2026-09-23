@@ -2,16 +2,31 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
 import { CardMemberSchema, type CardMember } from '../authority/card-member';
 import { DEFAULT_SPENDING_POLICY, evaluateSpendAuthority, parseStoredAuthorityDecision, type AuthorityDecision, type SpendingControls } from '../authority/authority-policy';
 import { parseStoredSpendIntent, type SpendIntent } from '../authority/spend-intent';
 import { MARKET_SNAPSHOT_OPERATION, SpendGrantInputSchema, SpendGrantSchema, SpendGrantScopeSchema, SpendPrincipalSchema, parseGrantAmount, type SpendAuthorityBinding, type SpendGrant, type SpendGrantInput, type SpendGrantScope, type SpendPrincipal } from '../authority/spend-grant';
 import { MarketSnapshotOutputSchema, type MarketSnapshotOutput } from '../resources/resource-schema';
-import { nextSpendingDayBoundary, spendingDay } from './spending-policy';
+import { hash, nextSpendingDayBoundary, spendingDay } from './spending-policy';
 
 export type DeliveryStatus = 'NOT_PAID' | 'PENDING' | 'COMPLETE';
-export type SpendReservation = { intent: SpendIntent; quote: PaymentRequirements; approvalId: string; decision: AuthorityDecision; status: string; deliveryStatus: DeliveryStatus; ownerCardMemberId?: string; transaction?: string; data?: MarketSnapshotOutput; answer?: string };
+export const PurchaseExecutionModeSchema = z.enum(['simulated', 'live_devnet']);
+export type PurchaseExecutionMode = z.infer<typeof PurchaseExecutionModeSchema>;
+export type StoredPurchaseExecutionMode = PurchaseExecutionMode | 'UNKNOWN';
+export const PaymentEvidenceSchema = z.object({
+  version: z.literal(1), payloadHash: z.string().regex(/^[a-f0-9]{64}$/), messageHash: z.string().regex(/^[a-f0-9]{64}$/),
+  quoteFingerprint: z.string().regex(/^[a-f0-9]{64}$/), transaction: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,100}$/),
+  confirmationStatus: z.enum(['confirmed', 'finalized']), settlementConfirmed: z.literal(true), verifiedAt: z.number().int().nonnegative(),
+}).strict();
+export type PaymentEvidence = z.infer<typeof PaymentEvidenceSchema>;
+export type PaymentVerification = { messageHash: string; confirmationStatus: 'confirmed' | 'finalized'; settlementConfirmed: true };
+export type SpendReservation = {
+  intent: SpendIntent; quote: PaymentRequirements; approvalId: string; decision: AuthorityDecision; status: string; deliveryStatus: DeliveryStatus;
+  executionMode: StoredPurchaseExecutionMode; paymentPayloadPresent: boolean; paymentPayloadHash?: string; paymentEvidence?: PaymentEvidence;
+  ownerCardMemberId?: string; transaction?: string; data?: MarketSnapshotOutput; answer?: string;
+};
 /** Compatibility name for callers that still expose the market purchase use case. */
 export type PurchaseRecord = SpendReservation;
 export type PurchaseLedgerOptions = { managed?: boolean; requireSpendGrant?: boolean; timeZone?: () => string; now?: () => number; defaultCardMemberId?: string };
@@ -24,6 +39,23 @@ function currentAuthorityStatus(status: string) {
   if (status === 'REJECTED') return 'DENIED';
   if (status === 'NEEDS_CONFIRMATION') return 'REQUIRES_APPROVAL';
   return status;
+}
+function storedExecutionMode(value: unknown): StoredPurchaseExecutionMode {
+  const parsed = PurchaseExecutionModeSchema.safeParse(value);
+  return parsed.success ? parsed.data : 'UNKNOWN';
+}
+function storedPaymentEvidence(value: unknown): PaymentEvidence | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const parsed = PaymentEvidenceSchema.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : undefined;
+  } catch { return undefined; }
+}
+function accountingModeFilter(mode?: StoredPurchaseExecutionMode) {
+  if (!mode) return '';
+  if (mode === 'UNKNOWN') return ' AND execution_mode IS NULL';
+  if (mode === 'live_devnet') return " AND (execution_mode='live_devnet' OR execution_mode IS NULL)";
+  return " AND execution_mode='simulated'";
 }
 /** SQLite owns approval, budget reservation and the unique task purchase. No model writes. */
 export class PurchaseLedger {
@@ -47,10 +79,17 @@ export class PurchaseLedger {
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS purchases (id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE, approval_id TEXT NOT NULL UNIQUE,
         purchase TEXT NOT NULL, quote TEXT NOT NULL, decision TEXT NOT NULL, status TEXT NOT NULL,
-        amount INTEGER NOT NULL, confirmed_day TEXT, transaction_id TEXT, data TEXT, payload TEXT, owner_card_member_id TEXT);
+        amount INTEGER NOT NULL, confirmed_day TEXT, transaction_id TEXT, data TEXT, payload TEXT, owner_card_member_id TEXT,
+        execution_mode TEXT CHECK(execution_mode IN ('simulated','live_devnet')), payment_evidence TEXT);
       CREATE TABLE IF NOT EXISTS purchase_answers (purchase_id TEXT PRIMARY KEY, answer TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS purchase_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, purchase_id TEXT NOT NULL, type TEXT NOT NULL, at INTEGER NOT NULL);`);
     if (!this.columns('purchases').has('owner_card_member_id')) this.db.exec('ALTER TABLE purchases ADD COLUMN owner_card_member_id TEXT');
+    if (!this.columns('purchases').has('execution_mode')) this.db.exec('ALTER TABLE purchases ADD COLUMN execution_mode TEXT');
+    if (!this.columns('purchases').has('payment_evidence')) this.db.exec('ALTER TABLE purchases ADD COLUMN payment_evidence TEXT');
+    this.db.exec(`CREATE TRIGGER IF NOT EXISTS purchases_execution_mode_immutable
+      BEFORE UPDATE OF execution_mode ON purchases
+      WHEN NEW.execution_mode IS NOT OLD.execution_mode
+      BEGIN SELECT RAISE(ABORT, 'purchase execution mode is immutable'); END;`);
     if (this.managed) {
       this.db.exec(`BEGIN IMMEDIATE;
         CREATE TABLE IF NOT EXISTS app_schema_migrations (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL);
@@ -66,6 +105,7 @@ export class PurchaseLedger {
         CREATE TABLE IF NOT EXISTS spend_grant_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, grant_id TEXT NOT NULL, type TEXT NOT NULL, at INTEGER NOT NULL);
         INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('001_app_controls',unixepoch('now') * 1000);
         INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('002_spend_grants',unixepoch('now') * 1000);
+        INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('004_purchase_execution_isolation',unixepoch('now') * 1000);
         COMMIT;`);
       this.migrateCardMemberIdentity();
       const now = this.now(); const zone = this.timeZone();
@@ -173,11 +213,11 @@ export class PurchaseLedger {
     const row = this.db.prepare('SELECT * FROM spend_grants WHERE id=?').get(id);
     return row ? this.parseGrantRow(row) : undefined;
   }
-  private grantCommitted(id: string) {
+  private grantCommitted(id: string, mode?: StoredPurchaseExecutionMode) {
     return Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases
-      WHERE json_extract(purchase,'$.authority.grantId')=? AND status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN','PAID')`).get(id)!.total);
+      WHERE json_extract(purchase,'$.authority.grantId')=? AND status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN','PAID')${accountingModeFilter(mode)}`).get(id)!.total);
   }
-  createSpendGrant(raw: SpendGrantInput, rawPrincipal: SpendPrincipal, rawScope: SpendGrantScope, now = this.now()) {
+  createSpendGrant(raw: SpendGrantInput, rawPrincipal: SpendPrincipal, rawScope: SpendGrantScope, now = this.now(), mode?: PurchaseExecutionMode) {
     if (!this.managed) throw new Error('Spend grants require a managed ledger');
     const input = SpendGrantInputSchema.parse(raw); const principal = SpendPrincipalSchema.parse(rawPrincipal); const scope = SpendGrantScopeSchema.parse(rawScope);
     this.assertCardMemberActive(principal.cardMemberId);
@@ -194,7 +234,7 @@ export class PurchaseLedger {
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE',?,?,NULL)`).run(id, version, principal.cardMemberId, principal.connectionId, principal.connectionGeneration, scope.resourceId, scope.providerId,
         scope.operation, scope.network, scope.assetId, scope.assetDecimals, scope.payTo, scope.paymentScheme, totalLimit, singleLimit, now, input.expiresAt);
       this.grantEvent(id, 'grant.CREATED', now);
-      return this.latestGrantSummary(now)!;
+      return this.latestGrantSummary(now, mode)!;
     });
   }
   revokeActiveSpendGrant(now = this.now(), event = 'grant.REVOKED') {
@@ -222,15 +262,15 @@ export class PurchaseLedger {
     return { grantId: grant.id, grantVersion: grant.version, cardMemberId: parsed.cardMemberId,
       connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation };
   }
-  spendGrantSummary(now = this.now()): SpendGrantSummary | null {
+  spendGrantSummary(now = this.now(), mode?: PurchaseExecutionMode): SpendGrantSummary | null {
     if (!this.managed) return null;
-    return this.atomic(() => this.latestGrantSummary(now));
+    return this.atomic(() => this.latestGrantSummary(now, mode));
   }
-  private latestGrantSummary(now: number): SpendGrantSummary | null {
+  private latestGrantSummary(now: number, mode?: StoredPurchaseExecutionMode): SpendGrantSummary | null {
     this.expireGrants(now);
     const row = this.db.prepare('SELECT * FROM spend_grants ORDER BY version DESC LIMIT 1').get();
     if (!row) return null;
-    const grant = this.parseGrantRow(row); const committed = this.grantCommitted(grant.id);
+    const grant = this.parseGrantRow(row); const committed = this.grantCommitted(grant.id, mode);
     return { id: grant.id, version: grant.version, status: grant.status, resourceId: grant.resourceId, providerId: grant.providerId, operation: grant.operation,
       network: grant.network, assetId: grant.assetId, assetDecimals: grant.assetDecimals, payTo: grant.payTo, paymentScheme: grant.paymentScheme,
       totalLimit: String(grant.totalLimit), singleLimit: String(grant.singleLimit),
@@ -274,12 +314,14 @@ export class PurchaseLedger {
     if (this.stopping) throw new Error('Service is stopping');
     const row = this.db.prepare('SELECT task_id FROM purchases WHERE approval_id=?').get(approvalId);
     const record = row ? this.get(String(row.task_id)) : undefined;
+    if (record?.executionMode !== 'live_devnet') throw new Error('PURCHASE_EXECUTION_MODE_MISMATCH');
     if (record?.status !== 'PAYING' || record.intent.expiresAt <= now) throw new Error('Approval inactive or expired');
     validate?.(record);
     if (this.managed) {
       const controls = this.controls();
       if (controls.paused) throw new Error('Payments were paused before submission');
-      const committed = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?)`).get(this.activeDay(now))!.total);
+      const modeFilter = accountingModeFilter(record.executionMode);
+      const committed = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE (status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?))${modeFilter}`).get(this.activeDay(now))!.total);
       if (controls.dailyBudget === null || committed > controls.dailyBudget) throw new Error('Daily limit no longer covers reserved payments');
       if (this.requireSpendGrant) this.assertGrantCovers(record, now);
     }
@@ -300,31 +342,61 @@ export class PurchaseLedger {
     const row = this.db.prepare('SELECT * FROM purchases WHERE task_id=?').get(idempotencyKey);
     if (!row) return undefined;
     const ownerCardMemberId = row.owner_card_member_id ? String(row.owner_card_member_id) : undefined;
-    return { intent: parseStoredSpendIntent(JSON.parse(String(row.purchase)), ownerCardMemberId), quote: JSON.parse(String(row.quote)), approvalId: String(row.approval_id), decision: parseStoredAuthorityDecision(JSON.parse(String(row.decision))), status: currentAuthorityStatus(String(row.status)),
+    const intent = parseStoredSpendIntent(JSON.parse(String(row.purchase)), ownerCardMemberId);
+    const paymentPayloadPresent = typeof row.payload === 'string' && row.payload.length > 0;
+    let paymentPayloadHash: string | undefined;
+    if (paymentPayloadPresent) {
+      try { paymentPayloadHash = hash(JSON.parse(String(row.payload))); } catch { /* Malformed legacy payloads cannot prove a live payment. */ }
+    }
+    return { intent, quote: JSON.parse(String(row.quote)), approvalId: String(row.approval_id), decision: parseStoredAuthorityDecision(JSON.parse(String(row.decision))), status: currentAuthorityStatus(String(row.status)),
       deliveryStatus: row.status === 'PAID' ? (row.data ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
+      executionMode: storedExecutionMode(row.execution_mode), paymentPayloadPresent,
+      ...(paymentPayloadHash ? { paymentPayloadHash } : {}), ...(storedPaymentEvidence(row.payment_evidence) ? { paymentEvidence: storedPaymentEvidence(row.payment_evidence) } : {}),
       ...(ownerCardMemberId ? { ownerCardMemberId } : {}),
       ...(this.db.prepare("SELECT answer FROM purchase_answers WHERE purchase_id=?").get(String(row.id)) as { answer: string } | undefined),
       ...(row.transaction_id ? { transaction: String(row.transaction_id) } : {}),
       ...(row.data ? { data: MarketSnapshotOutputSchema.parse(JSON.parse(String(row.data))) } : {}) };
   }
-  reserve(intent: SpendIntent, quote: PaymentRequirements, now = Date.now()): SpendReservation {
+  private hasVerifiedPaymentProof(record: SpendReservation) {
+    const evidence = record.paymentEvidence;
+    return Boolean(record.status === 'PAID' && record.executionMode !== 'simulated' && record.paymentPayloadPresent && evidence
+      && record.paymentPayloadHash === evidence.payloadHash && record.transaction === evidence.transaction
+      && record.intent.quoteFingerprint === evidence.quoteFingerprint && evidence.settlementConfirmed === true
+      && ['confirmed', 'finalized'].includes(evidence.confirmationStatus));
+  }
+  private hasVerifiedLivePayment(record: SpendReservation) {
+    return record.executionMode === 'live_devnet' && this.hasVerifiedPaymentProof(record);
+  }
+  assertReplayAllowed(record: SpendReservation, requestedMode: PurchaseExecutionMode) {
+    if (record.executionMode !== requestedMode) throw new Error('PURCHASE_EXECUTION_MODE_MISMATCH');
+    if (requestedMode === 'live_devnet' && record.status === 'PAID' && !this.hasVerifiedLivePayment(record)) {
+      throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID');
+    }
+  }
+  reserve(intent: SpendIntent, quote: PaymentRequirements, now = Date.now(), mode: StoredPurchaseExecutionMode = 'UNKNOWN'): SpendReservation {
+    if (mode !== 'UNKNOWN') PurchaseExecutionModeSchema.parse(mode);
     return this.atomic(() => {
-      this.expireUnclaimed(now);
       const existing = this.get(intent.idempotencyKey);
       if (existing) {
         if (this.requireSpendGrant && existing.ownerCardMemberId !== intent.authority?.cardMemberId) {
           throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
         }
+        if (mode === 'UNKNOWN') {
+          if (existing.executionMode !== 'UNKNOWN') throw new Error('PURCHASE_EXECUTION_MODE_MISMATCH');
+        } else this.assertReplayAllowed(existing, mode);
         if (existing.intent.requestHash !== intent.requestHash || existing.intent.executionBinding !== intent.executionBinding) throw new Error('Idempotency key belongs to another request or execution configuration');
         return existing;
       }
-      const row = this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?)`).get(this.activeDay(now))!;
-      const unresolved = this.db.prepare(`SELECT id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN') LIMIT 1`).get();
+      this.expireUnclaimed(now);
+      const modeFilter = accountingModeFilter(mode);
+      const row = this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE (status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?))${modeFilter}`).get(this.activeDay(now))!;
+      const unresolved = this.db.prepare(`SELECT id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN')${modeFilter} LIMIT 1`).get();
       const controls = this.controls();
       let decision = evaluateSpendAuthority(intent, { committed: Number(row.total), hasUnknownPayment: Boolean(unresolved) }, now, controls);
-      if (this.requireSpendGrant) decision = this.evaluateGrant(intent, decision, Number(row.total), controls, now);
-      this.db.prepare('INSERT INTO purchases (id,task_id,approval_id,purchase,quote,decision,status,amount,owner_card_member_id) VALUES (?,?,?,?,?,?,?,?,?)')
-        .run(intent.id, intent.idempotencyKey, randomUUID(), JSON.stringify(intent), JSON.stringify(quote), JSON.stringify(decision), decision.decision, intent.amount, intent.authority?.cardMemberId ?? null);
+      if (this.requireSpendGrant) decision = this.evaluateGrant(intent, decision, Number(row.total), controls, now, mode);
+      this.db.prepare('INSERT INTO purchases (id,task_id,approval_id,purchase,quote,decision,status,amount,owner_card_member_id,execution_mode) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        .run(intent.id, intent.idempotencyKey, randomUUID(), JSON.stringify(intent), JSON.stringify(quote), JSON.stringify(decision), decision.decision, intent.amount,
+          intent.authority?.cardMemberId ?? null, mode === 'UNKNOWN' ? null : mode);
       this.event(intent.id, `authority.${decision.decision}`);
       return this.get(intent.idempotencyKey)!;
     });
@@ -344,23 +416,26 @@ export class PurchaseLedger {
       if (result.changes) this.event(record.intent.id, 'task.ANSWERED');
     });
   }
-  claim(approvalId: string, now = this.now(), validate?: (record: PurchaseRecord) => void): SpendReservation {
+  claim(approvalId: string, now = this.now(), validate?: (record: PurchaseRecord) => void, expectedMode?: PurchaseExecutionMode): SpendReservation {
     return this.atomic(() => {
       if (this.stopping) throw new Error('Service is stopping');
       const row = this.db.prepare('SELECT task_id FROM purchases WHERE approval_id=?').get(approvalId);
       if (!row) throw new Error('Unknown approval');
       const record = this.get(String(row.task_id))!;
+      if (expectedMode && record.executionMode !== expectedMode) throw new Error('PURCHASE_EXECUTION_MODE_MISMATCH');
       if (record.status !== 'APPROVED' || record.decision.decision !== 'APPROVED' || record.intent.expiresAt <= now) throw new Error('Approval inactive or expired');
       validate?.(record);
       if (this.managed) {
         const controls = this.controls();
         if (controls.paused) throw new Error('Payments are paused');
         if (controls.dailyBudget === null) throw new Error('Daily limit is not set');
-        const committed = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?)`).get(this.activeDay(now))!.total);
+        const modeFilter = accountingModeFilter(record.executionMode);
+        const committed = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE (status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND confirmed_day=?))${modeFilter}`).get(this.activeDay(now))!.total);
         if (committed > controls.dailyBudget) throw new Error('Daily limit no longer covers reserved payments');
         if (this.requireSpendGrant) this.assertGrantCovers(record, now);
       }
-      if (this.db.prepare("SELECT id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN') LIMIT 1").get()) throw new Error('Another payment requires reconciliation');
+      const modeFilter = accountingModeFilter(record.executionMode);
+      if (this.db.prepare(`SELECT id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN')${modeFilter} LIMIT 1`).get()) throw new Error('Another payment requires reconciliation');
       this.db.prepare("UPDATE purchases SET status='PAYING' WHERE approval_id=? AND status='APPROVED'").run(approvalId);
       this.event(record.intent.id, 'payment.PAYING');
       return this.get(record.intent.idempotencyKey)!;
@@ -388,23 +463,53 @@ export class PurchaseLedger {
       if (row) this.event(String(row.id), 'payment.FAILED_ON_CHAIN');
     });
   }
-  private recordConfirmation(approvalId: string, transaction: string, now: number) {
-    const existing = this.db.prepare('SELECT status,transaction_id FROM purchases WHERE approval_id=?').get(approvalId);
-    if (existing?.status === 'PAID' && existing.transaction_id === transaction) return;
-    const row = this.db.prepare("UPDATE purchases SET status='PAID',transaction_id=?,confirmed_day=? WHERE approval_id=? AND status IN ('PAYING','PAYMENT_UNKNOWN') RETURNING id")
-      .get(transaction, this.activeDay(now), approvalId);
-    if (!row) throw new Error('Payment cannot be confirmed from this state');
-    this.event(String(row.id), 'payment.PAID');
+  private recordConfirmation(approvalId: string, transaction: string, verification: PaymentVerification, now: number) {
+    if (!/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(transaction) || !/^[a-f0-9]{64}$/.test(verification.messageHash)
+      || verification.settlementConfirmed !== true || !['confirmed', 'finalized'].includes(verification.confirmationStatus)) {
+      throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID');
+    }
+    const row = this.db.prepare('SELECT task_id,payload,payment_evidence,status,execution_mode FROM purchases WHERE approval_id=?').get(approvalId);
+    if (!row) throw new Error('Unknown approval');
+    const record = this.get(String(row.task_id));
+    if (!record || record.executionMode === 'simulated' || !row.payload) throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID');
+    let payload: unknown;
+    try { payload = JSON.parse(String(row.payload)); } catch { throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID'); }
+    if (!payload || typeof payload !== 'object' || !('accepted' in payload)
+      || hash(payload.accepted) !== record.intent.quoteFingerprint) throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID');
+    if (row.status === 'PAID') {
+      if (record.transaction === transaction && this.hasVerifiedPaymentProof(record)) return;
+      throw new Error('Payment cannot be confirmed from this state');
+    }
+    const evidence = PaymentEvidenceSchema.parse({ version: 1, payloadHash: hash(payload), messageHash: verification.messageHash,
+      quoteFingerprint: record.intent.quoteFingerprint, transaction, confirmationStatus: verification.confirmationStatus,
+      settlementConfirmed: true, verifiedAt: now });
+    const updated = this.db.prepare("UPDATE purchases SET status='PAID',transaction_id=?,confirmed_day=?,payment_evidence=? WHERE approval_id=? AND status IN ('PAYING','PAYMENT_UNKNOWN') RETURNING id")
+      .get(transaction, this.activeDay(now), JSON.stringify(evidence), approvalId);
+    if (!updated) throw new Error('Payment cannot be confirmed from this state');
+    this.event(String(updated.id), 'payment.PAID');
   }
-  confirmPayment(approvalId: string, transaction: string, now = Date.now()) {
-    this.atomic(() => this.recordConfirmation(approvalId, transaction, now));
+  confirmPayment(approvalId: string, transaction: string, verification: PaymentVerification, now = Date.now()) {
+    this.atomic(() => this.recordConfirmation(approvalId, transaction, verification, now));
   }
   finish(approvalId: string, result: { transaction: string; data: MarketSnapshotOutput }, now = Date.now()) {
     this.atomic(() => {
-      this.recordConfirmation(approvalId, result.transaction, now);
       const data = MarketSnapshotOutputSchema.parse(result.data);
-      const row = this.db.prepare('UPDATE purchases SET data=? WHERE approval_id=? AND data IS NULL RETURNING id').get(JSON.stringify(data), approvalId);
-      if (row) this.event(String(row.id), 'delivery.COMPLETE');
+      const row = this.db.prepare('SELECT task_id,status,execution_mode FROM purchases WHERE approval_id=?').get(approvalId);
+      if (!row) throw new Error('Unknown approval');
+      const record = this.get(String(row.task_id));
+      if (record?.executionMode === 'simulated') {
+        if (!result.transaction.startsWith('simulated-') || !['PAYING', 'PAID'].includes(record.status)) throw new Error('Simulated purchase cannot be completed from this state');
+        if (record.status !== 'PAID') {
+          const paid = this.db.prepare("UPDATE purchases SET status='PAID',transaction_id=?,confirmed_day=? WHERE approval_id=? AND status='PAYING' RETURNING id")
+            .get(result.transaction, this.activeDay(now), approvalId);
+          if (!paid) throw new Error('Simulated purchase cannot be completed from this state');
+          this.event(String(paid.id), 'payment.PAID');
+        } else if (record.transaction !== result.transaction) throw new Error('Simulated transaction changed');
+      } else if (!record || record.status !== 'PAID' || !this.hasVerifiedPaymentProof(record)) {
+        throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID');
+      }
+      const saved = this.db.prepare('UPDATE purchases SET data=? WHERE approval_id=? AND data IS NULL RETURNING id').get(JSON.stringify(data), approvalId);
+      if (saved) this.event(String(saved.id), 'delivery.COMPLETE');
     });
   }
   unknown(approvalId: string, transaction?: string) {
@@ -413,22 +518,24 @@ export class PurchaseLedger {
       if (row) this.event(String(row.id), 'payment.PAYMENT_UNKNOWN');
     });
   }
-  summary(now = Date.now()) {
-    const paid = Number(this.db.prepare("SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status='PAID' AND confirmed_day=?").get(this.atomic(() => this.activeDay(now)))!.n);
-    const reserved = Number(this.db.prepare("SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN')").get()!.n);
-    const unresolved = Number(this.db.prepare("SELECT COUNT(*) AS n FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN')").get()!.n);
+  summary(now = Date.now(), mode?: StoredPurchaseExecutionMode) {
+    const modeFilter = accountingModeFilter(mode);
+    const paid = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status='PAID' AND confirmed_day=?${modeFilter}`).get(this.atomic(() => this.activeDay(now)))!.n);
+    const reserved = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN')${modeFilter}`).get()!.n);
+    const unresolved = Number(this.db.prepare(`SELECT COUNT(*) AS n FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN')${modeFilter}`).get()!.n);
     const controls = this.controls();
     const remaining = controls.dailyBudget === null ? null : Math.max(0, controls.dailyBudget - paid - reserved);
     return { paidUSDC: paid / 1_000_000, reservedUSDC: reserved / 1_000_000, remainingUSDC: remaining === null ? 0 : remaining / 1_000_000, unresolved };
   }
-  managedSummary(now = Date.now()) {
+  managedSummary(now = Date.now(), mode?: StoredPurchaseExecutionMode) {
     const day = this.atomic(() => this.activeDay(now));
-    const paid = Number(this.db.prepare("SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status='PAID' AND confirmed_day=?").get(day)!.n);
-    const reserved = Number(this.db.prepare("SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN')").get()!.n);
+    const modeFilter = accountingModeFilter(mode);
+    const paid = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status='PAID' AND confirmed_day=?${modeFilter}`).get(day)!.n);
+    const reserved = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN')${modeFilter}`).get()!.n);
     const controls = this.controls();
     return { day, timeZone: this.timeZone(), dailyLimit: controls.dailyBudget === null ? null : String(controls.dailyBudget),
       paid: String(paid), reserved: String(reserved), remaining: controls.dailyBudget === null ? null : String(Math.max(0, controls.dailyBudget - paid - reserved)), paused: controls.paused,
-      unresolved: Number(this.db.prepare("SELECT COUNT(*) AS n FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN')").get()!.n) };
+      unresolved: Number(this.db.prepare(`SELECT COUNT(*) AS n FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN')${modeFilter}`).get()!.n) };
   }
   list(limit = 50) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid record limit');
@@ -444,7 +551,7 @@ export class PurchaseLedger {
   private denied(reason: string, committed: number, controls: SpendingControls): AuthorityDecision {
     return { decision: 'DENIED', reason, committedBefore: committed, remainingAfter: controls.dailyBudget === null ? 0 : Math.max(0, controls.dailyBudget - committed) };
   }
-  private evaluateGrant(intent: SpendIntent, base: AuthorityDecision, committed: number, controls: SpendingControls, now: number): AuthorityDecision {
+  private evaluateGrant(intent: SpendIntent, base: AuthorityDecision, committed: number, controls: SpendingControls, now: number, mode: StoredPurchaseExecutionMode): AuthorityDecision {
     const binding = intent.authority;
     if (!binding) return this.denied('SPEND_GRANT_REQUIRED', committed, controls);
     if (!this.isCardMemberActive(binding.cardMemberId)) return this.denied('CARD_MEMBER_REVOKED', committed, controls);
@@ -457,7 +564,7 @@ export class PurchaseLedger {
       return this.denied('SPEND_GRANT_SCOPE_MISMATCH', committed, controls);
     }
     if (intent.amount > grant.singleLimit) return this.denied('SPEND_GRANT_SINGLE_LIMIT_EXCEEDED', committed, controls);
-    const grantCommitted = this.grantCommitted(grant.id);
+    const grantCommitted = this.grantCommitted(grant.id, mode);
     if (!Number.isSafeInteger(grantCommitted) || grantCommitted < 0 || !Number.isSafeInteger(grantCommitted + intent.amount)) return this.denied('SPEND_GRANT_ACCOUNTING_INVALID', committed, controls);
     if (grantCommitted + intent.amount > grant.totalLimit) return this.denied('SPEND_GRANT_TOTAL_LIMIT_EXCEEDED', committed, controls);
     if (base.decision === 'REQUIRES_APPROVAL' && base.reason === 'SINGLE_LIMIT_EXCEEDED') {
@@ -480,7 +587,7 @@ export class PurchaseLedger {
       grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme || intent.amount > grant.singleLimit) {
       throw new Error('Spend grant scope or single limit changed');
     }
-    const committed = this.grantCommitted(grant.id);
+    const committed = this.grantCommitted(grant.id, record.executionMode);
     if (!Number.isSafeInteger(committed) || committed < 0 || committed > grant.totalLimit) throw new Error('Spend grant no longer covers reserved payments');
   }
   close() { this.db.close(); }

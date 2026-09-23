@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { inspectOriginalTransaction } from '../../src/modules/payment/reconcile-transaction';
-vi.mock('../../src/modules/payment/reconcile-transaction', () => ({ inspectOriginalTransaction: vi.fn(), transactionMessageHash: () => 'original-message' }));
+vi.mock('../../src/modules/payment/reconcile-transaction', () => ({ inspectOriginalTransaction: vi.fn(), transactionMessageHash: () => 'a'.repeat(64) }));
 import { generateKeyPairSigner } from '@solana/kit';
 import { afterEach, expect, it, vi } from 'vitest';
 import { loadBuyerSigner } from '../../src/modules/payment/wallet';
@@ -28,7 +28,7 @@ async function fixture(path = ':memory:', managed = false) {
   if (managed) ledger.setDailyLimit('100000');
   const intent = createMarketSnapshotSpendIntent({ idempotencyKey: 'task', request: { asset: 'SOL' }, requestHash: hash('task'), resource, quote,
     executionBinding: paymentBinding(config, endpoint), now });
-  const record = ledger.reserve(intent, quote, now);
+  const record = ledger.reserve(intent, quote, now, 'live_devnet');
   return { ledger, record, config };
 }
 afterEach(() => vi.unstubAllGlobals());
@@ -154,7 +154,7 @@ it('delivery recovery after restart preserves the payment day and uses no new si
   f.ledger.claim(f.record.approvalId);
   f.ledger.savePayload(f.record.approvalId, { x402Version: 2, accepted: f.record.quote, payload: { transaction: 'test-wire' } });
   const yesterday = Date.now() - 86400000;
-  f.ledger.confirmPayment(f.record.approvalId, '1'.repeat(88), yesterday); f.ledger.close();
+  f.ledger.confirmPayment(f.record.approvalId, '1'.repeat(88), { messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true }, yesterday); f.ledger.close();
   const reopened = new PurchaseLedger(path);
   vi.stubGlobal('fetch', vi.fn(async () => paidResponse(f.config)));
   vi.mocked(inspectOriginalTransaction).mockResolvedValue({ status: 'CONFIRMED', transaction: '1'.repeat(88) });
@@ -172,6 +172,17 @@ it('a receipt for an unrelated confirmed transaction never completes a purchase'
   vi.mocked(inspectOriginalTransaction).mockResolvedValue({ status: 'UNKNOWN' });
   try { await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, endpoint)).rejects.toThrow(); expect(f.ledger.get('task')?.status).toBe('PAYMENT_UNKNOWN'); }
   finally { f.ledger.close(); }
+});
+
+it('keeps a confirmed transaction PAYMENT_UNKNOWN until facilitator settlement succeeds', async () => {
+  const f = await fixture(); vi.stubGlobal('fetch', vi.fn(async () => paidResponse(f.config, '{}', false)));
+  vi.mocked(inspectOriginalTransaction).mockResolvedValue({ status: 'CONFIRMED', transaction: '1'.repeat(88) });
+  try {
+    await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, endpoint)).rejects.toThrow();
+    expect(f.ledger.get('task')).toMatchObject({ status: 'PAYMENT_UNKNOWN', transaction: '1'.repeat(88) });
+    expect(f.ledger.get('task')?.paymentEvidence).toBeUndefined();
+    expect(f.ledger.summary()).toMatchObject({ paidUSDC: 0, reservedUSDC: 0.01, unresolved: 1 });
+  } finally { f.ledger.close(); }
 });
 it('only proven chain failure releases the payment reservation', async () => {
   const f = await fixture(); vi.stubGlobal('fetch', vi.fn(async () => paidResponse(f.config, '{}', false)));

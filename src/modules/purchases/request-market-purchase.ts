@@ -8,7 +8,7 @@ import { readPaymentRequiredHeader } from '../payment/x402-client';
 import { MarketOfferIdSchema, marketOffer, marketOfferResource } from '../resources/market-offers';
 import { createMarketSnapshotSpendIntent } from '../resources/market-spend-adapter';
 import { MarketSnapshotOutputSchema, type MarketSnapshotOutput } from '../resources/resource-schema';
-import { PurchaseLedger, type SpendReservation } from './purchase-ledger';
+import { PurchaseLedger, type PurchaseExecutionMode, type SpendReservation } from './purchase-ledger';
 import { hash } from './spending-policy';
 
 export const PurchaseRequestInputSchema = z.object({
@@ -28,12 +28,13 @@ export type PurchaseRequestResult = {
   quote: { resourceId: string; providerId: string; network: string; assetId: string; assetDecimals: number; payTo: string; amount: string; expiresAt: number; fingerprint: string };
   grant: { id: string; version: number };
   paymentStatus: 'NOT_STARTED' | 'PAYING' | 'PAYMENT_UNKNOWN' | 'PAID' | 'FAILED';
+  executionMode: PurchaseExecutionMode;
   deliveryStatus: SpendReservation['deliveryStatus'];
   reused: boolean;
   resource?: MarketSnapshotOutput;
 };
 
-function result(record: SpendReservation, offerId: PurchaseRequestInput['offerId'], reused: boolean): PurchaseRequestResult {
+function result(record: SpendReservation, offerId: PurchaseRequestInput['offerId'], reused: boolean, executionMode: PurchaseExecutionMode): PurchaseRequestResult {
   const offer = marketOffer(offerId);
   const authority = record.intent.authority;
   if (!authority) throw new Error('SPEND_GRANT_REQUIRED');
@@ -44,7 +45,8 @@ function result(record: SpendReservation, offerId: PurchaseRequestInput['offerId
     status: record.status, decision: record.decision,
     quote: { resourceId: record.intent.resourceId, providerId: record.intent.providerId, network: record.intent.network, assetId: record.intent.assetId,
       assetDecimals: record.intent.assetDecimals, payTo: record.intent.payTo, amount: String(record.intent.amount), expiresAt: record.intent.expiresAt, fingerprint: record.intent.quoteFingerprint },
-    grant: { id: authority.grantId, version: authority.grantVersion }, paymentStatus: record.status === 'PAID' ? 'PAID' : record.status === 'PAYING' ? 'PAYING' : record.status === 'PAYMENT_UNKNOWN' ? 'PAYMENT_UNKNOWN' : record.status === 'FAILED' ? 'FAILED' : 'NOT_STARTED', deliveryStatus: record.deliveryStatus, reused,
+    grant: { id: authority.grantId, version: authority.grantVersion }, paymentStatus: record.status === 'PAID' ? 'PAID' : record.status === 'PAYING' ? 'PAYING' : record.status === 'PAYMENT_UNKNOWN' ? 'PAYMENT_UNKNOWN' : record.status === 'FAILED' ? 'FAILED' : 'NOT_STARTED',
+    executionMode, deliveryStatus: record.deliveryStatus, reused,
     ...(resource ? { resource } : {}) };
 }
 
@@ -66,11 +68,13 @@ export async function requestMarketPurchase(raw: unknown, options: {
   options.ledger.assertCardMemberActive(principal.cardMemberId);
   const clock = options.now ?? Date.now;
   const requestStartedAt = clock();
+  const executionMode: PurchaseExecutionMode = options.execute === false ? 'simulated' : 'live_devnet';
   const requestHash = hash({ offerId: input.offerId, reason: input.reason });
   async function complete(record: SpendReservation, reused: boolean) {
+    options.ledger.assertReplayAllowed(record, executionMode);
     // A denied decision is answered exclusively from durable facts, before even
     // resolving the payment endpoint or touching preflight/claim/wallet code.
-    if (record.decision.decision !== 'APPROVED' || options.execute === false) return result(record, input.offerId, reused);
+    if (record.decision.decision !== 'APPROVED' || executionMode === 'simulated') return result(record, input.offerId, reused, executionMode);
     const endpoint = paymentEndpoint(options.origin, record.intent.offerId);
     if (record.status === 'APPROVED') {
       try { await (options.pay ?? executeApprovedPayment)(options.ledger, record.approvalId, options.config, endpoint); }
@@ -78,16 +82,15 @@ export async function requestMarketPurchase(raw: unknown, options: {
     } else if (['PAYING', 'PAYMENT_UNKNOWN'].includes(record.status) || record.deliveryStatus === 'PENDING') {
       await (options.recover ?? recoverApprovedPayment)(options.ledger, input.requestId, options.config, endpoint);
     }
-    return result(options.ledger.get(input.requestId)!, input.offerId, reused);
+    return result(options.ledger.get(input.requestId)!, input.offerId, reused, executionMode);
   }
-  options.ledger.releaseExpired(requestStartedAt);
   const existing = options.ledger.get(input.requestId);
   if (existing) {
     if (existing.ownerCardMemberId !== principal.cardMemberId) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
+    options.ledger.assertReplayAllowed(existing, executionMode);
     if (existing.intent.requestHash !== requestHash || existing.intent.offerId !== input.offerId) throw new Error('REQUEST_ID_CONFLICT');
     return complete(existing, true);
   }
-
   const { config } = options;
   if (config.cluster !== 'devnet' || config.network !== DEVNET_NETWORK || config.mint !== DEVNET_USDC_MINT) throw new Error('UNSUPPORTED_PURCHASE_NETWORK');
   const offer = marketOffer(input.offerId);
@@ -120,10 +123,11 @@ export async function requestMarketPurchase(raw: unknown, options: {
   const winner = options.ledger.get(input.requestId);
   if (winner) {
     if (winner.ownerCardMemberId !== principal.cardMemberId) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
+    options.ledger.assertReplayAllowed(winner, executionMode);
     if (winner.intent.requestHash !== requestHash || winner.intent.offerId !== input.offerId) throw new Error('REQUEST_ID_CONFLICT');
     return complete(winner, true);
   }
-  const reserved = options.ledger.reserve(intent, quote, now);
+  const reserved = options.ledger.reserve(intent, quote, now, executionMode);
   const reservedBinding = reserved.intent.authority;
   if (!reservedBinding || reserved.ownerCardMemberId !== principal.cardMemberId || reservedBinding.cardMemberId !== principal.cardMemberId) {
     throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');

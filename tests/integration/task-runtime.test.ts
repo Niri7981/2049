@@ -12,11 +12,19 @@ const data = { asset: 'SOL' as const, as_of: '2026-09-05T08:00:00.000Z', spot_pr
 const preflight: typeof runPaymentPreflight = async () => ({ cluster: 'devnet', network: config.network, mint: config.mint, paymentAmount: '10000', buyer: { publicKey: config.buyer, ata: config.buyer, balanceBaseUnits: '1000000' }, merchant: { publicKey: config.merchant, ata: config.merchant, balanceBaseUnits: '0' }, facilitator: { feePayer: config.buyer, feePayerLamports: 100000 }, readyForSettlement: true });
 function options(ledger: PurchaseLedger, pay: typeof executeApprovedPayment) { return { planner: localCapabilityPlanner, plannerMode: 'local_demo' as const, config, ledger, origin: 'http://127.0.0.1:3000', preflight, pay }; }
 function mockQuote(amount = '10000') { vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 402, headers: { 'PAYMENT-REQUIRED': Buffer.from(JSON.stringify({ x402Version: 2, resource: { url: MARKET_RESOURCE }, accepts: [{ ...quote, amount }] })).toString('base64') } }))); }
+function completeLivePurchase(store: PurchaseLedger, approvalId: string) {
+  const transaction = '1'.repeat(88);
+  const record = store.claim(approvalId);
+  store.savePayload(approvalId, { x402Version: 2, accepted: record.quote, payload: { transaction: 'signed-fixture-wire' } });
+  store.confirmPayment(approvalId, transaction, { messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true });
+  store.finish(approvalId, { transaction, data });
+  return transaction;
+}
 afterEach(() => vi.unstubAllGlobals());
 describe('Purchase discovery → policy → payment → cached result', () => {
   it('pays once and returns cached data without replanning or network on retry', async () => {
     mockQuote(); const ledger = new PurchaseLedger(':memory:');
-    const pay = vi.fn<typeof executeApprovedPayment>(async (store, id) => { store.claim(id); store.finish(id, { transaction: 'test-receipt', data }); return { transaction: 'test-receipt', data }; });
+    const pay = vi.fn<typeof executeApprovedPayment>(async (store, id) => { const transaction = completeLivePurchase(store, id); return { transaction, data }; });
     try {
       const task = { taskId: 'sol-1', task: '分析 SOL 市场价格和 RSI' };
       expect((await runTask(task, options(ledger, pay))).status).toBe('PAID');
@@ -27,7 +35,7 @@ describe('Purchase discovery → policy → payment → cached result', () => {
   });
   it('two simultaneous calls for the same task execute one payment', async () => {
     mockQuote(); const ledger = new PurchaseLedger(':memory:');
-    const pay = vi.fn<typeof executeApprovedPayment>(async (store, id) => { store.claim(id); await Promise.resolve(); store.finish(id, { transaction: 'test-receipt', data }); return { transaction: 'test-receipt', data }; });
+    const pay = vi.fn<typeof executeApprovedPayment>(async (store, id) => { await Promise.resolve(); const transaction = completeLivePurchase(store, id); return { transaction, data }; });
     try { await Promise.all([1,2].map(() => runTask({ taskId: 'same', task: '分析 SOL 市场价格' }, options(ledger, pay)))); expect(pay).toHaveBeenCalledTimes(1); }
     finally { ledger.close(); }
   });
@@ -56,7 +64,7 @@ describe('Purchase discovery → policy → payment → cached result', () => {
 
 it('retries failed analysis using paid data and persists the successful answer without paying again', async () => {
   mockQuote(); const ledger = new PurchaseLedger(':memory:');
-  const pay = vi.fn<typeof executeApprovedPayment>(async (store, id) => { store.claim(id); store.finish(id, { transaction: 'test-receipt', data }); return { transaction: 'test-receipt', data }; });
+  const pay = vi.fn<typeof executeApprovedPayment>(async (store, id) => { const transaction = completeLivePurchase(store, id); return { transaction, data }; });
   const answer = vi.fn().mockRejectedValueOnce(new Error('model timeout')).mockResolvedValue('示例 SOL 分析');
   const task = { taskId: 'answer', task: '分析 SOL 市场价格和 RSI' };
   try {

@@ -43,14 +43,25 @@ async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, co
     || !/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(transaction)
     || (receipt.amount !== undefined && receipt.amount !== String(record.intent.amount))) throw new Error('Settlement receipt mismatch');
   if (!recovery && receipt.success === true) await confirmSolanaTransaction(config, transaction);
-  const proof = await inspectOriginalTransaction(config, transaction, transactionMessageHash(payload.payload.transaction));
+  const messageHash = transactionMessageHash(payload.payload.transaction);
+  const proof = await inspectOriginalTransaction(config, transaction, messageHash);
   if (proof.status === 'FAILED') {
     ledger.failConfirmed(record.approvalId, transaction);
     throw new Error('Original transaction failed');
   }
-  if (proof.status !== 'CONFIRMED') throw new Error('Settlement not confirmed');
-  // Persist chain evidence before reading delivery: bad/missing data cannot undo payment.
-  ledger.confirmPayment(record.approvalId, transaction);
+  if (proof.status !== 'CONFIRMED') {
+    ledger.unknown(record.approvalId, transaction);
+    throw new Error('Settlement not confirmed');
+  }
+  if (receipt.success !== true) {
+    ledger.unknown(record.approvalId, transaction);
+    throw new Error('Facilitator settlement is not confirmed');
+  }
+  // Persist payment only after the original payload, chain transaction, and
+  // facilitator settlement all agree. Delivery can still fail independently.
+  ledger.confirmPayment(record.approvalId, transaction, {
+    messageHash, confirmationStatus: proof.confirmationStatus ?? 'confirmed', settlementConfirmed: true,
+  });
   trace('CHAIN_CONFIRMED', transaction);
   if (response.status !== 200 || receipt.success !== true) throw new Error('Delivery unavailable');
   const data = await readMarketSnapshot(response);
@@ -61,7 +72,7 @@ async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, co
 /** Internal approval ID is the only caller-supplied payment parameter. */
 export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId: string, config: PaymentConfig, endpoint: string, trace: Trace = () => {}) {
   const validate = (record: PurchaseRecord) => checkPaymentBinding(record, config, endpoint);
-  const record = ledger.claim(approvalId, undefined, validate);
+  const record = ledger.claim(approvalId, undefined, validate, 'live_devnet');
   const beforeSign = () => ledger.assertCanSign(approvalId, undefined, validate);
   try {
     checkPaymentBinding(record, config, endpoint);
@@ -87,6 +98,7 @@ export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId:
 /** Can run concurrently with the initial request: reads only, never signs or settles. */
 export async function recoverApprovedPayment(ledger: PurchaseLedger, taskId: string, config: PaymentConfig, endpoint: string, trace: Trace = () => {}) {
   const record = ledger.get(taskId);
+  if (record?.executionMode === 'simulated') return;
   if (!record || (!['PAYING', 'PAYMENT_UNKNOWN'].includes(record.status) && record.deliveryStatus !== 'PENDING')) return;
   trace('RECOVERY_STARTED');
   checkPaymentBinding(record, config, endpoint);

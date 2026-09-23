@@ -16,7 +16,7 @@ function fixture() {
 afterEach(() => vi.resetAllMocks());
 it('confirms only the exact original message and transaction signature', async () => {
   const f = fixture(); vi.mocked(solanaRpc).mockResolvedValue(f.rpc);
-  expect(await inspectOriginalTransaction(config, f.signature, f.hash)).toEqual({ status: 'CONFIRMED', transaction: f.signature });
+  expect(await inspectOriginalTransaction(config, f.signature, f.hash)).toEqual({ status: 'CONFIRMED', transaction: f.signature, confirmationStatus: 'confirmed' });
   expect(await inspectOriginalTransaction(config, f.signature, fixture().hash)).toEqual({ status: 'UNKNOWN' });
   expect(await inspectOriginalTransaction(config, fixture().signature, f.hash)).toEqual({ status: 'UNKNOWN' });
 });
@@ -31,7 +31,7 @@ it('only finalized failures can release budget', async () => {
 it('locates a lost receipt by memo and verifies its exact message', async () => {
   const f = fixture(); const memo = 'day4:abcdefghijklmnopqrstuv';
   vi.mocked(solanaRpc).mockResolvedValueOnce([{ signature: f.signature, memo: '[27] ' + memo }]).mockResolvedValueOnce(f.rpc);
-  expect(await reconcileOriginalTransaction(config, f.hash, memo)).toEqual({ status: 'CONFIRMED', transaction: f.signature });
+  expect(await reconcileOriginalTransaction(config, f.hash, memo)).toEqual({ status: 'CONFIRMED', transaction: f.signature, confirmationStatus: 'confirmed' });
   expect(solanaRpc).toHaveBeenNthCalledWith(1, config, 'getSignaturesForAddress', [config.buyer, { limit: 100, commitment: 'confirmed' }]);
 });
 it('history absence never means failure and performs no writes', async () => {

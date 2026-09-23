@@ -9,6 +9,7 @@ import { SpendIntentSchema } from '../../src/modules/authority/spend-intent';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT } from '../../src/modules/payment/payment-config';
 import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';
 import { DEMO_MARKET_DATA_PROVIDER_ID, PREMIUM_SOL_MARKET_SNAPSHOT_ID } from '../../src/modules/resources/static-resource-registry';
+import { demoSnapshot } from '../../src/modules/paid-market-api/paid-market-api';
 
 const paths: string[] = [];
 afterEach(() => paths.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })));
@@ -44,6 +45,22 @@ it('requires a grant and approves 0.20 USDC above the old implicit single limit'
     const approved = value.reserve(intent('within-grant', 200_000, binding), quote, now);
     expect(approved.decision).toMatchObject({ decision: 'APPROVED', reason: 'AUTHORITY_BUDGET_AND_GRANT_PASSED' });
     expect(value.spendGrantSummary(now)).toMatchObject({ committed: '200000', remaining: '4800000', status: 'ACTIVE' });
+  } finally { value.close(); }
+});
+
+it('isolates simulated PAID amounts from live daily and SpendGrant accounting', () => {
+  const value = ledger();
+  try {
+    const binding = authority(value, '500000', '500000');
+    const reserved = value.reserve(intent('simulated-accounting', 200_000, binding), quote, now, 'simulated');
+    expect(reserved.decision.decision).toBe('APPROVED');
+    value.claim(reserved.approvalId, now);
+    value.finish(reserved.approvalId, { transaction: 'simulated-accounting', data: demoSnapshot }, now);
+
+    expect(value.managedSummary(now, 'simulated')).toMatchObject({ paid: '200000', remaining: '49800000' });
+    expect(value.managedSummary(now, 'live_devnet')).toMatchObject({ paid: '0', remaining: '50000000' });
+    expect(value.spendGrantSummary(now, 'simulated')).toMatchObject({ committed: '200000', remaining: '300000' });
+    expect(value.spendGrantSummary(now, 'live_devnet')).toMatchObject({ committed: '0', remaining: '500000' });
   } finally { value.close(); }
 });
 

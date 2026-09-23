@@ -146,7 +146,7 @@ describe('managed budget and Devnet test records', () => {
     const { authority } = authorize(app, now);
     const intent = createMarketSnapshotSpendIntent({ idempotencyKey: 'startup-original', request: { asset: 'SOL' }, requestHash: hash('task'), resource, quote,
       executionBinding: paymentBinding(config, paymentEndpoint(origin)), authority, now });
-    const record = app.ledger.reserve(intent, quote, now);
+    const record = app.ledger.reserve(intent, quote, now, 'live_devnet');
     app.ledger.claim(record.approvalId);
     app.ledger.savePayload(record.approvalId, { x402Version: 2, accepted: quote, payload: { transaction: 'test-wire' } });
     app.setPaused(true);
@@ -216,7 +216,7 @@ describe('managed budget and Devnet test records', () => {
     finally { restarted.ledger.close(); }
   });
 
-  it('reuses simulated App purchases created before the shared purchase service migration', async () => {
+  it('reuses same-mode simulated App purchases and scopes displayed grant accounting by mode', async () => {
     const app = runtime();
     const id = `app-${randomUUID()}`;
     const merchant = '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
@@ -228,11 +228,14 @@ describe('managed budget and Devnet test records', () => {
       const { authority } = authorize(app, now);
       const intent = createMarketSnapshotSpendIntent({ idempotencyKey: id, request: { asset: 'SOL' }, requestHash: hash('2049 App test purchase'), resource, quote,
         executionBinding: hash(['simulated-devnet', address, merchant]), authority, now });
-      const reserved = app.ledger.reserve(intent, quote, now);
+      const reserved = app.ledger.reserve(intent, quote, now, 'simulated');
       app.ledger.claim(reserved.approvalId, now);
       app.ledger.finish(reserved.approvalId, { transaction: `simulated-${id}`, data: demoSnapshot }, now);
       const replay = await app.createTestPurchase(id, 'http://127.0.0.1:3049');
       expect(replay.status).toBe('PAID');
+      expect(app.spendGrantSummary()).toMatchObject({ committed: '10000', remaining: '990000' });
+      vi.stubEnv('APP2049_ENABLE_DEVNET_PURCHASES', '1');
+      expect(app.spendGrantSummary()).toMatchObject({ committed: '0', remaining: '1000000' });
       expect(app.ledger.list()).toHaveLength(1);
     } finally { app.ledger.close(); }
   });
@@ -274,7 +277,7 @@ describe('managed budget and Devnet test records', () => {
     const intent = createMarketSnapshotSpendIntent({ idempotencyKey: 'pause-race', request: { asset: 'SOL' }, requestHash: hash('task'), resource, quote,
       executionBinding: 'test', now });
     try {
-      ledger.setDailyLimit('20000'); const reserved = ledger.reserve(intent, quote, now);
+      ledger.setDailyLimit('20000'); const reserved = ledger.reserve(intent, quote, now, 'live_devnet');
       ledger.setPaused(true); expect(() => ledger.claim(reserved.approvalId, now)).toThrow('paused');
       ledger.setPaused(false); ledger.setDailyLimit('5000'); expect(() => ledger.claim(reserved.approvalId, now)).toThrow('no longer covers');
       ledger.setDailyLimit('20000'); ledger.claim(reserved.approvalId, now); ledger.setPaused(true);

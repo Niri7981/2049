@@ -4,7 +4,8 @@ import { getBase58Decoder } from '@solana/kit';
 import type { PaymentConfig } from './payment-config';
 import { solanaRpc } from './solana-payment';
 
-export type ChainOutcome = { status: 'CONFIRMED' | 'FAILED'; transaction: string } | { status: 'UNKNOWN' };
+export type ChainOutcome = { status: 'CONFIRMED'; transaction: string; confirmationStatus?: 'confirmed' | 'finalized' }
+  | { status: 'FAILED'; transaction: string } | { status: 'UNKNOWN' };
 const signaturePattern = /^[1-9A-HJ-NP-Za-km-z]{64,100}$/;
 export function transactionMessageHash(wire: string) {
   const bytes = Buffer.from(wire, 'base64');
@@ -28,7 +29,7 @@ export async function inspectOriginalTransaction(config: PaymentConfig, signatur
   }
   const result = await read('confirmed');
   if (!matches(result)) return { status: 'UNKNOWN' };
-  if (result!.meta!.err === null) return { status: 'CONFIRMED', transaction: signature };
+  if (result!.meta!.err === null) return { status: 'CONFIRMED', transaction: signature, confirmationStatus: 'confirmed' };
   // Only finalized failure can release a reservation; a transient fork cannot.
   const finalized = await read('finalized');
   return matches(finalized) && finalized!.meta!.err !== null

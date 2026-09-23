@@ -8,12 +8,7 @@ async function main() {
   const settlementDatabase = process.env.DAY4_SETTLEMENT_DB;
   if (!dataDirectory || !settlementDatabase) throw new Error('APP2049_DATA_DIR and DAY4_SETTLEMENT_DB must explicitly select the isolated E2E databases');
   const config = loadPaymentConfig();
-  const evidence = await collectE2eEvidence(requestId, {
-    dataDirectory,
-    settlementDatabase,
-    config,
-    liveDevnetEnabled: process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1',
-  });
+  const evidence = await collectE2eEvidence(requestId, { dataDirectory, settlementDatabase, config });
   process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
 }
 

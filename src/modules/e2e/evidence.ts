@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { getStandardTokenAccount } from '../payment/payment-preflight';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT, TOKEN_PROGRAM, type PaymentConfig } from '../payment/payment-config';
+import { PaymentEvidenceSchema, PurchaseExecutionModeSchema } from '../purchases/purchase-ledger';
+import { hash } from '../purchases/spending-policy';
 
 const RequestIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 const StoredIntentSchema = z.object({
@@ -25,7 +27,6 @@ type EvidenceOptions = {
   dataDirectory: string;
   settlementDatabase: string;
   config: PaymentConfig;
-  liveDevnetEnabled: boolean;
   fetcher?: Fetcher;
 };
 
@@ -52,10 +53,23 @@ function decisionStatus(status: string) {
   return status;
 }
 
-function executionMode(transaction: string | null, liveDevnetEnabled: boolean) {
-  if (transaction?.startsWith('simulated-')) return 'simulated';
-  if (transaction && signaturePattern.test(transaction)) return 'live_devnet';
-  return liveDevnetEnabled ? 'live_devnet' : 'simulated';
+function executionMode(value: unknown) {
+  const parsed = PurchaseExecutionModeSchema.safeParse(value);
+  return parsed.success ? parsed.data : 'UNKNOWN' as const;
+}
+
+function storedPaymentEvidence(value: unknown) {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const parsed = PaymentEvidenceSchema.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : undefined;
+  } catch { return undefined; }
+}
+
+function accountingModeFilter(mode: string) {
+  if (mode === 'simulated') return " AND execution_mode='simulated'";
+  if (mode === 'live_devnet') return " AND (execution_mode='live_devnet' OR execution_mode IS NULL)";
+  return ' AND execution_mode IS NULL';
 }
 
 async function rpc<T>(config: PaymentConfig, method: 'getMultipleAccounts' | 'getSignatureStatuses' | 'getTransaction', params: unknown[], fetcher: Fetcher): Promise<T> {
@@ -115,7 +129,7 @@ async function transactionConfirmation(transaction: string | null, config: Payme
   };
 }
 
-/** Read-only evidence for one durable request. It never reads or returns raw payload or approval values. */
+/** Read-only evidence for one durable request. It hashes stored payload locally and never returns it or approval values. */
 export async function collectE2eEvidence(rawRequestId: string, options: EvidenceOptions) {
   const requestId = RequestIdSchema.parse(rawRequestId);
   if (options.config.cluster !== 'devnet' || options.config.network !== DEVNET_NETWORK || options.config.mint !== DEVNET_USDC_MINT) {
@@ -128,13 +142,20 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
   const ledger = new DatabaseSync(ledgerPath, { readOnly: true });
   const settlements = new DatabaseSync(options.settlementDatabase, { readOnly: true });
   try {
-    const row = ledger.prepare(`SELECT id,task_id,purchase,quote,decision,status,amount,transaction_id,
-      data,data IS NOT NULL AS delivered,payload IS NOT NULL AS payment_payload_present
+    const row = ledger.prepare(`SELECT id,task_id,purchase,quote,decision,status,amount,transaction_id,execution_mode,payment_evidence,
+      data,data IS NOT NULL AS delivered,payload,payload IS NOT NULL AS payment_payload_present
       FROM purchases WHERE task_id=?`).get(requestId);
     if (!row) throw new Error('The requested purchase does not exist');
     const purchase = StoredIntentSchema.parse(JSON.parse(String(row.purchase)));
     const quote = StoredQuoteSchema.parse(JSON.parse(String(row.quote)));
     const decision = StoredDecisionSchema.parse(JSON.parse(String(row.decision)));
+    const mode = executionMode(row.execution_mode);
+    const paymentEvidence = storedPaymentEvidence(row.payment_evidence);
+    const payloadPresent = Boolean(row.payment_payload_present);
+    let payloadHash: string | null = null;
+    if (typeof row.payload === 'string') {
+      try { payloadHash = hash(JSON.parse(row.payload)); } catch { /* Malformed legacy payloads cannot prove a live payment. */ }
+    }
     if (String(row.amount) !== quote.amount) throw new Error('Stored quote amount does not match the purchase');
     if (quote.network !== options.config.network || quote.asset !== options.config.mint || quote.payTo !== options.config.merchant) {
       throw new Error('Stored quote does not match the E2E network, token, or merchant');
@@ -145,8 +166,9 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
     const clock = ledger.prepare('SELECT spending_day,time_zone FROM app_budget_clock WHERE id=1').get();
     const settings = ledger.prepare('SELECT daily_limit FROM app_settings WHERE id=1').get();
     if (!clock || !settings) throw new Error('The managed budget state is incomplete');
-    const paid = Number(ledger.prepare("SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status='PAID' AND confirmed_day=?").get(String(clock.spending_day))!.total);
-    const reserved = Number(ledger.prepare("SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN')").get()!.total);
+    const budgetModeFilter = accountingModeFilter(mode);
+    const paid = Number(ledger.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status='PAID' AND confirmed_day=?${budgetModeFilter}`).get(String(clock.spending_day))!.total);
+    const reserved = Number(ledger.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN')${budgetModeFilter}`).get()!.total);
     const dailyLimit = settings.daily_limit === null ? null : Number(settings.daily_limit);
 
     let grant: null | { status: string; committed: string; remaining: string } = null;
@@ -155,7 +177,7 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
       const grantRow = ledger.prepare('SELECT status,total_limit FROM spend_grants WHERE id=?').get(grantId);
       if (!grantRow) throw new Error('The purchase references a missing SpendGrant');
       const committed = Number(ledger.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases
-        WHERE json_extract(purchase,'$.authority.grantId')=? AND status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN','PAID')`).get(grantId)!.total);
+        WHERE json_extract(purchase,'$.authority.grantId')=? AND status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN','PAID')${budgetModeFilter}`).get(grantId)!.total);
       const totalLimit = Number(grantRow.total_limit);
       grant = { status: String(grantRow.status), committed: String(committed), remaining: String(Math.max(0, totalLimit - committed)) };
     }
@@ -168,6 +190,10 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
     const data = row.data === null ? null : String(row.data);
     const settlementBody = settlementRows.length === 1 && typeof settlementRows[0]?.body === 'string' ? settlementRows[0].body : null;
     const transaction = row.transaction_id === null ? null : String(row.transaction_id);
+    const livePaymentProofVerified = mode === 'live_devnet' && String(row.status) === 'PAID' && payloadPresent && payloadHash !== null
+      && payloadHash === paymentEvidence?.payloadHash && transaction !== null && signaturePattern.test(transaction)
+      && transaction === paymentEvidence?.transaction && paymentEvidence?.quoteFingerprint === purchase.quoteFingerprint
+      && paymentEvidence?.settlementConfirmed === true && ['confirmed', 'finalized'].includes(paymentEvidence.confirmationStatus);
     const resourceHash = digest(data);
     const settlementResourceHash = digest(settlementBody);
 
@@ -183,11 +209,17 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
       decision: { status: decision.decision, reason: decision.reason },
       paymentStatus: paymentStatus(status),
       deliveryStatus: status === 'PAID' ? (Boolean(row.delivered) ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
-      executionMode: executionMode(transaction, options.liveDevnetEnabled),
+      executionMode: mode,
       quotedAmount: quote.amount,
-      amountPaid: status === 'PAID' ? quote.amount : '0',
+      amountPaid: livePaymentProofVerified ? quote.amount : '0',
       transactionSignature: transaction,
-      paymentPayloadPresent: Boolean(row.payment_payload_present),
+      paymentPayloadPresent: payloadPresent,
+      livePaymentProof: {
+        verified: livePaymentProofVerified,
+        transactionSignaturePresent: transaction !== null && signaturePattern.test(transaction),
+        chainConfirmation: paymentEvidence?.confirmationStatus ?? null,
+        settlementConfirmed: paymentEvidence?.settlementConfirmed === true,
+      },
       events,
       budget: {
         day: String(clock.spending_day), timeZone: String(clock.time_zone), dailyLimit: dailyLimit === null ? null : String(dailyLimit),

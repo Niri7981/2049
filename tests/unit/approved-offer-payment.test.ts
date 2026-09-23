@@ -26,7 +26,7 @@ vi.mock('../../src/modules/payment/solana-payment', () => ({
 }));
 vi.mock('../../src/modules/payment/reconcile-transaction', () => ({
   inspectOriginalTransaction: vi.fn(),
-  transactionMessageHash: () => 'offer-message',
+  transactionMessageHash: () => 'b'.repeat(64),
 }));
 
 const cardMemberId = '11111111-1111-4111-8111-111111111111';
@@ -56,7 +56,7 @@ async function fixture(path = ':memory:') {
   const authority = ledger.spendAuthority(principal, MARKET_SNAPSHOT_OPERATION, now);
   const intent = createMarketSnapshotSpendIntent({ idempotencyKey: 'offer-basic', request: { asset: 'SOL' }, requestHash: hash('offer-basic'),
     resource, quote, executionBinding: paymentBinding(config, endpoint, quote), authority, offerId: 'basic', reason: 'Need data', now });
-  const record = ledger.reserve(intent, quote, now);
+  const record = ledger.reserve(intent, quote, now, 'live_devnet');
   vi.mocked(loadBuyerSigner).mockResolvedValue(signer);
   vi.mocked(runPaymentPreflight).mockResolvedValue({ cluster: config.cluster, network: config.network, mint: config.mint, paymentAmount: quote.amount,
     buyer: { publicKey: config.buyer, ata: config.buyer, balanceBaseUnits: quote.amount }, merchant: { publicKey: config.merchant, ata: config.merchant, balanceBaseUnits: '0' },

@@ -18,6 +18,6 @@ export async function PUT(request: Request) {
     const app = appRuntime();
     if (input.action === 'revoke') app.revokeSpendGrant();
     else app.createSpendGrant({ totalLimit: input.totalLimit, singleLimit: input.singleLimit, expiresAt: input.expiresAt });
-    return Response.json({ grant: app.ledger.spendGrantSummary(), connection: app.agentConnection.status() });
+    return Response.json({ grant: app.spendGrantSummary(), connection: app.agentConnection.status() });
   } catch (error) { return managementError(error); }
 }
