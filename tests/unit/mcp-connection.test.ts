@@ -9,10 +9,11 @@ import { createAgentServer } from '../../src/modules/mcp/server';
 import { requireManagementRequest } from '../../src/modules/app/management-auth';
 
 const dirs: string[] = [];
+const cardMemberId = '11111111-1111-4111-8111-111111111111';
 afterEach(() => { vi.unstubAllEnvs(); dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })); });
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), '2049-mcp-')); dirs.push(dir);
-  const connection = new AgentConnection(dir);
+  const connection = new AgentConnection(dir, cardMemberId, () => true);
   return { dir, connection };
 }
 const origin = 'http://127.0.0.1:3049';
@@ -48,7 +49,7 @@ it('revokes old credentials across disable, re-enable and backend restart', () =
   expect(second).not.toBe(first);
   expect(() => connection.authenticate(request(first))).toThrow();
   connection.authenticate(request(second));
-  const restarted = new AgentConnection(dir);
+  const restarted = new AgentConnection(dir, cardMemberId, () => true);
   expect(() => restarted.authenticate(request(second))).toThrow();
   expect(existsSync(connectionFile(dir))).toBe(false);
 });
@@ -62,11 +63,23 @@ it('rotates the credential when spending is granted or revoked', () => {
   const spending = readConnection(dir);
   expect(spending.token).not.toBe(readOnly.token);
   expect(spending.capabilities).toEqual(['read', 'request_purchase']);
-  expect(principal).toEqual({ connectionId: spending.connectionId, connectionGeneration: spending.generation });
+  expect(principal).toEqual({ cardMemberId, connectionId: spending.connectionId, connectionGeneration: spending.generation });
   expect(() => connection.authenticate(request(readOnly.token))).toThrow();
   connection.authenticate(request(spending.token), 'request_purchase');
   connection.downgradeToReadOnly();
   expect(() => connection.authenticate(request(spending.token), 'request_purchase')).toThrow();
+});
+
+it('rejects every credential after its CardMember is revoked', () => {
+  const dir = mkdtempSync(join(tmpdir(), '2049-mcp-member-')); dirs.push(dir);
+  let active = true;
+  const connection = new AgentConnection(dir, cardMemberId, () => active);
+  connection.setEnabled(true, origin);
+  const token = readConnection(dir).token;
+  connection.authenticate(request(token));
+  active = false;
+  expect(() => connection.authenticate(request(token))).toThrow('AGENT_UNAUTHORIZED');
+  expect(() => connection.rotateForSpending()).toThrow('CARD_MEMBER_REVOKED');
 });
 
 it('uses the official MCP handshake and exposes a request-only purchase tool with sanitized failures', async () => {

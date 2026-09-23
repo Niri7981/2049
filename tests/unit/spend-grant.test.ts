@@ -13,14 +13,15 @@ import { DEMO_MARKET_DATA_PROVIDER_ID, PREMIUM_SOL_MARKET_SNAPSHOT_ID } from '..
 const paths: string[] = [];
 afterEach(() => paths.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })));
 const now = Date.parse('2026-09-21T12:00:00Z');
-const principal = { connectionId: '2c187121-f6f1-49a3-aea4-821c4bc0a662', connectionGeneration: 2 };
+const cardMemberId = '11111111-1111-4111-8111-111111111111';
+const principal = { cardMemberId, connectionId: '2c187121-f6f1-49a3-aea4-821c4bc0a662', connectionGeneration: 2 };
 const scope = { resourceId: PREMIUM_SOL_MARKET_SNAPSHOT_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation: MARKET_SNAPSHOT_OPERATION,
   network: DEVNET_NETWORK, assetId: DEVNET_USDC_MINT, assetDecimals: 6, payTo: '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs', paymentScheme: 'exact' };
 const quote: PaymentRequirements = { scheme: 'exact', network: DEVNET_NETWORK, asset: DEVNET_USDC_MINT, amount: '200000',
   payTo: '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs', maxTimeoutSeconds: 300, extra: {} };
 
 function ledger(path = ':memory:') {
-  const value = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+  const value = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
   value.setDailyLimit('50000000');
   return value;
 }
@@ -53,7 +54,8 @@ it('denies an oversized amount and every scope or principal mismatch', () => {
     expect(value.reserve(intent('oversized', 20_000_000, binding), { ...quote, amount: '20000000' }, now).decision.reason).toBe('SPEND_GRANT_SINGLE_LIMIT_EXCEEDED');
     expect(value.reserve(intent('wrong-provider', 10_000, binding, { providerId: 'other-provider' }), quote, now).decision.reason).toBe('SPEND_GRANT_SCOPE_MISMATCH');
     expect(value.reserve(intent('wrong-payee', 10_000, binding, { payTo: 'different-recipient' }), quote, now).decision.reason).toBe('SPEND_GRANT_SCOPE_MISMATCH');
-    expect(value.reserve(intent('wrong-principal', 10_000, { ...binding, connectionGeneration: 99 }), quote, now).decision.reason).toBe('SPEND_GRANT_PRINCIPAL_MISMATCH');
+    expect(value.reserve(intent('rotated-credential', 10_000, { ...binding, connectionGeneration: 99 }), quote, now).decision.reason).toBe('AUTHORITY_BUDGET_AND_GRANT_PASSED');
+    expect(value.reserve(intent('revoked-member', 10_000, { ...binding, cardMemberId: randomUUID() }), quote, now).decision.reason).toBe('CARD_MEMBER_REVOKED');
   } finally { value.close(); }
 });
 
@@ -69,15 +71,16 @@ it('serializes the lifetime total across two ledger clients', () => {
   } finally { first.close(); second.close(); }
 });
 
-it('does not reuse an idempotent request across connection owners', () => {
+it('reuses an idempotent request across connections for the same CardMember', () => {
   const value = ledger();
   try {
     const first = authority(value);
     value.reserve(intent('owned-request', 200_000, first), quote, now);
-    const replacementPrincipal = { connectionId: randomUUID(), connectionGeneration: 1 };
+    const replacementPrincipal = { cardMemberId, connectionId: randomUUID(), connectionGeneration: 1 };
     value.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 60 * 60 * 1000 }, replacementPrincipal, scope, now + 1);
     const replacement = value.spendAuthority(replacementPrincipal, MARKET_SNAPSHOT_OPERATION, now + 1);
-    expect(() => value.reserve(intent('owned-request', 200_000, replacement), quote, now + 1)).toThrow('PURCHASE_REQUEST_OWNER_MISMATCH');
+    const replay = value.reserve(intent('owned-request', 200_000, replacement), quote, now + 1);
+    expect(replay.ownerCardMemberId).toBe(cardMemberId);
   } finally { value.close(); }
 });
 

@@ -8,9 +8,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { AgentConnection } from '../../src/modules/mcp/connection';
 
+const cardMemberId = '11111111-1111-4111-8111-111111111111';
+
 it('connects the real stdio bridge from another cwd and does not reacquire revoked access', async () => {
   const directory = mkdtempSync(join(tmpdir(), '2049-stdio-'));
-  const connection = new AgentConnection(directory);
+  const connection = new AgentConnection(directory, cardMemberId, () => true);
   const operations: string[] = [];
   const http = createServer((incoming, outgoing) => {
     const address = http.address();
@@ -51,7 +53,7 @@ it('connects the real stdio bridge from another cwd and does not reacquire revok
 
 it('sends request_purchase through the spend-authorized POST bridge without payment fields', async () => {
   const directory = mkdtempSync(join(tmpdir(), '2049-stdio-request-'));
-  const connection = new AgentConnection(directory);
+  const connection = new AgentConnection(directory, cardMemberId, () => true);
   let received: { url?: string; method?: string; body?: unknown } = {};
   const resource = { asset: 'SOL', as_of: '2026-09-05T08:00:00Z', spot_price_usd: 140, change_24h_pct: 2.4,
     volume_24h_usd: 3_000_000_000, market_cap_usd: 75_000_000_000, volatility_7d_pct: 5.8, rsi_14d: 57,

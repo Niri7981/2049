@@ -52,9 +52,16 @@ const LegacyPurchaseSchema = z.object({
 }).passthrough();
 
 /** Reads records written before SpendIntent without rewriting in-flight payments. */
-export function parseStoredSpendIntent(raw: unknown): SpendIntent {
+export function parseStoredSpendIntent(raw: unknown, ownerCardMemberId?: string): SpendIntent {
   const current = SpendIntentSchema.safeParse(raw);
   if (current.success) return current.data;
+  if (ownerCardMemberId && raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const authority = 'authority' in raw ? raw.authority : undefined;
+    if (authority && typeof authority === 'object' && !Array.isArray(authority) && !('cardMemberId' in authority)) {
+      const migrated = SpendIntentSchema.safeParse({ ...raw, authority: { ...authority, cardMemberId: ownerCardMemberId } });
+      if (migrated.success) return migrated.data;
+    }
+  }
   const legacy = LegacyPurchaseSchema.parse(raw);
   return SpendIntentSchema.parse({
     id: legacy.id,

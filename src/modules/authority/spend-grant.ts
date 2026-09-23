@@ -5,6 +5,7 @@ const minorUnits = z.string().regex(/^(?:0|[1-9]\d*)$/).refine(value => Number.i
 export const MARKET_SNAPSHOT_OPERATION = 'market.snapshot.read';
 
 export const SpendPrincipalSchema = z.object({
+  cardMemberId: z.string().uuid(),
   connectionId: z.string().uuid(),
   connectionGeneration: z.number().int().positive().safe(),
 }).strict();

@@ -1,6 +1,6 @@
 # 2049 macOS 第一版实施计划
 
-更新日期：2026-09-22。
+更新日期：2026-09-23。
 
 本文记录本轮确认的目标架构、实施顺序和当前证据。状态以本页“实施状态”和实际测试为准；任何开发进度都不代表付款、部署或推送授权。
 
@@ -19,7 +19,7 @@
 - [x] M1：完成开发态 Electron 壳、本机认证管理 API、单实例、窗口关闭后后台存活、菜单栏入口与退出停服。安装包仍属于 M7。
 - [x] M2：完成产品专用钥匙串钱包、后端余额读取、无默认值的持久额度、暂停、电脑本地时区预算窗口和并发事务测试。
 - [ ] M3（真实付款已验证，验收待补齐）：App 共用后端已完成 0.01 测试 USDC 购买；链上余额、同一购买号重放、关闭并重建 AppRuntime 后复用原交易及界面展示已验证。此前没有完整验证按钮重复点击和整个 App 退出重启，不能用运行时重建代替这些场景。默认启动仍为模拟模式。
-- [ ] M4（部分完成）：已接入官方 MCP SDK 的 stdio 桥接，开放额度、报价查询和 `request_purchase`。App 可创建一份绑定当前连接代次的有限消费授权；Agent 只能选择后端定义的 basic 0.20 / premium 20 test USDC offer，并提交稳定 requestId 与用途。后端取得真实 x402 402 报价，原子写入 `APPROVED` / `DENIED`；在显式启用 Devnet 付款时，basic 的持久报价会进入原有 claim、官方 x402 client、签名、结算与恢复流水线，premium 仍在付款边界前拒绝。自动化已覆盖重放、同键异参、并发同 ID、授权竞态、篡改、未知付款和重启恢复。实际 Codex 宿主付款验收和原对话确认仍待完成。详见 [MCP 接入](docs/architecture/mcp-integration.md)。
+- [ ] M4（部分完成）：已接入官方 MCP SDK 的 stdio 桥接，开放额度、报价查询和 `request_purchase`。App 持久维护一个默认 Codex CardMember；有限消费授权和购买所有权绑定 CardMember，连接 ID/代次仅作为凭据与审计事实。Agent 只能选择后端定义的 basic 0.20 / premium 20 test USDC offer，并提交稳定 requestId 与用途。后端取得真实 x402 402 报价，原子写入 `APPROVED` / `DENIED`；在显式启用 Devnet 付款时，basic 的持久报价会进入原有 claim、官方 x402 client、签名、结算与恢复流水线，premium 仍在付款边界前拒绝。自动化已覆盖跨连接重放、同键异参、并发同 ID、授权竞态、篡改、未知付款和重启恢复。实际 Codex 宿主付款验收和原对话确认仍待完成。详见 [MCP 接入](docs/architecture/mcp-integration.md)。
 - [ ] M5–M7：未开始。
 
 2026-09-15 修复：补齐实际签名前暂停检查、退出等待进行中操作、启动时原订单恢复；已付款与交付状态分开，交付失败不再改写付款结果。未提交崩溃记录的预占可安全释放，未知付款保留原凭据。当时尚未执行真实 Devnet 购买；有次数上限的自动交付重试仍属于 M5。
@@ -33,6 +33,8 @@
 2026-09-22 购买请求阶段：新增 MCP `request_purchase` 和认证 Agent POST 入口。basic/premium 报价由测试 Paid API 经官方 x402 server 生成 402；请求层校验完整报价后绑定 SpendGrant 并调用同一账本 reserve。返回安全报价摘要、grant/version 和决策；`paymentStatus` 固定为 `NOT_STARTED`。本阶段没有 claim、签名、付款载荷、settle 或链上交易。
 
 2026-09-22 BOUND STEP 1：将持久 `APPROVED` 请求桥接到原有付款流水线。执行只使用账本保存的不可变报价和内部 `approvalId`；0.20 offer 的金额、完整资源端点、买方、网络、资产、收款方、memo、fee payer 和报价指纹纳入执行绑定。claim、加载 signer 前、SDK 实际签名前、保存 payload 及首次提交前均重新核对授权和绑定。`DENIED` 仍保持 `NOT_STARTED` 且不进入 preflight、claim 或 signer。自动化使用模拟依赖验证，没有发生真实 Devnet 付款；STEP 2–7 未开始。
+
+2026-09-23 稳定 Agent 身份：新增持久默认 Codex CardMember，MCP 凭据由后端绑定该成员；重新启用、重连和凭据轮换可产生新的 `connectionId` / generation，但不会改变购买所有权。SpendGrant 按 CardMember 约束，购买行保存标准化 `owner_card_member_id`，同时保留原连接事实供审计。相同 CardMember 重放已完成请求会直接返回原交易与资源，不重新报价、签名、付款或结算；不同 CardMember 和已撤销 CardMember 均被拒绝。当前仍只有一个真实成员，全局 `requestId` 唯一约束保持不变；启用第二个真实成员前必须改为成员范围唯一。历史不同 `connectionId` 分别导入，不自动合并，付款证据不改写。本阶段没有执行真实 Devnet 付款。
 
 2026-09-18 M3 验收：产品钱包 `Hr937hUNE1yHzjDLhZngWn8rHUWGTuTRLMJoTzi9BUeH` 在真实 Devnet 模式完成购买 `m3-20260918-final-1`。付款交易为 `42qEJgZfZbWbf8FRwuKvJ2mfMwyi5evrZr2r9cNfriocGxN4gt5jfAAjKiDBjKn2Tpx9ihbdMHu2zbKKK5GfAVkr`；RPC 确认买方 `10000 → 0`、商家 `130000 → 140000` 最小单位。当前进程重放和重新打开账本后的重放均返回同一交易，购买记录始终只有一条；App 界面显示付款已确认、结果已交付、当日已消费 0.01 测试 USDC。
 

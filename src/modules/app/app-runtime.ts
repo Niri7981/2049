@@ -40,9 +40,10 @@ export class AppRuntime {
   private walletAddress?: string;
   constructor(readonly directory = dataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number; fetcher?: typeof fetch } = {}) {
     this.ledger = new PurchaseLedger(join(directory, 'app-ledger.sqlite'), { managed: true, requireSpendGrant: true, timeZone: dependencies.timeZone ?? localTimeZone, now: dependencies.now });
-    this.agentConnection = new AgentConnection(directory);
-    // Connection tokens intentionally do not survive a backend restart. A grant
-    // bound to the previous connection must not remain apparently usable.
+    const cardMember = this.ledger.defaultCardMember();
+    this.agentConnection = new AgentConnection(directory, cardMember.id, id => this.ledger.isCardMemberActive(id));
+    // Connection tokens intentionally do not survive a backend restart. The
+    // stable CardMember keeps ownership, but the previous spend delegation is revoked.
     this.ledger.revokeActiveSpendGrant(dependencies.now?.() ?? Date.now(), 'grant.REVOKED_BACKEND_RESTART');
   }
   async initializeWallet() {

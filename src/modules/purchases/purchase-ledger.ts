@@ -3,6 +3,7 @@ import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
+import { CardMemberSchema, type CardMember } from '../authority/card-member';
 import { DEFAULT_SPENDING_POLICY, evaluateSpendAuthority, parseStoredAuthorityDecision, type AuthorityDecision, type SpendingControls } from '../authority/authority-policy';
 import { parseStoredSpendIntent, type SpendIntent } from '../authority/spend-intent';
 import { MARKET_SNAPSHOT_OPERATION, SpendGrantInputSchema, SpendGrantSchema, SpendGrantScopeSchema, SpendPrincipalSchema, parseGrantAmount, type SpendAuthorityBinding, type SpendGrant, type SpendGrantInput, type SpendGrantScope, type SpendPrincipal } from '../authority/spend-grant';
@@ -10,10 +11,10 @@ import { MarketSnapshotOutputSchema, type MarketSnapshotOutput } from '../resour
 import { nextSpendingDayBoundary, spendingDay } from './spending-policy';
 
 export type DeliveryStatus = 'NOT_PAID' | 'PENDING' | 'COMPLETE';
-export type SpendReservation = { intent: SpendIntent; quote: PaymentRequirements; approvalId: string; decision: AuthorityDecision; status: string; deliveryStatus: DeliveryStatus; transaction?: string; data?: MarketSnapshotOutput; answer?: string };
+export type SpendReservation = { intent: SpendIntent; quote: PaymentRequirements; approvalId: string; decision: AuthorityDecision; status: string; deliveryStatus: DeliveryStatus; ownerCardMemberId?: string; transaction?: string; data?: MarketSnapshotOutput; answer?: string };
 /** Compatibility name for callers that still expose the market purchase use case. */
 export type PurchaseRecord = SpendReservation;
-export type PurchaseLedgerOptions = { managed?: boolean; requireSpendGrant?: boolean; timeZone?: () => string; now?: () => number };
+export type PurchaseLedgerOptions = { managed?: boolean; requireSpendGrant?: boolean; timeZone?: () => string; now?: () => number; defaultCardMemberId?: string };
 export type SpendGrantSummary = {
   id: string; version: number; status: SpendGrant['status']; resourceId: string; providerId: string; operation: string;
   network: string; assetId: string; assetDecimals: number; payTo: string; paymentScheme: string; totalLimit: string; singleLimit: string;
@@ -31,6 +32,7 @@ export class PurchaseLedger {
   private requireSpendGrant: boolean;
   private timeZone: () => string;
   private now: () => number;
+  private defaultCardMemberId?: string;
   private stopping = false;
   constructor(path = '.data/day5-ledger.sqlite', options: PurchaseLedgerOptions = {}) {
     this.managed = options.managed ?? false;
@@ -38,15 +40,17 @@ export class PurchaseLedger {
     if (this.requireSpendGrant && !this.managed) throw new Error('Spend grant enforcement requires a managed ledger');
     this.timeZone = options.timeZone ?? (() => 'Asia/Shanghai');
     this.now = options.now ?? Date.now;
+    this.defaultCardMemberId = options.defaultCardMemberId;
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
     if (path !== ':memory:') chmodSync(path, 0o600);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS purchases (id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE, approval_id TEXT NOT NULL UNIQUE,
         purchase TEXT NOT NULL, quote TEXT NOT NULL, decision TEXT NOT NULL, status TEXT NOT NULL,
-        amount INTEGER NOT NULL, confirmed_day TEXT, transaction_id TEXT, data TEXT, payload TEXT);
+        amount INTEGER NOT NULL, confirmed_day TEXT, transaction_id TEXT, data TEXT, payload TEXT, owner_card_member_id TEXT);
       CREATE TABLE IF NOT EXISTS purchase_answers (purchase_id TEXT PRIMARY KEY, answer TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS purchase_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, purchase_id TEXT NOT NULL, type TEXT NOT NULL, at INTEGER NOT NULL);`);
+    if (!this.columns('purchases').has('owner_card_member_id')) this.db.exec('ALTER TABLE purchases ADD COLUMN owner_card_member_id TEXT');
     if (this.managed) {
       this.db.exec(`BEGIN IMMEDIATE;
         CREATE TABLE IF NOT EXISTS app_schema_migrations (id TEXT PRIMARY KEY, applied_at INTEGER NOT NULL);
@@ -63,9 +67,58 @@ export class PurchaseLedger {
         INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('001_app_controls',unixepoch('now') * 1000);
         INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('002_spend_grants',unixepoch('now') * 1000);
         COMMIT;`);
+      this.migrateCardMemberIdentity();
       const now = this.now(); const zone = this.timeZone();
       this.db.prepare('INSERT OR IGNORE INTO app_budget_clock (id,spending_day,time_zone,next_boundary,last_seen) VALUES (1,?,?,?,?)')
         .run(spendingDay(now, zone), zone, nextSpendingDayBoundary(now, zone), now);
+    }
+  }
+  private columns(table: string) {
+    return new Set(this.db.prepare(`PRAGMA table_info(${table})`).all().map(row => String(row.name)));
+  }
+  private migrateCardMemberIdentity() {
+    const now = this.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec(`CREATE TABLE IF NOT EXISTS card_members (
+        id TEXT PRIMARY KEY, label TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('ACTIVE','REVOKED')),
+        is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0,1)), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+        CREATE UNIQUE INDEX IF NOT EXISTS one_default_card_member ON card_members(is_default) WHERE is_default=1;
+        CREATE TABLE IF NOT EXISTS legacy_connection_card_members (
+          connection_id TEXT PRIMARY KEY, card_member_id TEXT NOT NULL REFERENCES card_members(id));`);
+      if (!this.columns('spend_grants').has('card_member_id')) this.db.exec('ALTER TABLE spend_grants ADD COLUMN card_member_id TEXT');
+      if (!this.columns('purchases').has('owner_card_member_id')) this.db.exec('ALTER TABLE purchases ADD COLUMN owner_card_member_id TEXT');
+
+      if (!this.db.prepare('SELECT id FROM card_members WHERE is_default=1').get()) {
+        this.db.prepare("INSERT INTO card_members (id,label,status,is_default,created_at,updated_at) VALUES (?,?,'ACTIVE',1,?,?)")
+          .run(this.defaultCardMemberId ?? randomUUID(), 'Codex', now, now);
+      }
+
+      const historical = new Set<string>();
+      for (const row of this.db.prepare('SELECT DISTINCT connection_id FROM spend_grants WHERE card_member_id IS NULL').all()) historical.add(String(row.connection_id));
+      for (const row of this.db.prepare(`SELECT DISTINCT json_extract(purchase,'$.authority.connectionId') AS connection_id FROM purchases
+        WHERE owner_card_member_id IS NULL AND json_valid(purchase) AND json_extract(purchase,'$.authority.connectionId') IS NOT NULL`).all()) {
+        historical.add(String(row.connection_id));
+      }
+      for (const connectionId of historical) {
+        let mapping = this.db.prepare('SELECT card_member_id FROM legacy_connection_card_members WHERE connection_id=?').get(connectionId);
+        if (!mapping) {
+          const cardMemberId = randomUUID();
+          this.db.prepare("INSERT INTO card_members (id,label,status,is_default,created_at,updated_at) VALUES (?,?,'ACTIVE',0,?,?)")
+            .run(cardMemberId, `Imported Codex connection ${connectionId.slice(0, 8)}`, now, now);
+          this.db.prepare('INSERT INTO legacy_connection_card_members (connection_id,card_member_id) VALUES (?,?)').run(connectionId, cardMemberId);
+          mapping = { card_member_id: cardMemberId };
+        }
+        const cardMemberId = String(mapping.card_member_id);
+        this.db.prepare('UPDATE spend_grants SET card_member_id=? WHERE connection_id=? AND card_member_id IS NULL').run(cardMemberId, connectionId);
+        this.db.prepare(`UPDATE purchases SET owner_card_member_id=? WHERE owner_card_member_id IS NULL AND json_valid(purchase)
+          AND json_extract(purchase,'$.authority.connectionId')=?`).run(cardMemberId, connectionId);
+      }
+      this.db.prepare("INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('003_stable_card_member',?)").run(now);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
     }
   }
   private atomic<T>(fn: () => T): T {
@@ -82,10 +135,38 @@ export class PurchaseLedger {
   }
   private parseGrantRow(row: Record<string, unknown>): SpendGrant {
     return SpendGrantSchema.parse({
-      id: String(row.id), version: Number(row.version), connectionId: String(row.connection_id), connectionGeneration: Number(row.connection_generation),
+      id: String(row.id), version: Number(row.version), cardMemberId: String(row.card_member_id), connectionId: String(row.connection_id), connectionGeneration: Number(row.connection_generation),
       resourceId: String(row.resource_id), providerId: String(row.provider_id), operation: String(row.operation), network: String(row.network), assetId: String(row.asset_id),
       assetDecimals: Number(row.asset_decimals), payTo: String(row.pay_to), paymentScheme: String(row.payment_scheme), totalLimit: Number(row.total_limit), singleLimit: Number(row.single_limit), status: String(row.status),
       createdAt: Number(row.created_at), expiresAt: Number(row.expires_at), revokedAt: row.revoked_at === null ? null : Number(row.revoked_at),
+    });
+  }
+  private parseCardMemberRow(row: Record<string, unknown>): CardMember {
+    return CardMemberSchema.parse({ id: String(row.id), label: String(row.label), status: String(row.status),
+      createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) });
+  }
+  defaultCardMember() {
+    if (!this.managed) throw new Error('CardMember identity requires a managed ledger');
+    const row = this.db.prepare('SELECT * FROM card_members WHERE is_default=1').get();
+    if (!row) throw new Error('Default CardMember is missing');
+    return this.parseCardMemberRow(row);
+  }
+  cardMember(id: string) {
+    if (!this.managed) return undefined;
+    const row = this.db.prepare('SELECT * FROM card_members WHERE id=?').get(id);
+    return row ? this.parseCardMemberRow(row) : undefined;
+  }
+  isCardMemberActive(id: string) { return this.cardMember(id)?.status === 'ACTIVE'; }
+  assertCardMemberActive(id: string) {
+    if (!this.isCardMemberActive(id)) throw new Error('CARD_MEMBER_REVOKED');
+  }
+  revokeCardMember(id: string, now = this.now()) {
+    if (!this.managed) return false;
+    return this.atomic(() => {
+      const changed = this.db.prepare("UPDATE card_members SET status='REVOKED',updated_at=? WHERE id=? AND status='ACTIVE'").run(now, id).changes;
+      const grants = this.db.prepare("UPDATE spend_grants SET status='REVOKED',revoked_at=? WHERE card_member_id=? AND status='ACTIVE' RETURNING id").all(now, id);
+      for (const row of grants) this.grantEvent(String(row.id), 'grant.REVOKED_CARD_MEMBER', now);
+      return changed > 0;
     });
   }
   private grantById(id: string) {
@@ -99,6 +180,7 @@ export class PurchaseLedger {
   createSpendGrant(raw: SpendGrantInput, rawPrincipal: SpendPrincipal, rawScope: SpendGrantScope, now = this.now()) {
     if (!this.managed) throw new Error('Spend grants require a managed ledger');
     const input = SpendGrantInputSchema.parse(raw); const principal = SpendPrincipalSchema.parse(rawPrincipal); const scope = SpendGrantScopeSchema.parse(rawScope);
+    this.assertCardMemberActive(principal.cardMemberId);
     const totalLimit = parseGrantAmount(input.totalLimit, 'totalLimit'); const singleLimit = parseGrantAmount(input.singleLimit, 'singleLimit');
     if (singleLimit > totalLimit) throw new Error('单笔上限不能大于授权总额。');
     if (input.expiresAt <= now + 60_000 || input.expiresAt > now + 7 * 24 * 60 * 60 * 1000) throw new Error('授权有效期必须在 1 分钟到 7 天之间。');
@@ -108,8 +190,8 @@ export class PurchaseLedger {
       for (const row of previous) this.grantEvent(String(row.id), 'grant.REVOKED_REPLACED', now);
       const version = Number(this.db.prepare('SELECT COALESCE(MAX(version),0)+1 AS version FROM spend_grants').get()!.version);
       const id = randomUUID();
-      this.db.prepare(`INSERT INTO spend_grants (id,version,connection_id,connection_generation,resource_id,provider_id,operation,network,asset_id,asset_decimals,pay_to,payment_scheme,total_limit,single_limit,status,created_at,expires_at,revoked_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE',?,?,NULL)`).run(id, version, principal.connectionId, principal.connectionGeneration, scope.resourceId, scope.providerId,
+      this.db.prepare(`INSERT INTO spend_grants (id,version,card_member_id,connection_id,connection_generation,resource_id,provider_id,operation,network,asset_id,asset_decimals,pay_to,payment_scheme,total_limit,single_limit,status,created_at,expires_at,revoked_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE',?,?,NULL)`).run(id, version, principal.cardMemberId, principal.connectionId, principal.connectionGeneration, scope.resourceId, scope.providerId,
         scope.operation, scope.network, scope.assetId, scope.assetDecimals, scope.payTo, scope.paymentScheme, totalLimit, singleLimit, now, input.expiresAt);
       this.grantEvent(id, 'grant.CREATED', now);
       return this.latestGrantSummary(now)!;
@@ -133,10 +215,12 @@ export class PurchaseLedger {
   }
   spendAuthority(principal: SpendPrincipal, operation: string, now = this.now()): SpendAuthorityBinding {
     const parsed = SpendPrincipalSchema.parse(principal); const grant = this.activeSpendGrant(now);
-    if (!grant || grant.connectionId !== parsed.connectionId || grant.connectionGeneration !== parsed.connectionGeneration || grant.operation !== operation) {
+    this.assertCardMemberActive(parsed.cardMemberId);
+    if (!grant || grant.cardMemberId !== parsed.cardMemberId || grant.operation !== operation) {
       throw new Error('当前 Agent 连接没有可用的消费授权。');
     }
-    return { grantId: grant.id, grantVersion: grant.version, connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation };
+    return { grantId: grant.id, grantVersion: grant.version, cardMemberId: parsed.cardMemberId,
+      connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation };
   }
   spendGrantSummary(now = this.now()): SpendGrantSummary | null {
     if (!this.managed) return null;
@@ -215,8 +299,10 @@ export class PurchaseLedger {
   get(idempotencyKey: string): SpendReservation | undefined {
     const row = this.db.prepare('SELECT * FROM purchases WHERE task_id=?').get(idempotencyKey);
     if (!row) return undefined;
-    return { intent: parseStoredSpendIntent(JSON.parse(String(row.purchase))), quote: JSON.parse(String(row.quote)), approvalId: String(row.approval_id), decision: parseStoredAuthorityDecision(JSON.parse(String(row.decision))), status: currentAuthorityStatus(String(row.status)),
+    const ownerCardMemberId = row.owner_card_member_id ? String(row.owner_card_member_id) : undefined;
+    return { intent: parseStoredSpendIntent(JSON.parse(String(row.purchase)), ownerCardMemberId), quote: JSON.parse(String(row.quote)), approvalId: String(row.approval_id), decision: parseStoredAuthorityDecision(JSON.parse(String(row.decision))), status: currentAuthorityStatus(String(row.status)),
       deliveryStatus: row.status === 'PAID' ? (row.data ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
+      ...(ownerCardMemberId ? { ownerCardMemberId } : {}),
       ...(this.db.prepare("SELECT answer FROM purchase_answers WHERE purchase_id=?").get(String(row.id)) as { answer: string } | undefined),
       ...(row.transaction_id ? { transaction: String(row.transaction_id) } : {}),
       ...(row.data ? { data: MarketSnapshotOutputSchema.parse(JSON.parse(String(row.data))) } : {}) };
@@ -226,8 +312,7 @@ export class PurchaseLedger {
       this.expireUnclaimed(now);
       const existing = this.get(intent.idempotencyKey);
       if (existing) {
-        if (this.requireSpendGrant && (existing.intent.authority?.connectionId !== intent.authority?.connectionId ||
-          existing.intent.authority?.connectionGeneration !== intent.authority?.connectionGeneration)) {
+        if (this.requireSpendGrant && existing.ownerCardMemberId !== intent.authority?.cardMemberId) {
           throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
         }
         if (existing.intent.requestHash !== intent.requestHash || existing.intent.executionBinding !== intent.executionBinding) throw new Error('Idempotency key belongs to another request or execution configuration');
@@ -238,8 +323,8 @@ export class PurchaseLedger {
       const controls = this.controls();
       let decision = evaluateSpendAuthority(intent, { committed: Number(row.total), hasUnknownPayment: Boolean(unresolved) }, now, controls);
       if (this.requireSpendGrant) decision = this.evaluateGrant(intent, decision, Number(row.total), controls, now);
-      this.db.prepare('INSERT INTO purchases (id,task_id,approval_id,purchase,quote,decision,status,amount) VALUES (?,?,?,?,?,?,?,?)')
-        .run(intent.id, intent.idempotencyKey, randomUUID(), JSON.stringify(intent), JSON.stringify(quote), JSON.stringify(decision), decision.decision, intent.amount);
+      this.db.prepare('INSERT INTO purchases (id,task_id,approval_id,purchase,quote,decision,status,amount,owner_card_member_id) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(intent.id, intent.idempotencyKey, randomUUID(), JSON.stringify(intent), JSON.stringify(quote), JSON.stringify(decision), decision.decision, intent.amount, intent.authority?.cardMemberId ?? null);
       this.event(intent.id, `authority.${decision.decision}`);
       return this.get(intent.idempotencyKey)!;
     });
@@ -362,11 +447,12 @@ export class PurchaseLedger {
   private evaluateGrant(intent: SpendIntent, base: AuthorityDecision, committed: number, controls: SpendingControls, now: number): AuthorityDecision {
     const binding = intent.authority;
     if (!binding) return this.denied('SPEND_GRANT_REQUIRED', committed, controls);
+    if (!this.isCardMemberActive(binding.cardMemberId)) return this.denied('CARD_MEMBER_REVOKED', committed, controls);
     this.expireGrants(now);
     const grant = this.grantById(binding.grantId);
     if (!grant || grant.status !== 'ACTIVE') return this.denied('SPEND_GRANT_INACTIVE', committed, controls);
     if (grant.expiresAt <= now) return this.denied('SPEND_GRANT_EXPIRED', committed, controls);
-    if (grant.version !== binding.grantVersion || grant.connectionId !== binding.connectionId || grant.connectionGeneration !== binding.connectionGeneration) return this.denied('SPEND_GRANT_PRINCIPAL_MISMATCH', committed, controls);
+    if (grant.version !== binding.grantVersion || grant.cardMemberId !== binding.cardMemberId) return this.denied('SPEND_GRANT_PRINCIPAL_MISMATCH', committed, controls);
     if (grant.operation !== binding.operation || grant.operation !== MARKET_SNAPSHOT_OPERATION || grant.resourceId !== intent.resourceId || grant.providerId !== intent.providerId || grant.network !== intent.network || grant.assetId !== intent.assetId || grant.assetDecimals !== intent.assetDecimals || grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme) {
       return this.denied('SPEND_GRANT_SCOPE_MISMATCH', committed, controls);
     }
@@ -382,9 +468,10 @@ export class PurchaseLedger {
   private assertGrantCovers(record: SpendReservation, now: number) {
     const binding = record.intent.authority;
     if (!binding) throw new Error('Spend grant is missing');
+    this.assertCardMemberActive(binding.cardMemberId);
     const grant = this.grantById(binding.grantId);
     if (!grant || grant.status !== 'ACTIVE' || grant.expiresAt <= now) throw new Error('Spend grant is inactive or expired');
-    if (grant.version !== binding.grantVersion || grant.connectionId !== binding.connectionId || grant.connectionGeneration !== binding.connectionGeneration || grant.operation !== binding.operation) {
+    if (grant.version !== binding.grantVersion || grant.cardMemberId !== binding.cardMemberId || grant.operation !== binding.operation) {
       throw new Error('Spend grant principal changed');
     }
     const intent = record.intent;

@@ -29,7 +29,8 @@ vi.mock('../../src/modules/payment/reconcile-transaction', () => ({
   transactionMessageHash: () => 'offer-message',
 }));
 
-const principal = { connectionId: '2c187121-f6f1-49a3-aea4-821c4bc0a662', connectionGeneration: 2 };
+const cardMemberId = '11111111-1111-4111-8111-111111111111';
+const principal = { cardMemberId, connectionId: '2c187121-f6f1-49a3-aea4-821c4bc0a662', connectionGeneration: 2 };
 const snapshot = { asset: 'SOL' as const, as_of: '2026-09-05T08:00:00Z', spot_price_usd: 140, change_24h_pct: 2.4,
   volume_24h_usd: 3_000_000_000, market_cap_usd: 75_000_000_000, volatility_7d_pct: 5.8, rsi_14d: 57,
   support_levels_usd: [132, 136], resistance_levels_usd: [145, 151], source_label: 'Demo snapshot fixture', is_demo_snapshot: true as const };
@@ -41,7 +42,7 @@ async function fixture(path = ':memory:') {
   const merchant = (await generateKeyPairSigner()).address;
   const feePayer = (await generateKeyPairSigner()).address;
   const config = loadPaymentConfig({ DEMO_BUYER_PUBLIC_KEY: signer.address, DEMO_MERCHANT_PUBLIC_KEY: merchant });
-  const ledger = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+  const ledger = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
   ledger.setDailyLimit('5000000');
   ledger.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 60 * 60 * 1000 }, principal, {
     resourceId: SOL_MARKET_SNAPSHOT_RESOURCE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation: MARKET_SNAPSHOT_OPERATION,

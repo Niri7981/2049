@@ -63,6 +63,7 @@ export async function requestMarketPurchase(raw: unknown, options: {
 }): Promise<PurchaseRequestResult> {
   const input = PurchaseRequestInputSchema.parse(raw);
   const principal = SpendPrincipalSchema.parse(options.principal);
+  options.ledger.assertCardMemberActive(principal.cardMemberId);
   const clock = options.now ?? Date.now;
   const requestStartedAt = clock();
   const requestHash = hash({ offerId: input.offerId, reason: input.reason });
@@ -82,9 +83,8 @@ export async function requestMarketPurchase(raw: unknown, options: {
   options.ledger.releaseExpired(requestStartedAt);
   const existing = options.ledger.get(input.requestId);
   if (existing) {
+    if (existing.ownerCardMemberId !== principal.cardMemberId) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
     if (existing.intent.requestHash !== requestHash || existing.intent.offerId !== input.offerId) throw new Error('REQUEST_ID_CONFLICT');
-    const binding = existing.intent.authority;
-    if (!binding || binding.connectionId !== principal.connectionId || binding.connectionGeneration !== principal.connectionGeneration) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
     return complete(existing, true);
   }
 
@@ -119,14 +119,13 @@ export async function requestMarketPurchase(raw: unknown, options: {
   // immutable nonce/quote instead of comparing or replacing it with a new one.
   const winner = options.ledger.get(input.requestId);
   if (winner) {
+    if (winner.ownerCardMemberId !== principal.cardMemberId) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
     if (winner.intent.requestHash !== requestHash || winner.intent.offerId !== input.offerId) throw new Error('REQUEST_ID_CONFLICT');
-    const owner = winner.intent.authority;
-    if (!owner || owner.connectionId !== principal.connectionId || owner.connectionGeneration !== principal.connectionGeneration) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
     return complete(winner, true);
   }
   const reserved = options.ledger.reserve(intent, quote, now);
   const reservedBinding = reserved.intent.authority;
-  if (!reservedBinding || reservedBinding.connectionId !== principal.connectionId || reservedBinding.connectionGeneration !== principal.connectionGeneration) {
+  if (!reservedBinding || reserved.ownerCardMemberId !== principal.cardMemberId || reservedBinding.cardMemberId !== principal.cardMemberId) {
     throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
   }
   return complete(reserved, reserved.intent.id !== intent.id);

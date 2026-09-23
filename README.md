@@ -44,9 +44,10 @@ x402 负责：
 - basic offer 的真实 x402 报价为 0.20 test USDC；策略批准后复用同一持久报价进入 claim、官方 x402 client、本地 signer、Facilitator、Solana 确认、恢复和资源交付路径。
 - premium offer 的真实 x402 报价为 20 test USDC；它必须到达 BOUND 策略并被拒绝，保持 `paymentStatus: NOT_STARTED`，不会加载 signer。
 - 同一请求重试只查询或恢复原购买；`PAYING`、`PAYMENT_UNKNOWN` 和已付款待交付状态不会创建替代付款。
+- 本地账本持久保存一个默认 Codex CardMember；MCP 连接和凭据可以轮换，但同一成员仍拥有原购买与已交付资源。
 - 付款执行默认关闭。只有显式设置 `APP2049_ENABLE_DEVNET_PURCHASES=1` 才允许已批准请求进入 Devnet 付款路径。
 
-STEP 1 已通过模拟外部依赖的自动化测试；本轮没有执行新的真实 0.20 Devnet 付款。仓库此前已经完成独立的 0.01 test USDC Devnet 真实交易验收。执行模式隔离、统一 Purchase View、卡片式 UI、多 Agent CardMember 和最终 0.20 实付演示属于后续步骤。
+STEP 1 已通过模拟外部依赖的自动化测试；本轮没有执行新的真实 0.20 Devnet 付款。仓库此前已经完成独立的 0.01 test USDC Devnet 真实交易验收。执行模式隔离、统一 Purchase View、卡片式 UI、多真实 Agent/CardMember 和最终 0.20 实付演示属于后续步骤。
 
 ### 安全边界
 
@@ -94,7 +95,7 @@ npm run build
 - 只接入 Codex；尚未接入多个真实 Agent host。
 - 只支持 Solana Devnet 上的测试 USDC 产品路径。
 - Codex 宿主中的可验证逐笔原对话确认尚未完成。
-- STEP 2–7 尚未实施，包括执行模式迁移、Purchase View、卡片式 UI、CardMember 和最终真实 0.20 演示。
+- STEP 2–7 尚未实施，包括执行模式迁移、Purchase View、卡片式 UI、多真实 Agent/CardMember 和最终真实 0.20 演示。
 - 自建 Paid API 和市场快照是明确标注的测试设施，不是生产市场数据服务。
 
 ---
@@ -129,9 +130,10 @@ BOUND STEP 1 is complete: persisted `APPROVED` requests are now connected to the
 - The basic offer receives a real x402 quote for 0.20 test USDC. After policy approval, that same persisted quote flows through the existing claim, official x402 client, local signer, Facilitator, Solana confirmation, recovery, and resource-delivery path.
 - The premium offer receives a real x402 quote for 20 test USDC. It reaches BOUND policy and is denied with `paymentStatus: NOT_STARTED`; the signer is never loaded.
 - Retrying the same request only queries or recovers the original purchase. `PAYING`, `PAYMENT_UNKNOWN`, and paid-but-undelivered records never create a replacement payment.
+- The local ledger persists one default Codex CardMember. MCP connections and credentials may rotate while that member keeps ownership of its purchases and delivered resources.
 - Payment execution is disabled by default. Approved requests can enter the Devnet payment path only when `APP2049_ENABLE_DEVNET_PURCHASES=1` is explicitly set.
 
-STEP 1 is verified with automated tests and mocked external payment dependencies; no new real 0.20 Devnet payment was made in this step. The repository contains earlier evidence for an independent real 0.01 test USDC Devnet transaction. Execution-mode isolation, a unified Purchase View, card-style UI, multi-agent CardMember support, and the final real 0.20 demo remain future steps.
+STEP 1 is verified with automated tests and mocked external payment dependencies; no new real 0.20 Devnet payment was made in this step. The repository contains earlier evidence for an independent real 0.01 test USDC Devnet transaction. Execution-mode isolation, a unified Purchase View, card-style UI, multiple real Agent/CardMember support, and the final real 0.20 demo remain future steps.
 
 ### Security boundaries
 
@@ -179,7 +181,7 @@ The historical web demo, local validator flow, standalone Devnet payment entry p
 - Codex is the only integrated Agent host; multiple real Agent hosts are not connected yet.
 - The product path currently supports test USDC on Solana Devnet only.
 - Verifiable per-purchase confirmation inside the original Codex conversation is not complete.
-- STEP 2–7 are not implemented yet, including execution-mode migration, Purchase View, card-style UI, CardMember, and the final real 0.20 demo.
+- STEP 2–7 are not implemented yet, including execution-mode migration, Purchase View, card-style UI, multiple real Agent/CardMember support, and the final real 0.20 demo.
 - The self-hosted Paid API and market snapshot are explicitly labeled test facilities, not a production market-data service.
 
 ## Documentation

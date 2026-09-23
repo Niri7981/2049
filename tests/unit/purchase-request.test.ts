@@ -21,7 +21,8 @@ const merchant = Keypair.generate().publicKey.toBase58();
 const feePayer = Keypair.generate().publicKey.toBase58();
 const config: PaymentConfig = { cluster: 'devnet', rpcUrl: 'https://api.devnet.solana.com', network: DEVNET_NETWORK,
   mint: DEVNET_USDC_MINT, buyer, merchant, facilitatorUrl: 'https://facilitator.invalid' };
-const principal = { connectionId: '2c187121-f6f1-49a3-aea4-821c4bc0a662', connectionGeneration: 2 };
+const cardMemberId = '11111111-1111-4111-8111-111111111111';
+const principal = { cardMemberId, connectionId: '2c187121-f6f1-49a3-aea4-821c4bc0a662', connectionGeneration: 2 };
 const now = Date.parse('2026-09-22T08:00:00Z');
 const snapshot = { asset: 'SOL' as const, as_of: '2026-09-05T08:00:00Z', spot_price_usd: 140, change_24h_pct: 2.4,
   volume_24h_usd: 3_000_000_000, market_cap_usd: 75_000_000_000, volatility_7d_pct: 5.8, rsi_14d: 57,
@@ -36,7 +37,7 @@ function facilitator() {
 }
 
 function setup(totalLimit = '5000000', ledgerPath = ':memory:') {
-  const ledger = new PurchaseLedger(ledgerPath, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+  const ledger = new PurchaseLedger(ledgerPath, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
   ledger.setDailyLimit('50000000');
   ledger.createSpendGrant({ totalLimit, singleLimit: String(Math.min(Number(totalLimit), 500_000)), expiresAt: now + 60 * 60 * 1000 }, principal, {
     resourceId: SOL_MARKET_SNAPSHOT_RESOURCE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation: MARKET_SNAPSHOT_OPERATION,
@@ -77,7 +78,9 @@ it('runs real quote → SpendGrant → policy for APPROVED and DENIED without pa
 
 it('bridges basic APPROVED through the existing claim path using the one persisted 0.20 quote', async () => {
   const { ledger, remote, fetcher, store } = setup();
+  const signer = vi.fn();
   const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string, _config: PaymentConfig, endpoint: string) => {
+    signer();
     const claimed = paymentLedger.claim(approvalId);
     expect(claimed.quote.amount).toBe('200000');
     expect(endpoint).toBe('http://127.0.0.1:3049/api/paid/market-snapshot?asset=SOL&offer=basic');
@@ -87,14 +90,69 @@ it('bridges basic APPROVED through the existing claim path using the one persist
   const input = { requestId: 'executed-basic', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
   try {
     const first = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
-    const replay = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
+    const replayPrincipal = { ...principal, connectionId: randomUUID(), connectionGeneration: 1 };
+    const replay = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal: replayPrincipal, fetcher, now: () => now, pay });
+    const rotatedReplay = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049',
+      principal: { ...replayPrincipal, connectionGeneration: 2 }, fetcher, now: () => now, pay });
     expect(first).toMatchObject({ amount: '200000', status: 'PAID', paymentStatus: 'PAID', deliveryStatus: 'COMPLETE', reused: false, resource: snapshot });
     expect(replay).toMatchObject({ purchaseId: first.purchaseId, paymentStatus: 'PAID', deliveryStatus: 'COMPLETE', reused: true, resource: snapshot });
     expect(replay.resource).toEqual(first.resource);
+    expect(rotatedReplay).toMatchObject({ reused: true, resource: snapshot });
     expect(fetcher).toHaveBeenCalledOnce();
     expect(pay).toHaveBeenCalledOnce();
+    expect(signer).toHaveBeenCalledOnce();
     expect(remote.verify).not.toHaveBeenCalled();
     expect(remote.settle).not.toHaveBeenCalled();
+  } finally { ledger.close(); store.close(); }
+});
+
+it('blocks a different active CardMember from reading or replaying a completed purchase', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bound-purchase-owner-'));
+  const ledgerPath = join(directory, 'ledger.sqlite');
+  const { ledger, fetcher, store } = setup('5000000', ledgerPath);
+  const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
+    paymentLedger.claim(approvalId);
+    paymentLedger.finish(approvalId, { transaction: '4'.repeat(88), data: snapshot }, now);
+    return { transaction: '4'.repeat(88), data: snapshot };
+  });
+  const input = { requestId: 'member-owned-resource', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
+  try {
+    await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
+    const otherCardMemberId = randomUUID();
+    const database = new DatabaseSync(ledgerPath);
+    try {
+      database.prepare("INSERT INTO card_members (id,label,status,is_default,created_at,updated_at) VALUES (?,?,'ACTIVE',0,?,?)")
+        .run(otherCardMemberId, 'Other Agent', now, now);
+    } finally { database.close(); }
+    await expect(requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049',
+      principal: { cardMemberId: otherCardMemberId, connectionId: randomUUID(), connectionGeneration: 1 }, fetcher, now: () => now, pay }))
+      .rejects.toThrow('PURCHASE_REQUEST_OWNER_MISMATCH');
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(pay).toHaveBeenCalledOnce();
+  } finally {
+    ledger.close(); store.close(); rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it('CardMember revoke blocks new spending and completed resource access without erasing ownership', async () => {
+  const { ledger, fetcher, store } = setup();
+  const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
+    paymentLedger.claim(approvalId);
+    paymentLedger.finish(approvalId, { transaction: '5'.repeat(88), data: snapshot }, now);
+    return { transaction: '5'.repeat(88), data: snapshot };
+  });
+  const input = { requestId: 'revoked-member-resource', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
+  try {
+    await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
+    expect(ledger.revokeCardMember(cardMemberId, now + 1)).toBe(true);
+    expect(ledger.get(input.requestId)?.ownerCardMemberId).toBe(cardMemberId);
+    await expect(requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now + 2, pay }))
+      .rejects.toThrow('CARD_MEMBER_REVOKED');
+    await expect(requestMarketPurchase({ requestId: 'revoked-member-new', offerId: 'basic', reason: 'Need new data' },
+      { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now + 2, pay }))
+      .rejects.toThrow('CARD_MEMBER_REVOKED');
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(pay).toHaveBeenCalledOnce();
   } finally { ledger.close(); store.close(); }
 });
 
@@ -165,7 +223,9 @@ it('replays the same request without another quote and rejects changed input', a
     expect(replay).toMatchObject({ purchaseId: first.purchaseId, status: 'APPROVED', reused: true });
     expect(fetcher).toHaveBeenCalledOnce();
     await expect(requestMarketPurchase({ ...input, offerId: 'premium' }, { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now })).rejects.toThrow('REQUEST_ID_CONFLICT');
-    await expect(requestMarketPurchase(input, { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal: { ...principal, connectionGeneration: 99 }, fetcher, now: () => now })).rejects.toThrow('PURCHASE_REQUEST_OWNER_MISMATCH');
+    const rotated = await requestMarketPurchase(input, { config, ledger, execute: false, origin: 'http://127.0.0.1:3049',
+      principal: { ...principal, connectionGeneration: 99 }, fetcher, now: () => now });
+    expect(rotated).toMatchObject({ purchaseId: first.purchaseId, reused: true });
     expect(ledger.list()).toHaveLength(1);
     expect(remote.verify).not.toHaveBeenCalled(); expect(remote.settle).not.toHaveBeenCalled();
   } finally { ledger.close(); store.close(); }

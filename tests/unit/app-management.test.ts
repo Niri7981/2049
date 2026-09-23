@@ -61,7 +61,7 @@ describe('managed budget and Devnet test records', () => {
     const app = new AppRuntime(dir, { initializeWallet });
     try {
       await expect(app.requestPurchase({ requestId: 'no-wallet', offerId: 'basic', reason: 'Need data' }, origin,
-        { connectionId: randomUUID(), connectionGeneration: 1 })).rejects.toThrow('尚未初始化');
+        { cardMemberId: app.ledger.defaultCardMember().id, connectionId: randomUUID(), connectionGeneration: 1 })).rejects.toThrow('尚未初始化');
       expect(initializeWallet).not.toHaveBeenCalled();
       expect(app.ledger.list()).toHaveLength(0);
     } finally { app.ledger.close(); }
@@ -82,6 +82,32 @@ describe('managed budget and Devnet test records', () => {
       app.setAgentConnection(false, origin);
       expect(app.ledger.spendGrantSummary()?.status).toBe('REVOKED');
     } finally { app.ledger.close(); }
+  });
+
+  it('persists the default CardMember across successive MCP connections and App restart', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'app2049-card-member-')); dirs.push(dir);
+    const first = new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }) });
+    let firstMember: string;
+    let firstConnection: string;
+    try {
+      first.setAgentConnection(true, origin);
+      const descriptor = readConnection(dir);
+      firstMember = descriptor.cardMemberId;
+      firstConnection = descriptor.connectionId;
+      first.setAgentConnection(false, origin);
+      first.setAgentConnection(true, origin);
+      const reconnected = readConnection(dir);
+      expect(reconnected.cardMemberId).toBe(firstMember);
+      expect(reconnected.connectionId).not.toBe(firstConnection);
+    } finally { first.ledger.close(); }
+
+    const restarted = new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }) });
+    try {
+      restarted.setAgentConnection(true, origin);
+      const descriptor = readConnection(dir);
+      expect(descriptor.cardMemberId).toBe(firstMember!);
+      expect(descriptor.connectionId).not.toBe(firstConnection!);
+    } finally { restarted.ledger.close(); }
   });
 
   it('quit waits for a request loading its wallet and prevents it from making a purchase', async () => {
