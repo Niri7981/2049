@@ -78,6 +78,7 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
   });
   const clients: Array<{ client: Client; transport: StdioClientTransport }> = [];
   vi.stubEnv('APP2049_ENABLE_DEVNET_PURCHASES', '1');
+  vi.stubEnv('APP2049_ENABLE_LEGACY_DEMO_TASKS', '');
   vi.stubEnv('SOLANA_CLUSTER', 'devnet');
   vi.stubEnv('DEMO_MERCHANT_PUBLIC_KEY', merchant);
   try {

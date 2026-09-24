@@ -15,7 +15,7 @@ import { paymentBinding, paymentEndpoint, recoverApprovedPayment } from '../../s
 import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
 import { demoSnapshot } from '../../src/modules/paid-market-api/paid-market-api';
 import { MARKET_SNAPSHOT_OPERATION } from '../../src/modules/authority/spend-grant';
-import { legacyDemoPurchasesAllowed } from '../../src/modules/app/product-mode';
+import { legacyDemoTasksAllowed } from '../../src/modules/app/product-mode';
 import { readConnection } from '../../src/modules/mcp/connection';
 
 vi.mock('../../src/modules/purchases/approved-payment', async importOriginal => {
@@ -48,13 +48,33 @@ describe('authenticated local management boundary', () => {
     expect(() => requireManagementRequest(request(`Bearer ${'a'.repeat(32)}`, 'cross-site'))).toThrow('跨站');
     expect(() => requireManagementRequest(request(`Bearer ${'a'.repeat(32)}`))).not.toThrow();
   });
-  it('disables the legacy payment worker inside the product service', () => {
-    expect(legacyDemoPurchasesAllowed({})).toBe(true);
-    expect(legacyDemoPurchasesAllowed({ APP2049_MANAGEMENT_TOKEN: 'product-token' })).toBe(false);
+  it('keeps legacy demo tasks closed unless explicitly enabled in development or tests', () => {
+    expect(legacyDemoTasksAllowed({})).toBe(false);
+    expect(legacyDemoTasksAllowed({ NODE_ENV: 'development' })).toBe(false);
+    expect(legacyDemoTasksAllowed({ NODE_ENV: 'test', APP2049_MANAGEMENT_TOKEN: 'product-token' })).toBe(false);
+    expect(legacyDemoTasksAllowed({ NODE_ENV: 'development', APP2049_ENABLE_LEGACY_DEMO_TASKS: '1' })).toBe(true);
+    expect(legacyDemoTasksAllowed({ NODE_ENV: 'test', APP2049_ENABLE_LEGACY_DEMO_TASKS: '1' })).toBe(true);
+    expect(legacyDemoTasksAllowed({ NODE_ENV: 'production', APP2049_ENABLE_LEGACY_DEMO_TASKS: '1' })).toBe(false);
   });
 });
 
 describe('managed budget and Devnet test records', () => {
+  it('keeps canonical App test purchases behind SpendGrant when legacy tasks are disabled', async () => {
+    vi.stubEnv('APP2049_ENABLE_LEGACY_DEMO_TASKS', '');
+    vi.stubEnv('APP2049_ENABLE_DEVNET_PURCHASES', '');
+    const app = runtime();
+    app.setDailyLimit('1000000');
+    app.setAgentConnection(true, origin);
+    try {
+      await expect(app.createTestPurchase('app-canonical-without-grant', origin)).rejects.toThrow('消费授权');
+      expect(app.ledger.get('app-canonical-without-grant')).toBeUndefined();
+      const { grant } = authorize(app, Date.now(), '1000000');
+      const purchase = await app.createTestPurchase('app-canonical-with-grant', origin);
+      expect(purchase).toMatchObject({ status: 'PAID', simulated: true });
+      expect(app.ledger.get('app-canonical-with-grant')?.intent.authority?.grantId).toBe(grant.id);
+    } finally { app.ledger.close(); }
+  });
+
   it('keeps a policy-only purchase request away from wallet initialization', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'app2049-request-wallet-')); dirs.push(dir);
     const initializeWallet = vi.fn(async () => ({ address, reused: true }));

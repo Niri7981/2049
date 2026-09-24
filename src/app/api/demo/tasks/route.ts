@@ -2,11 +2,15 @@ import { spawn } from "node:child_process";
 import { DemoInput, DemoStore } from "@/modules/demo/demo-store";
 import { requireLocalRequest, smallJson } from "@/modules/demo/local-request";
 import { PurchaseLedger } from "@/modules/purchases/purchase-ledger";
-import { legacyDemoPurchasesAllowed } from "@/modules/app/product-mode";
+import { legacyDemoTasksAllowed } from "@/modules/app/product-mode";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "no-store" };
+function legacyTasksDisabled() {
+  return Response.json({ error: "旧版任务入口未启用。" }, { status: 404, headers });
+}
 export async function GET(request: Request) {
+  if (!legacyDemoTasksAllowed()) return legacyTasksDisabled();
   try {
     requireLocalRequest(request);
   } catch {
@@ -34,12 +38,7 @@ export async function GET(request: Request) {
   }
 }
 export async function POST(request: Request) {
-  if (!legacyDemoPurchasesAllowed()) {
-    return Response.json(
-      { error: "此旧版测试入口在 2049 App 中已停用。" },
-      { status: 404, headers },
-    );
-  }
+  if (!legacyDemoTasksAllowed()) return legacyTasksDisabled();
   try {
     requireLocalRequest(request, true);
   } catch {
