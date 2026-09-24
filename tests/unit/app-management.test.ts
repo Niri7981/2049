@@ -71,12 +71,13 @@ describe('managed budget and Devnet test records', () => {
     const app = runtime(); const now = Date.now();
     try {
       app.setAgentConnection(true, origin);
-      const readOnly = readConnection(app.directory);
+      const intentCredential = readConnection(app.directory);
+      expect(intentCredential.capabilities).toEqual(['read', 'request_purchase']);
       const grant = app.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 8 * 60 * 60 * 1000 });
       const authorized = readConnection(app.directory);
-      expect(authorized).toMatchObject({ connectionId: readOnly.connectionId, generation: readOnly.generation + 1, capabilities: ['read', 'request_purchase'] });
-      expect(authorized.token).not.toBe(readOnly.token);
-      expect(app.agentConnection.status()).toMatchObject({ enabled: true, access: 'spending_request' });
+      expect(authorized).toMatchObject({ connectionId: intentCredential.connectionId, generation: intentCredential.generation + 1, capabilities: ['read', 'request_purchase'] });
+      expect(authorized.token).not.toBe(intentCredential.token);
+      expect(app.agentConnection.status()).toMatchObject({ enabled: true, access: 'purchase_intent' });
       expect(grant).toMatchObject({ status: 'ACTIVE', totalLimit: '5000000', singleLimit: '500000' });
       expect(app.ledger.spendGrantSummary()).toMatchObject({ id: grant.id, status: 'ACTIVE', remaining: '5000000' });
       app.setAgentConnection(false, origin);

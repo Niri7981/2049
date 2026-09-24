@@ -6,6 +6,7 @@ import { requireLocalRequest } from '../demo/local-request';
 import { SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
 
 const CapabilitySchema = z.enum(['read', 'request_purchase']);
+const agentCapabilities: Array<z.infer<typeof CapabilitySchema>> = ['read', 'request_purchase'];
 
 export const ConnectionSchema = z.object({
   origin: z.string().refine(value => {
@@ -46,18 +47,15 @@ export class AgentConnection {
     if (!enabled) { this.descriptor = undefined; this.lastSeen = null; this.removeFile(); return; }
     if (!this.isCardMemberActive(this.cardMemberId)) throw new Error('CARD_MEMBER_REVOKED');
     const token = randomBytes(32).toString('base64url');
-    this.write({ origin, token, cardMemberId: this.cardMemberId, connectionId: randomUUID(), generation: 1, capabilities: ['read'] });
+    this.write({ origin, token, cardMemberId: this.cardMemberId, connectionId: randomUUID(), generation: 1, capabilities: [...agentCapabilities] });
   }
-  rotateForSpending(): SpendPrincipal {
-    if (!this.descriptor) throw new Error('请先启用 Agent 连接。');
+  /** Grant changes invalidate the old token, without changing intent permissions. */
+  rotateCredential(): SpendPrincipal | undefined {
+    if (!this.descriptor) return undefined;
     if (!this.isCardMemberActive(this.descriptor.cardMemberId)) throw new Error('CARD_MEMBER_REVOKED');
-    const next: z.infer<typeof ConnectionSchema> = { ...this.descriptor, token: randomBytes(32).toString('base64url'), generation: this.descriptor.generation + 1, capabilities: ['read', 'request_purchase'] };
+    const next: z.infer<typeof ConnectionSchema> = { ...this.descriptor, token: randomBytes(32).toString('base64url'), generation: this.descriptor.generation + 1, capabilities: [...agentCapabilities] };
     this.write(next);
     return SpendPrincipalSchema.parse({ cardMemberId: next.cardMemberId, connectionId: next.connectionId, connectionGeneration: next.generation });
-  }
-  downgradeToReadOnly() {
-    if (!this.descriptor) return;
-    this.write({ ...this.descriptor, token: randomBytes(32).toString('base64url'), generation: this.descriptor.generation + 1, capabilities: ['read'] });
   }
   principal(capability: z.infer<typeof CapabilitySchema>): SpendPrincipal | undefined {
     const value = this.descriptor;
@@ -79,7 +77,7 @@ export class AgentConnection {
   status() {
     const enabled = Boolean(this.descriptor && this.isCardMemberActive(this.descriptor.cardMemberId));
     const capabilities = enabled ? this.descriptor?.capabilities ?? [] : [];
-    return { enabled, lastSeen: this.lastSeen, access: capabilities.includes('request_purchase') ? 'spending_request' as const : 'read_only' as const, capabilities };
+    return { enabled, lastSeen: this.lastSeen, access: capabilities.includes('request_purchase') ? 'purchase_intent' as const : 'read_only' as const, capabilities };
   }
 }
 

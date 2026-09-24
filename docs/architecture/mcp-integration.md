@@ -4,13 +4,13 @@
 
 采用 x402 官方 MCP→HTTP 桥接示例的结构：官方 MCP SDK 负责工具注册、协议协商和 stdio；2049 的薄适配只调用运行中的本地后端。协议报价仍由现有 `@x402/core` HTTP 客户端解析。保留产品钥匙串钱包、共享额度和账本。
 
-当前开放两个只读工具和一个受 SpendGrant 约束的购买请求工具：
+当前开放两个只读工具和一个可提交购买意图的工具；SpendGrant 决定意图是否获准执行付款：
 
 - `get_spending_status`：查询产品钱包地址、余额和共用额度。
 - `get_market_quote`：向本机测试 Paid API 获取真实 402 报价，检查固定资源、网络、资产、收款方和金额。返回的是 Devnet 示例快照的报价，不是实时市场数据，也不产生购买授权。
-- `request_purchase`：只接受稳定 `requestId`、服务端 offer ID（`basic` / `premium`）和用途摘要。后端分别取得 0.20 / 20 test USDC 的真实 402，绑定当前连接的 SpendGrant 并持久写入 `APPROVED` / `DENIED`。显式启用 Devnet 付款时，`APPROVED` 的 basic 请求以该持久报价进入既有 claim、官方 x402 client、签名、结算、对账和交付路径；`DENIED` 的 premium 请求保持 `paymentStatus: NOT_STARTED`。
+- `request_purchase`：只接受稳定 `requestId`、服务端 offer ID（`basic` / `premium`）和用途摘要。有效连接可提交购买意图，即使 SpendGrant 尚未创建、已撤销或已过期。后端取得真实 402，按 SpendGrant 与额度评估并持久写入 `APPROVED` / `DENIED`；无 Grant 返回 `SPEND_GRANT_REQUIRED`，撤销返回 `SPEND_GRANT_REVOKED`，过期返回 `SPEND_GRANT_EXPIRED`。显式启用 Devnet 付款时，只有 `APPROVED` 的 basic 请求以持久报价进入既有 claim、官方 x402 client、签名、结算、对账和交付路径；`DENIED` 保持 `paymentStatus: NOT_STARTED`。
 
-没有开放修改额度、管理连接、导出密钥或通用签名工具。Agent 不能提交金额、URL、收款方、资产、交易或 `approved`。用户先在 App 创建有限消费授权；创建、替换或撤销授权会轮换连接凭据。原对话确认仍未实现，所以 M4 保持部分完成；App grant 是明确的预先委托，不冒充逐笔宿主确认。
+没有开放修改额度、管理连接、导出密钥或通用签名工具。Agent 不能提交金额、URL、收款方、资产、交易或 `approved`。用户在 App 创建有限消费授权后，策略才可能批准付款；创建、替换或撤销授权会轮换连接凭据。原对话确认仍未实现，所以 M4 保持部分完成；App grant 是明确的预先委托，不冒充逐笔宿主确认。
 
 App 在本地账本中持久维护一个默认 Codex CardMember。`connectionId` 和 generation 是可撤销的连接/凭据代次，不是经济所有者；后端签发连接时写入 `cardMemberId`，Agent 输入中没有该字段。SpendGrant 与 Agent 购买的标准化 owner 均绑定 CardMember，原连接 ID/代次仍保存在授权事实中用于审计。相同 CardMember 换用新连接或新 generation 后，以相同 `requestId` 和相同不可变请求重放，会直接复用原购买并返回持久资源，不重新取得报价或进入付款路径。
 
@@ -35,7 +35,7 @@ codex mcp add 2049 -- /absolute/path/to/node --import /absolute/path/to/2049/nod
 
 MCP 进程不会启动钱包服务，也不会读取项目 `.env.local`。它只读取产品数据目录内权限为 `0600` 的只读连接凭据，然后调用 loopback 后端。配置文件不包含钱包密钥或管理令牌。
 
-连接默认关闭，启用后先只有读权限。App 创建 grant 时轮换为带 `request_purchase` capability 的新令牌；撤销 grant 后再次轮换为只读令牌。App 每次启用连接会产生新的连接身份，但继续绑定同一个默认 CardMember；撤销立即使旧令牌失效。App 重启后保持关闭并撤销旧的活跃 grant，但默认 CardMember 及其购买所有权继续保留。MCP 进程首次调用时缓存当前令牌，不会自行读取轮换后的令牌；连接或授权变化后需要重启 MCP 会话。
+连接默认关闭。启用后向活跃 CardMember 签发 `read` 和 `request_purchase`，后者只允许提交购买意图，不证明消费授权。创建或撤销 Grant 会轮换令牌并保留这两项连接能力；旧令牌立即失效。Grant 到期不必轮换令牌，后端策略仍会拒绝付款并保存拒绝记录。App 每次启用连接会产生新的连接身份，但继续绑定同一个默认 CardMember；App 重启后保持关闭并撤销旧的活跃 Grant。MCP 进程首次调用时缓存当前令牌，不会自行读取轮换后的令牌；连接或授权变化后需要重启 MCP 会话。
 
 连接撤销只使该凭据失效；Grant 撤销阻止新消费但不删除所有权；CardMember 撤销会使其全部连接认证失败，并阻止 Agent 读取其历史资源。已提交或结果未知的原付款仍按原 payload 对账。当前产品只有一个真实默认 CardMember，因此仍保留全局 `requestId` 唯一约束，避免在本次身份修复中重建购买表和索引。启用第二个真实 CardMember 前，必须把唯一性调整为 `(cardMemberId, requestId)`。历史迁移会给同一个旧 `connectionId` 的所有 generation 分配同一个导入成员；不同旧 `connectionId` 不自动合并，且不会改写报价、批准、payload、交易、事件、资源或结算证据。
 

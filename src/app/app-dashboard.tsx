@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type Overview = {
-  connection: { enabled: boolean; lastSeen: number | null; access: 'read_only' | 'spending_request'; capabilities: Array<'read' | 'request_purchase'> };
+  connection: { enabled: boolean; lastSeen: number | null; access: 'read_only' | 'purchase_intent'; capabilities: Array<'read' | 'request_purchase'> };
   service: { status: string; network: string; testEnvironment: boolean; purchaseMode: 'simulated' | 'live_devnet' };
   wallet: { address: string; reused: boolean; balance: { amount: string | null; display: string; available: boolean } };
   budget: { day: string; timeZone: string; dailyLimit: string | null; paidDisplay: string; reservedDisplay: string; remainingDisplay: string; dailyLimitDisplay: string; paused: boolean; unresolved: number };
@@ -91,7 +91,7 @@ export function AppDashboard() {
     <section><h2>每日共用额度</h2><div className="limit-row"><label><span>额度（test USDC）</span><input value={limit} onChange={event => setLimit(event.target.value)} placeholder="例如 1.00" inputMode="decimal" /></label><button disabled={busy} onClick={() => void saveLimit()}>保存额度</button></div>
       <div className="metrics"><div><span>今日已消费</span><strong>{data?.budget.paidDisplay || '—'}</strong></div><div><span>预占</span><strong>{data?.budget.reservedDisplay || '—'}</strong></div><div><span>剩余</span><strong>{data?.budget.remainingDisplay || '—'}</strong></div></div><p className="hint">{data ? `${data.budget.day} · ${data.budget.timeZone}` : '读取中…'}。修改额度不会清空今天的消费。</p>
       <button className="secondary" disabled={busy} onClick={() => void mutate('/api/app/settings', { paused: !data?.budget.paused })}>{data?.budget.paused ? '继续付款' : '暂停付款'}</button></section>
-    <section><h2>Agent 连接</h2><p>{data?.connection.enabled ? (data.connection.access === 'spending_request' ? '已启用，消费授权已绑定' : '已启用，只读访问') : '未启用'}</p>
+    <section><h2>Agent 连接</h2><p>{data?.connection.enabled ? (data.connection.access === 'purchase_intent' ? '已启用，可提交购买请求' : '已启用，只读访问') : '未启用'}</p>
       <p className="hint">{data?.connection.lastSeen ? `最近收到请求：${new Date(data.connection.lastSeen).toLocaleString()}` : '尚未收到 Agent 请求。'} 创建或撤销消费授权会轮换连接凭据，需要重新启动 Agent 的 MCP 会话。</p>
       <button className="secondary" disabled={busy} onClick={() => void mutate('/api/app/connection', { enabled: !data?.connection.enabled })}>{data?.connection.enabled ? '撤销 Agent 连接' : '启用 Agent 连接'}</button></section>
     <section><h2>消费授权</h2>

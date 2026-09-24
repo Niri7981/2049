@@ -26,7 +26,7 @@ export type PurchaseRequestResult = {
   status: string;
   decision: SpendReservation['decision'];
   quote: { resourceId: string; providerId: string; network: string; assetId: string; assetDecimals: number; payTo: string; amount: string; expiresAt: number; fingerprint: string };
-  grant: { id: string; version: number };
+  grant: { id: string; version: number } | null;
   paymentStatus: 'NOT_STARTED' | 'PAYING' | 'PAYMENT_UNKNOWN' | 'PAID' | 'FAILED';
   executionMode: PurchaseExecutionMode;
   deliveryStatus: 'NOT_DELIVERED' | 'PENDING' | 'COMPLETE';
@@ -37,7 +37,7 @@ export type PurchaseRequestResult = {
 function result(record: SpendReservation, offerId: PurchaseRequestInput['offerId'], reused: boolean, executionMode: PurchaseExecutionMode): PurchaseRequestResult {
   const offer = marketOffer(offerId);
   const authority = record.intent.authority;
-  if (!authority) throw new Error('SPEND_GRANT_REQUIRED');
+  if (!authority && (record.decision.decision !== 'DENIED' || record.decision.reason !== 'SPEND_GRANT_REQUIRED')) throw new Error('SPEND_GRANT_REQUIRED');
   const resource = record.status === 'PAID' && record.deliveryStatus === 'COMPLETE'
     ? MarketSnapshotOutputSchema.parse(record.data)
     : undefined;
@@ -45,7 +45,7 @@ function result(record: SpendReservation, offerId: PurchaseRequestInput['offerId
     status: record.status, decision: record.decision,
     quote: { resourceId: record.intent.resourceId, providerId: record.intent.providerId, network: record.intent.network, assetId: record.intent.assetId,
       assetDecimals: record.intent.assetDecimals, payTo: record.intent.payTo, amount: String(record.intent.amount), expiresAt: record.intent.expiresAt, fingerprint: record.intent.quoteFingerprint },
-    grant: { id: authority.grantId, version: authority.grantVersion }, paymentStatus: record.status === 'PAID' ? 'PAID' : record.status === 'PAYING' ? 'PAYING' : record.status === 'PAYMENT_UNKNOWN' ? 'PAYMENT_UNKNOWN' : record.status === 'FAILED' ? 'FAILED' : 'NOT_STARTED',
+    grant: authority ? { id: authority.grantId, version: authority.grantVersion } : null, paymentStatus: record.status === 'PAID' ? 'PAID' : record.status === 'PAYING' ? 'PAYING' : record.status === 'PAYMENT_UNKNOWN' ? 'PAYMENT_UNKNOWN' : record.status === 'FAILED' ? 'FAILED' : 'NOT_STARTED',
     executionMode, deliveryStatus: record.deliveryStatus === 'NOT_PAID' ? 'NOT_DELIVERED' : record.deliveryStatus, reused,
     ...(resource ? { resource } : {}) };
 }
@@ -125,9 +125,9 @@ export async function requestMarketPurchase(raw: unknown, options: {
     if (winner.intent.requestHash !== requestHash || winner.intent.offerId !== input.offerId) throw new Error('REQUEST_ID_CONFLICT');
     return complete(winner, true);
   }
-  const reserved = options.ledger.reserve(intent, quote, now, executionMode);
+  const reserved = options.ledger.reserve(intent, quote, now, executionMode, principal.cardMemberId);
   const reservedBinding = reserved.intent.authority;
-  if (!reservedBinding || reserved.ownerCardMemberId !== principal.cardMemberId || reservedBinding.cardMemberId !== principal.cardMemberId) {
+  if (reserved.ownerCardMemberId !== principal.cardMemberId || (reservedBinding && reservedBinding.cardMemberId !== principal.cardMemberId)) {
     throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
   }
   return complete(reserved, reserved.intent.id !== intent.id);

@@ -146,7 +146,8 @@ export class AppRuntime {
     const total = Number(input.totalLimit); const single = Number(input.singleLimit);
     if (total <= 0 || single <= 0 || single > total) throw new Error('授权金额必须为正数，且单笔上限不能大于授权总额。');
     if (input.expiresAt <= now + 60_000 || input.expiresAt > now + 7 * 24 * 60 * 60 * 1000) throw new Error('授权有效期必须在 1 分钟到 7 天之间。');
-    const principal = this.agentConnection.rotateForSpending();
+    const principal = this.agentConnection.rotateCredential();
+    if (!principal) throw new Error('请先启用 Agent 连接。');
     try {
       const payTo = process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
       return this.ledger.createSpendGrant(input, principal, {
@@ -161,13 +162,13 @@ export class AppRuntime {
       }, now, purchaseExecutionMode());
     } catch (error) {
       this.ledger.revokeActiveSpendGrant(now, 'grant.REVOKED_CONNECTION_ROTATION_FAILED');
-      this.agentConnection.downgradeToReadOnly();
+      this.agentConnection.rotateCredential();
       throw error;
     }
   }
   revokeSpendGrant() {
     const revoked = this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now());
-    this.agentConnection.downgradeToReadOnly();
+    this.agentConnection.rotateCredential();
     return revoked;
   }
   private authority(principal?: SpendPrincipal) {

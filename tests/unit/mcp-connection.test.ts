@@ -33,7 +33,7 @@ it('separates Agent and management access, rejects browsers and publishes no tok
   expect(() => connection.authenticate(request(token, { origin }))).toThrow();
   expect(() => connection.authenticate(request(token, { 'sec-fetch-site': 'cross-site' }))).toThrow();
   connection.authenticate(request(token));
-  expect(connection.status()).toMatchObject({ enabled: true, lastSeen: expect.any(Number), access: 'read_only' });
+  expect(connection.status()).toMatchObject({ enabled: true, lastSeen: expect.any(Number), access: 'purchase_intent' });
   expect(JSON.stringify(connection.status())).not.toContain(token);
 });
 
@@ -54,20 +54,24 @@ it('revokes old credentials across disable, re-enable and backend restart', () =
   expect(existsSync(connectionFile(dir))).toBe(false);
 });
 
-it('rotates the credential when spending is granted or revoked', () => {
+it('keeps purchase intent access across credential rotation without granting payment authority', () => {
   const { dir, connection } = fixture();
   connection.setEnabled(true, origin);
-  const readOnly = readConnection(dir);
-  expect(() => connection.authenticate(request(readOnly.token), 'request_purchase')).toThrow();
-  const principal = connection.rotateForSpending();
-  const spending = readConnection(dir);
-  expect(spending.token).not.toBe(readOnly.token);
-  expect(spending.capabilities).toEqual(['read', 'request_purchase']);
-  expect(principal).toEqual({ cardMemberId, connectionId: spending.connectionId, connectionGeneration: spending.generation });
-  expect(() => connection.authenticate(request(readOnly.token))).toThrow();
-  connection.authenticate(request(spending.token), 'request_purchase');
-  connection.downgradeToReadOnly();
-  expect(() => connection.authenticate(request(spending.token), 'request_purchase')).toThrow();
+  const first = readConnection(dir);
+  expect(first.capabilities).toEqual(['read', 'request_purchase']);
+  connection.authenticate(request(first.token), 'request_purchase');
+  const principal = connection.rotateCredential();
+  const second = readConnection(dir);
+  expect(second.token).not.toBe(first.token);
+  expect(second.capabilities).toEqual(['read', 'request_purchase']);
+  expect(principal).toEqual({ cardMemberId, connectionId: second.connectionId, connectionGeneration: second.generation });
+  expect(() => connection.authenticate(request(first.token))).toThrow();
+  connection.authenticate(request(second.token), 'request_purchase');
+  connection.rotateCredential();
+  const third = readConnection(dir);
+  expect(third.capabilities).toEqual(['read', 'request_purchase']);
+  expect(() => connection.authenticate(request(second.token), 'request_purchase')).toThrow();
+  connection.authenticate(request(third.token), 'request_purchase');
 });
 
 it('rejects every credential after its CardMember is revoked', () => {
@@ -79,7 +83,7 @@ it('rejects every credential after its CardMember is revoked', () => {
   connection.authenticate(request(token));
   active = false;
   expect(() => connection.authenticate(request(token))).toThrow('AGENT_UNAUTHORIZED');
-  expect(() => connection.rotateForSpending()).toThrow('CARD_MEMBER_REVOKED');
+  expect(() => connection.rotateCredential()).toThrow('CARD_MEMBER_REVOKED');
 });
 
 it('uses the official MCP handshake and exposes a request-only purchase tool with sanitized failures', async () => {

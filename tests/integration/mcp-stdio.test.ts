@@ -82,7 +82,7 @@ it('returns policy denials as structured results while keeping backend failures 
   const address = http.address();
   if (!address || typeof address === 'string') throw new Error('Missing test port');
   const origin = `http://127.0.0.1:${address.port}`;
-  connection.setEnabled(true, origin); connection.rotateForSpending();
+  connection.setEnabled(true, origin); connection.rotateCredential();
   const client = new Client({ name: 'stdio-request-test', version: '1' });
   const transport = new StdioClientTransport({ command: process.execPath,
     args: ['--import', resolve('node_modules/tsx/dist/loader.mjs'), resolve('scripts/mcp.ts')], cwd: tmpdir(),

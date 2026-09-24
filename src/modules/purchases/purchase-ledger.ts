@@ -272,16 +272,15 @@ export class PurchaseLedger {
   }
   /** Identifies the latest matching grant so policy can persist an inactive-grant denial.
    * This binding is only an input to reserve(); claim/sign still require an ACTIVE grant. */
-  spendAuthorityForDecision(principal: SpendPrincipal, operation: string, now = this.now()): SpendAuthorityBinding {
+  spendAuthorityForDecision(principal: SpendPrincipal, operation: string, now = this.now()): SpendAuthorityBinding | undefined {
     if (!this.managed) throw new Error('Spend grants require a managed ledger');
     const parsed = SpendPrincipalSchema.parse(principal);
     this.assertCardMemberActive(parsed.cardMemberId);
     return this.atomic(() => {
       this.expireGrants(now);
-      const row = this.db.prepare('SELECT * FROM spend_grants WHERE card_member_id=? ORDER BY version DESC LIMIT 1').get(parsed.cardMemberId);
-      if (!row) throw new Error('SPEND_GRANT_INACTIVE');
+      const row = this.db.prepare('SELECT * FROM spend_grants WHERE card_member_id=? AND operation=? ORDER BY version DESC LIMIT 1').get(parsed.cardMemberId, operation);
+      if (!row) return undefined;
       const grant = this.parseGrantRow(row);
-      if (grant.operation !== operation) throw new Error('SPEND_GRANT_INACTIVE');
       return { grantId: grant.id, grantVersion: grant.version, cardMemberId: parsed.cardMemberId,
         connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation };
     });
@@ -397,12 +396,13 @@ export class PurchaseLedger {
       throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID');
     }
   }
-  reserve(intent: SpendIntent, quote: PaymentRequirements, now = Date.now(), mode: StoredPurchaseExecutionMode = 'UNKNOWN'): SpendReservation {
+  reserve(intent: SpendIntent, quote: PaymentRequirements, now = Date.now(), mode: StoredPurchaseExecutionMode = 'UNKNOWN', ownerCardMemberId?: string): SpendReservation {
     if (mode !== 'UNKNOWN') PurchaseExecutionModeSchema.parse(mode);
+    if (ownerCardMemberId && intent.authority && ownerCardMemberId !== intent.authority.cardMemberId) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
     return this.atomic(() => {
       const existing = this.get(intent.idempotencyKey);
       if (existing) {
-        if (this.requireSpendGrant && existing.ownerCardMemberId !== intent.authority?.cardMemberId) {
+        if (this.requireSpendGrant && existing.ownerCardMemberId !== (ownerCardMemberId ?? intent.authority?.cardMemberId)) {
           throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
         }
         if (mode === 'UNKNOWN') {
@@ -420,7 +420,7 @@ export class PurchaseLedger {
       if (this.requireSpendGrant) decision = this.evaluateGrant(intent, decision, Number(row.total), controls, now, mode);
       this.db.prepare('INSERT INTO purchases (id,task_id,approval_id,purchase,quote,decision,status,amount,owner_card_member_id,execution_mode) VALUES (?,?,?,?,?,?,?,?,?,?)')
         .run(intent.id, intent.idempotencyKey, randomUUID(), JSON.stringify(intent), JSON.stringify(quote), JSON.stringify(decision), decision.decision, intent.amount,
-          intent.authority?.cardMemberId ?? null, mode === 'UNKNOWN' ? null : mode);
+          ownerCardMemberId ?? intent.authority?.cardMemberId ?? null, mode === 'UNKNOWN' ? null : mode);
       this.event(intent.id, `authority.${decision.decision}`);
       return this.get(intent.idempotencyKey)!;
     });

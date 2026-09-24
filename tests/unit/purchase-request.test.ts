@@ -75,7 +75,7 @@ it('runs real quote → SpendGrant → policy for APPROVED and DENIED without pa
     expect(premium).toMatchObject({ amount: '20000000', status: 'DENIED', paymentStatus: 'NOT_STARTED', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_SINGLE_LIMIT_EXCEEDED' } });
     expect(basic.quote).toMatchObject({ resourceId: SOL_MARKET_SNAPSHOT_RESOURCE_ID, network: config.network, assetId: config.mint, payTo: config.merchant, amount: '200000' });
     expect(basic.grant).toMatchObject({ id: expect.any(String), version: 1 });
-    expect(premium.grant.id).toBe(basic.grant.id);
+    expect(premium.grant?.id).toBe(basic.grant?.id);
     expect(ledger.list()).toHaveLength(2);
     expect(ledger.spendGrantSummary(now)).toMatchObject({ committed: '200000', remaining: '4800000' });
     expect(remote.verify).not.toHaveBeenCalled();

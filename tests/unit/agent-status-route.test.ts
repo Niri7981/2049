@@ -19,7 +19,7 @@ beforeEach(() => {
 function overview(purchaseMode: 'simulated' | 'live_devnet') {
   return {
     service: { purchaseMode }, wallet: { address: 'buyer' }, budget: { paid: '0' },
-    grant: { status: 'ACTIVE' }, connection: { access: 'spending_request' },
+    grant: { status: 'ACTIVE' }, connection: { enabled: true, access: 'purchase_intent' },
   };
 }
 
@@ -31,4 +31,11 @@ it.each([
   const response = await GET(new Request('http://127.0.0.1:3049/api/agent?operation=status'));
   expect(response.status).toBe(200);
   await expect(response.json()).resolves.toMatchObject({ paymentEnabled, spendingAuthorized: true });
+});
+
+it('does not equate purchase-intent capability with spending authorization after Grant revoke', async () => {
+  state.overview.mockResolvedValueOnce({ ...overview('live_devnet'), grant: { status: 'REVOKED' } });
+  const response = await GET(new Request('http://127.0.0.1:3049/api/agent?operation=status'));
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({ spendingAuthorized: false, paymentEnabled: true });
 });
