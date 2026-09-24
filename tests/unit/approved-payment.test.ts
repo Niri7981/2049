@@ -71,6 +71,7 @@ it('lost response recovers using identical saved payload without wallet access o
     await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, endpoint)).rejects.toThrow();
     await Promise.all([1,2].map(() => recoverApprovedPayment(f.ledger, 'task', f.config, endpoint)));
     expect(f.ledger.get('task')?.status).toBe('PAID');
+    expect(f.ledger.get('task')?.paymentEvidence).toMatchObject({ version: 2, payer: f.config.buyer });
     expect(fetcher.mock.calls[1][1].headers['PAYMENT-RECOVERY']).toBe('1');
     expect(fetcher.mock.calls[0][1].headers['PAYMENT-SIGNATURE']).toBe(fetcher.mock.calls[1][1].headers['PAYMENT-SIGNATURE']);
     expect(loadBuyerSigner).toHaveBeenCalledTimes(1); expect(prepareSolanaPayment).toHaveBeenCalledTimes(1);
@@ -154,7 +155,7 @@ it('delivery recovery after restart preserves the payment day and uses no new si
   f.ledger.claim(f.record.approvalId);
   f.ledger.savePayload(f.record.approvalId, { x402Version: 2, accepted: f.record.quote, payload: { transaction: 'test-wire' } });
   const yesterday = Date.now() - 86400000;
-  f.ledger.confirmPayment(f.record.approvalId, '1'.repeat(88), { messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true }, yesterday); f.ledger.close();
+  f.ledger.confirmPayment(f.record.approvalId, '1'.repeat(88), { payer: f.config.buyer, messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true }, yesterday); f.ledger.close();
   const reopened = new PurchaseLedger(path);
   vi.stubGlobal('fetch', vi.fn(async () => paidResponse(f.config)));
   vi.mocked(inspectOriginalTransaction).mockResolvedValue({ status: 'CONFIRMED', transaction: '1'.repeat(88) });
@@ -209,6 +210,7 @@ it('recovers a client crash using the persisted original payload after reopening
   try {
     await recoverApprovedPayment(reopened, 'task', f.config, endpoint);
     expect(reopened.get('task')?.status).toBe('PAID');
+    expect(reopened.get('task')?.paymentEvidence).toMatchObject({ version: 2, payer: f.config.buyer });
     expect(loadBuyerSigner).not.toHaveBeenCalled(); expect(prepareSolanaPayment).not.toHaveBeenCalled();
   } finally { reopened.close(); rmSync(dir, { recursive: true, force: true }); }
 });

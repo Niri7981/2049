@@ -57,7 +57,7 @@ function finishLivePurchase(ledger: PurchaseLedger, approvalId: string, transact
   const record = ledger.claim(approvalId);
   const payload = { x402Version: 2, accepted: record.quote, payload: { transaction: 'signed-fixture-wire' } };
   ledger.savePayload(approvalId, payload);
-  ledger.confirmPayment(approvalId, transaction, { messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true }, now);
+  ledger.confirmPayment(approvalId, transaction, { payer: config.buyer, messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true }, now);
   ledger.finish(approvalId, { transaction, data: snapshot }, now);
 }
 

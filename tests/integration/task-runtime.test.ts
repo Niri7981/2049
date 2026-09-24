@@ -16,7 +16,7 @@ function completeLivePurchase(store: PurchaseLedger, approvalId: string) {
   const transaction = '1'.repeat(88);
   const record = store.claim(approvalId);
   store.savePayload(approvalId, { x402Version: 2, accepted: record.quote, payload: { transaction: 'signed-fixture-wire' } });
-  store.confirmPayment(approvalId, transaction, { messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true });
+  store.confirmPayment(approvalId, transaction, { payer: config.buyer, messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true });
   store.finish(approvalId, { transaction, data });
   return transaction;
 }

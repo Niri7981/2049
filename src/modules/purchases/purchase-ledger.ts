@@ -3,6 +3,7 @@ import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { address } from '@solana/kit';
 import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
 import { CardMemberSchema, type CardMember } from '../authority/card-member';
 import { DEFAULT_SPENDING_POLICY, evaluateSpendAuthority, parseStoredAuthorityDecision, type AuthorityDecision, type SpendingControls } from '../authority/authority-policy';
@@ -15,13 +16,20 @@ export type DeliveryStatus = 'NOT_PAID' | 'PENDING' | 'COMPLETE';
 export const PurchaseExecutionModeSchema = z.enum(['simulated', 'live_devnet']);
 export type PurchaseExecutionMode = z.infer<typeof PurchaseExecutionModeSchema>;
 export type StoredPurchaseExecutionMode = PurchaseExecutionMode | 'UNKNOWN';
-export const PaymentEvidenceSchema = z.object({
-  version: z.literal(1), payloadHash: z.string().regex(/^[a-f0-9]{64}$/), messageHash: z.string().regex(/^[a-f0-9]{64}$/),
+const PaymentEvidenceFields = {
+  payloadHash: z.string().regex(/^[a-f0-9]{64}$/), messageHash: z.string().regex(/^[a-f0-9]{64}$/),
   quoteFingerprint: z.string().regex(/^[a-f0-9]{64}$/), transaction: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{64,100}$/),
   confirmationStatus: z.enum(['confirmed', 'finalized']), settlementConfirmed: z.literal(true), verifiedAt: z.number().int().nonnegative(),
-}).strict();
+};
+const PaymentEvidencePayerSchema = z.string().refine(value => {
+  try { address(value); return true; } catch { return false; }
+});
+export const PaymentEvidenceSchema = z.discriminatedUnion('version', [
+  z.object({ version: z.literal(1), ...PaymentEvidenceFields }).strict(),
+  z.object({ version: z.literal(2), ...PaymentEvidenceFields, payer: PaymentEvidencePayerSchema }).strict(),
+]);
 export type PaymentEvidence = z.infer<typeof PaymentEvidenceSchema>;
-export type PaymentVerification = { messageHash: string; confirmationStatus: 'confirmed' | 'finalized'; settlementConfirmed: true };
+export type PaymentVerification = { payer: string; messageHash: string; confirmationStatus: 'confirmed' | 'finalized'; settlementConfirmed: true };
 export type SpendReservation = {
   intent: SpendIntent; quote: PaymentRequirements; approvalId: string; decision: AuthorityDecision; status: string; deliveryStatus: DeliveryStatus;
   executionMode: StoredPurchaseExecutionMode; paymentPayloadPresent: boolean; paymentPayloadHash?: string; paymentEvidence?: PaymentEvidence;
@@ -464,7 +472,8 @@ export class PurchaseLedger {
     });
   }
   private recordConfirmation(approvalId: string, transaction: string, verification: PaymentVerification, now: number) {
-    if (!/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(transaction) || !/^[a-f0-9]{64}$/.test(verification.messageHash)
+    if (!/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(transaction) || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(verification.payer)
+      || !/^[a-f0-9]{64}$/.test(verification.messageHash)
       || verification.settlementConfirmed !== true || !['confirmed', 'finalized'].includes(verification.confirmationStatus)) {
       throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID');
     }
@@ -480,8 +489,8 @@ export class PurchaseLedger {
       if (record.transaction === transaction && this.hasVerifiedPaymentProof(record)) return;
       throw new Error('Payment cannot be confirmed from this state');
     }
-    const evidence = PaymentEvidenceSchema.parse({ version: 1, payloadHash: hash(payload), messageHash: verification.messageHash,
-      quoteFingerprint: record.intent.quoteFingerprint, transaction, confirmationStatus: verification.confirmationStatus,
+    const evidence = PaymentEvidenceSchema.parse({ version: 2, payloadHash: hash(payload), messageHash: verification.messageHash,
+      quoteFingerprint: record.intent.quoteFingerprint, transaction, payer: verification.payer, confirmationStatus: verification.confirmationStatus,
       settlementConfirmed: true, verifiedAt: now });
     const updated = this.db.prepare("UPDATE purchases SET status='PAID',transaction_id=?,confirmed_day=?,payment_evidence=? WHERE approval_id=? AND status IN ('PAYING','PAYMENT_UNKNOWN') RETURNING id")
       .get(transaction, this.activeDay(now), JSON.stringify(evidence), approvalId);

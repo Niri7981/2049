@@ -43,7 +43,7 @@ function seedVerifiedLivePurchase(ledger: PurchaseLedger, id: string) {
   ledger.claim(reserved.approvalId, now);
   ledger.savePayload(reserved.approvalId, { x402Version: 2, accepted: quote, payload: { transaction: 'signed-fixture-wire' } });
   ledger.confirmPayment(reserved.approvalId, transaction, {
-    messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true,
+    payer: config.buyer, messageHash: 'a'.repeat(64), confirmationStatus: 'confirmed', settlementConfirmed: true,
   }, now);
   ledger.finish(reserved.approvalId, { transaction, data: demoSnapshot }, now);
   return reserved;

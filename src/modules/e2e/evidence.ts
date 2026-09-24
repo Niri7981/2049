@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
+import { address } from '@solana/kit';
 import { getStandardTokenAccount } from '../payment/payment-preflight';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT, TOKEN_PROGRAM, type PaymentConfig } from '../payment/payment-config';
 import { PaymentEvidenceSchema, PurchaseExecutionModeSchema } from '../purchases/purchase-ledger';
@@ -21,6 +22,13 @@ const StoredQuoteSchema = z.object({
 }).passthrough();
 const StoredDecisionSchema = z.object({ decision: z.string(), reason: z.string() }).passthrough();
 const signaturePattern = /^[1-9A-HJ-NP-Za-km-z]{64,100}$/;
+const payerAddress = z.string().refine(value => {
+  try { address(value); return true; } catch { return false; }
+});
+const StoredSettlementReceiptSchema = z.object({
+  success: z.literal(true), transaction: z.string().regex(signaturePattern), payer: payerAddress,
+  network: z.string(), amount: z.string().regex(/^\d+$/).optional(),
+}).passthrough();
 
 type Fetcher = typeof fetch;
 type EvidenceOptions = {
@@ -95,21 +103,35 @@ function tokenAmount(value: unknown, owner: string, config: PaymentConfig) {
   const info = record(parsed.info, 'RPC returned invalid token account info');
   const amount = record(info.tokenAmount, 'RPC returned invalid token amount');
   if (account.owner !== TOKEN_PROGRAM || parsed.type !== 'account' || info.owner !== owner || info.mint !== config.mint || amount.decimals !== 6
-    || typeof amount.amount !== 'string' || !/^\d+$/.test(amount.amount)) throw new Error('RPC token account does not match the E2E configuration');
+    || typeof amount.amount !== 'string' || !/^\d+$/.test(amount.amount)) throw new Error('RPC token account does not match the historical purchase buyer');
   return amount.amount;
 }
 
-async function balances(config: PaymentConfig, fetcher: Fetcher) {
-  const [buyerAta, merchantAta] = await Promise.all([
-    getStandardTokenAccount(config.buyer, config.mint),
-    getStandardTokenAccount(config.merchant, config.mint),
-  ]);
-  const result = await rpc<{ value: unknown[] }>(config, 'getMultipleAccounts', [[buyerAta, merchantAta], { encoding: 'jsonParsed', commitment: 'confirmed' }], fetcher);
-  if (!Array.isArray(result.value) || result.value.length !== 2) throw new Error('RPC returned incomplete token balances');
+async function balances(config: PaymentConfig, historicalBuyer: string | null, fetcher: Fetcher) {
+  const buyerAta = historicalBuyer ? await getStandardTokenAccount(historicalBuyer, config.mint) : null;
+  const merchantAta = await getStandardTokenAccount(config.merchant, config.mint);
+  const accounts = buyerAta ? [buyerAta, merchantAta] : [merchantAta];
+  const result = await rpc<{ value: unknown[] }>(config, 'getMultipleAccounts', [accounts, { encoding: 'jsonParsed', commitment: 'confirmed' }], fetcher);
+  if (!Array.isArray(result.value) || result.value.length !== accounts.length) throw new Error('RPC returned incomplete token balances');
+  const buyer = historicalBuyer && buyerAta
+    ? { address: historicalBuyer, tokenAccount: buyerAta, amount: tokenAmount(result.value[0], historicalBuyer, config) }
+    : { address: 'UNKNOWN' as const, tokenAccount: null, amount: null };
+  const merchantIndex = historicalBuyer ? 1 : 0;
   return {
-    buyer: { address: config.buyer, tokenAccount: buyerAta, amount: tokenAmount(result.value[0], config.buyer, config) },
-    merchant: { address: config.merchant, tokenAccount: merchantAta, amount: tokenAmount(result.value[1], config.merchant, config) },
+    buyer,
+    merchant: { address: config.merchant, tokenAccount: merchantAta, amount: tokenAmount(result.value[merchantIndex], config.merchant, config) },
   };
+}
+
+function verifiedSettlementPayer(status: unknown, rawReceipt: unknown, transaction: string | null, quote: z.infer<typeof StoredQuoteSchema>) {
+  if (status !== 'CONFIRMED') return null;
+  let receipt: z.infer<typeof StoredSettlementReceiptSchema>;
+  try { receipt = StoredSettlementReceiptSchema.parse(JSON.parse(String(rawReceipt))); }
+  catch { throw new Error('E2E_EVIDENCE_INTEGRITY_ERROR: confirmed settlement receipt is invalid'); }
+  if (!transaction || receipt.transaction !== transaction || receipt.network !== quote.network || (receipt.amount !== undefined && receipt.amount !== quote.amount)) {
+    throw new Error('E2E_EVIDENCE_INTEGRITY_ERROR: confirmed settlement receipt does not match the purchase');
+  }
+  return receipt.payer;
 }
 
 async function transactionConfirmation(transaction: string | null, config: PaymentConfig, fetcher: Fetcher) {
@@ -184,21 +206,42 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
 
     const memo = quote.extra.memo;
     const quoteCount = Number(settlements.prepare('SELECT COUNT(*) AS total FROM day4_quotes WHERE id=?').get(memo)!.total);
-    const settlementRows = settlements.prepare('SELECT status,body FROM day4_settlements WHERE quote_id=?').all(memo);
+    const settlementRows = settlements.prepare('SELECT status,receipt,body FROM day4_settlements WHERE quote_id=?').all(memo);
     const totalQuoteCount = Number(settlements.prepare('SELECT COUNT(*) AS total FROM day4_quotes').get()!.total);
     const totalSettlementCount = Number(settlements.prepare('SELECT COUNT(*) AS total FROM day4_settlements').get()!.total);
     const data = row.data === null ? null : String(row.data);
     const settlementBody = settlementRows.length === 1 && typeof settlementRows[0]?.body === 'string' ? settlementRows[0].body : null;
     const transaction = row.transaction_id === null ? null : String(row.transaction_id);
-    const livePaymentProofVerified = mode === 'live_devnet' && String(row.status) === 'PAID' && payloadPresent && payloadHash !== null
+    if (settlementRows.length > 1) throw new Error('E2E_EVIDENCE_INTEGRITY_ERROR: multiple settlements exist for the purchase quote');
+    const settlementPayer = settlementRows.length === 1
+      ? verifiedSettlementPayer(settlementRows[0]?.status, settlementRows[0]?.receipt, transaction, quote)
+      : null;
+    const paymentEvidenceProofVerified = String(row.status) === 'PAID' && payloadPresent && payloadHash !== null
       && payloadHash === paymentEvidence?.payloadHash && transaction !== null && signaturePattern.test(transaction)
       && transaction === paymentEvidence?.transaction && paymentEvidence?.quoteFingerprint === purchase.quoteFingerprint
       && paymentEvidence?.settlementConfirmed === true && ['confirmed', 'finalized'].includes(paymentEvidence.confirmationStatus);
+    const paymentEvidencePayer = paymentEvidence?.version === 2 ? paymentEvidence.payer : null;
+    if (paymentEvidencePayer && !paymentEvidenceProofVerified) {
+      throw new Error('E2E_EVIDENCE_INTEGRITY_ERROR: payment evidence payer is not bound to the paid purchase');
+    }
+    if (paymentEvidencePayer && settlementPayer && paymentEvidencePayer !== settlementPayer) {
+      throw new Error('E2E_EVIDENCE_INTEGRITY_ERROR: payment evidence payer does not match settlement payer');
+    }
+    const hasDurablePayer = paymentEvidencePayer !== null || settlementPayer !== null;
+    if (mode === 'simulated' && hasDurablePayer) {
+      throw new Error('E2E_EVIDENCE_INTEGRITY_ERROR: simulated purchase has live payer evidence');
+    }
+    const historicalBuyer = String(row.status) === 'PAID' && mode !== 'simulated'
+      ? paymentEvidencePayer ?? settlementPayer
+      : null;
+    const livePaymentProofVerified = mode === 'live_devnet' && paymentEvidenceProofVerified;
+    const buyerMatchesSettlement = historicalBuyer !== null && settlementPayer !== null && historicalBuyer === settlementPayer;
+    const buyerMatchesPaymentEvidence = historicalBuyer !== null && paymentEvidencePayer !== null && historicalBuyer === paymentEvidencePayer;
     const resourceHash = digest(data);
     const settlementResourceHash = digest(settlementBody);
 
     const [tokenBalances, rpcConfirmation] = await Promise.all([
-      balances(options.config, options.fetcher ?? fetch),
+      balances(options.config, historicalBuyer, options.fetcher ?? fetch),
       transactionConfirmation(transaction, options.config, options.fetcher ?? fetch),
     ]);
 
@@ -210,6 +253,11 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
       paymentStatus: paymentStatus(status),
       deliveryStatus: status === 'PAID' ? (Boolean(row.delivered) ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
       executionMode: mode,
+      buyer: tokenBalances.buyer,
+      historicalBuyerEvidenceComplete: historicalBuyer !== null,
+      buyerMatchesSettlement,
+      buyerMatchesPaymentEvidence,
+      runtimeConfiguredBuyer: options.config.buyer,
       quotedAmount: quote.amount,
       amountPaid: livePaymentProofVerified ? quote.amount : '0',
       transactionSignature: transaction,

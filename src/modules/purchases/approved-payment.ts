@@ -60,7 +60,7 @@ async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, co
   // Persist payment only after the original payload, chain transaction, and
   // facilitator settlement all agree. Delivery can still fail independently.
   ledger.confirmPayment(record.approvalId, transaction, {
-    messageHash, confirmationStatus: proof.confirmationStatus ?? 'confirmed', settlementConfirmed: true,
+    payer: receipt.payer, messageHash, confirmationStatus: proof.confirmationStatus ?? 'confirmed', settlementConfirmed: true,
   });
   trace('CHAIN_CONFIRMED', transaction);
   if (response.status !== 200 || receipt.success !== true) throw new Error('Delivery unavailable');
