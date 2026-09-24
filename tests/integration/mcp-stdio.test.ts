@@ -51,15 +51,13 @@ it('connects the real stdio bridge from another cwd and does not reacquire revok
   }
 }, 15_000);
 
-it('sends request_purchase through the spend-authorized POST bridge without payment fields', async () => {
+it('returns policy denials as structured results while keeping backend failures as MCP errors', async () => {
   const directory = mkdtempSync(join(tmpdir(), '2049-stdio-request-'));
   const connection = new AgentConnection(directory, cardMemberId, () => true);
   let received: { url?: string; method?: string; body?: unknown } = {};
-  const resource = { asset: 'SOL', as_of: '2026-09-05T08:00:00Z', spot_price_usd: 140, change_24h_pct: 2.4,
-    volume_24h_usd: 3_000_000_000, market_cap_usd: 75_000_000_000, volatility_7d_pct: 5.8, rsi_14d: 57,
-    support_levels_usd: [132, 136], resistance_levels_usd: [145, 151], source_label: 'Demo snapshot fixture', is_demo_snapshot: true };
-  const purchase = { purchaseId: 'stdio-request-1', decision: { decision: 'APPROVED' }, paymentStatus: 'PAID',
-    deliveryStatus: 'COMPLETE', reused: false, amount: '200000', resource };
+  const purchase = { purchaseId: 'stdio-request-1', offerId: 'basic', amount: '200000', display: '0.20 test USDC',
+    executionMode: 'live_devnet', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_REVOKED' },
+    paymentStatus: 'NOT_STARTED', deliveryStatus: 'NOT_DELIVERED', reused: false };
   const http = createServer((incoming, outgoing) => {
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Missing test port');
@@ -70,6 +68,11 @@ it('sends request_purchase through the spend-authorized POST bridge without paym
       incoming.on('data', chunk => chunks.push(Buffer.from(chunk)));
       incoming.on('end', () => {
         received = { url: url.pathname, method: incoming.method, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) };
+        if ((received.body as { requestId?: string }).requestId === 'infrastructure-failure') {
+          outgoing.writeHead(503, { 'content-type': 'application/json' });
+          outgoing.end(JSON.stringify({ code: 'PURCHASE_REQUEST_FAILED' }));
+          return;
+        }
         outgoing.setHeader('content-type', 'application/json');
         outgoing.end(JSON.stringify(purchase));
       });
@@ -90,6 +93,10 @@ it('sends request_purchase through the spend-authorized POST bridge without paym
     expect(result.isError).not.toBe(true);
     expect(received).toEqual({ url: '/api/agent/purchases', method: 'POST', body: { requestId: 'stdio-request-1', offerId: 'basic', reason: 'Need SOL data' } });
     expect(result).toMatchObject({ content: [{ type: 'text', text: JSON.stringify(purchase) }] });
+    const failure = await client.callTool({ name: 'request_purchase', arguments: {
+      requestId: 'infrastructure-failure', offerId: 'basic', reason: 'Exercise backend failure mapping',
+    } });
+    expect(failure).toMatchObject({ isError: true, content: [{ type: 'text', text: expect.stringContaining('PURCHASE_REQUEST_FAILED') }] });
   } finally {
     await client.close(); await transport.close();
     await new Promise<void>(done => http.close(() => done()));

@@ -2,7 +2,7 @@ import type { PaymentRequirements } from '@x402/core/types';
 import { z } from 'zod';
 import { address } from '@solana/kit';
 import { executeApprovedPayment, paymentBinding, paymentEndpoint, recoverApprovedPayment } from './approved-payment';
-import { SpendPrincipalSchema, type SpendAuthorityBinding, type SpendPrincipal } from '../authority/spend-grant';
+import { SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT, type PaymentConfig } from '../payment/payment-config';
 import { readPaymentRequiredHeader } from '../payment/x402-client';
 import { MarketOfferIdSchema, marketOffer, marketOfferResource } from '../resources/market-offers';
@@ -29,7 +29,7 @@ export type PurchaseRequestResult = {
   grant: { id: string; version: number };
   paymentStatus: 'NOT_STARTED' | 'PAYING' | 'PAYMENT_UNKNOWN' | 'PAID' | 'FAILED';
   executionMode: PurchaseExecutionMode;
-  deliveryStatus: SpendReservation['deliveryStatus'];
+  deliveryStatus: 'NOT_DELIVERED' | 'PENDING' | 'COMPLETE';
   reused: boolean;
   resource?: MarketSnapshotOutput;
 };
@@ -46,7 +46,7 @@ function result(record: SpendReservation, offerId: PurchaseRequestInput['offerId
     quote: { resourceId: record.intent.resourceId, providerId: record.intent.providerId, network: record.intent.network, assetId: record.intent.assetId,
       assetDecimals: record.intent.assetDecimals, payTo: record.intent.payTo, amount: String(record.intent.amount), expiresAt: record.intent.expiresAt, fingerprint: record.intent.quoteFingerprint },
     grant: { id: authority.grantId, version: authority.grantVersion }, paymentStatus: record.status === 'PAID' ? 'PAID' : record.status === 'PAYING' ? 'PAYING' : record.status === 'PAYMENT_UNKNOWN' ? 'PAYMENT_UNKNOWN' : record.status === 'FAILED' ? 'FAILED' : 'NOT_STARTED',
-    executionMode, deliveryStatus: record.deliveryStatus, reused,
+    executionMode, deliveryStatus: record.deliveryStatus === 'NOT_PAID' ? 'NOT_DELIVERED' : record.deliveryStatus, reused,
     ...(resource ? { resource } : {}) };
 }
 
@@ -111,9 +111,7 @@ export async function requestMarketPurchase(raw: unknown, options: {
   } finally { await response.body?.cancel(); }
 
   const now = clock();
-  let authority: SpendAuthorityBinding;
-  try { authority = options.ledger.spendAuthority(principal, 'market.snapshot.read', now); }
-  catch { throw new Error('SPEND_GRANT_INACTIVE'); }
+  const authority = options.ledger.spendAuthorityForDecision(principal, 'market.snapshot.read', now);
   const resource = marketOfferResource({ endpoint: 'https://purchase.local.invalid/api/paid/market-snapshot', asset_id: config.mint,
     network: config.network, allowed_pay_to: config.merchant }, input.offerId);
   const intent = createMarketSnapshotSpendIntent({ idempotencyKey: input.requestId, request: { asset: 'SOL' }, requestHash, resource, quote,

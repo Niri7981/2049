@@ -18,6 +18,7 @@ const config: PaymentConfig = {
   facilitatorUrl: 'https://facilitator.invalid',
 };
 const grantId = '11111111-1111-4111-8111-111111111111';
+const revokedGrantId = '44444444-4444-4444-8444-444444444444';
 const signature = '1'.repeat(64);
 const basicQuote = { amount: '200000', network: config.network, asset: config.mint, payTo: config.merchant, extra: { memo: 'day4:AAAAAAAAAAAAAAAAAAAAAA' } };
 const basicPayload = { x402Version: 2, accepted: basicQuote, payload: { transaction: 'signed-fixture-wire' } };
@@ -41,6 +42,7 @@ async function fixture(options: { mode?: string | null; includePaymentEvidence?:
     INSERT INTO app_budget_clock VALUES (1,'2026-09-22','Asia/Shanghai');
     INSERT INTO app_settings VALUES (1,5000000);
     INSERT INTO spend_grants VALUES ('${grantId}','ACTIVE',5000000);
+    INSERT INTO spend_grants VALUES ('${revokedGrantId}','REVOKED',5000000);
   `);
   const intent = (requestId: string, offerId: string) => JSON.stringify({
     id: requestId === 'basic-request' ? '22222222-2222-4222-8222-222222222222' : '33333333-3333-4333-8333-333333333333',
@@ -59,12 +61,20 @@ async function fixture(options: { mode?: string | null; includePaymentEvidence?:
     JSON.stringify({ decision: 'DENIED', reason: 'SPEND_GRANT_SINGLE_LIMIT_EXCEEDED' }),
     'DENIED', 20000000, null, null, null, null, 'live_devnet', null,
   );
+  ledger.prepare('INSERT INTO purchases VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
+    'revoked-row', 'revoked-request', 'revoked-hidden-approval',
+    JSON.stringify({ id: '44444444-4444-4444-8444-444444444445', authority: { grantId: revokedGrantId }, offerId: 'basic' }),
+    JSON.stringify({ amount: '200000', network: config.network, asset: config.mint, payTo: config.merchant, extra: { memo: 'day4:CCCCCCCCCCCCCCCCCCCCCC' } }),
+    JSON.stringify({ decision: 'DENIED', reason: 'SPEND_GRANT_REVOKED' }),
+    'DENIED', 200000, null, null, null, null, 'live_devnet', null,
+  );
   ledger.exec(`
     INSERT INTO purchase_events VALUES (1,'basic-row','authority.APPROVED',1);
     INSERT INTO purchase_events VALUES (2,'basic-row','payment.PAYING',2);
     INSERT INTO purchase_events VALUES (3,'basic-row','payment.PAID',3);
     INSERT INTO purchase_events VALUES (4,'basic-row','delivery.COMPLETE',4);
     INSERT INTO purchase_events VALUES (5,'premium-row','authority.DENIED',5);
+    INSERT INTO purchase_events VALUES (6,'revoked-row','authority.DENIED',6);
   `);
   ledger.close();
 
@@ -75,6 +85,7 @@ async function fixture(options: { mode?: string | null; includePaymentEvidence?:
   `);
   settlement.prepare('INSERT INTO day4_quotes VALUES (?,?,?,?)').run('day4:AAAAAAAAAAAAAAAAAAAAAA', '/basic', '{}', 1);
   settlement.prepare('INSERT INTO day4_quotes VALUES (?,?,?,?)').run('day4:BBBBBBBBBBBBBBBBBBBBBB', '/premium', '{}', 1);
+  settlement.prepare('INSERT INTO day4_quotes VALUES (?,?,?,?)').run('day4:CCCCCCCCCCCCCCCCCCCCCC', '/basic-revoked', '{}', 1);
   const settlementReceipt = options.includeSettlementReceipt === false ? null : JSON.stringify({ success: true, transaction: signature,
     payer: options.settlementPayer ?? historicalPayer, network: config.network, amount: basicQuote.amount });
   settlement.prepare('INSERT INTO day4_settlements VALUES (?,?,?,?,?,?)').run('message-hash', 'day4:AAAAAAAAAAAAAAAAAAAAAA', 'payload-hash',
@@ -122,7 +133,7 @@ it('reports successful purchase evidence without exposing signer or authorizatio
     executionMode: 'live_devnet', quotedAmount: '200000', amountPaid: '200000', transactionSignature: signature, paymentPayloadPresent: true,
     budget: { paid: '200000', reserved: '0', remaining: '4800000' },
     grant: { committed: '200000', remaining: '4800000' },
-    settlement: { quoteCount: 1, count: 1, states: ['CONFIRMED'], totalQuoteCount: 2, totalSettlementCount: 1 },
+    settlement: { quoteCount: 1, count: 1, states: ['CONFIRMED'], totalQuoteCount: 3, totalSettlementCount: 1 },
     tokenBalances: { buyer: { amount: '39600000' }, merchant: { amount: '540000' } },
     buyer: { address: historicalPayer, tokenAccount: value.historicalAta, amount: '39600000' },
     runtimeConfiguredBuyer: config.buyer, historicalBuyerEvidenceComplete: true,
@@ -146,10 +157,29 @@ it('reports a denied premium request with no payment or settlement', async () =>
     dataDirectory: value.directory, settlementDatabase: value.settlementPath, config, fetcher: value.fetcher,
   });
   expect(evidence).toMatchObject({
-    decision: { status: 'DENIED', reason: 'SPEND_GRANT_SINGLE_LIMIT_EXCEEDED' }, paymentStatus: 'NOT_STARTED', deliveryStatus: 'NOT_PAID',
+    decision: { status: 'DENIED', reason: 'SPEND_GRANT_SINGLE_LIMIT_EXCEEDED' }, paymentStatus: 'NOT_STARTED', deliveryStatus: 'NOT_DELIVERED',
     executionMode: 'live_devnet', quotedAmount: '20000000', amountPaid: '0', transactionSignature: null, paymentPayloadPresent: false,
     budget: { paid: '200000', reserved: '0', remaining: '4800000' }, grant: { committed: '200000', remaining: '4800000' },
-    settlement: { quoteCount: 1, count: 0, states: [], totalQuoteCount: 2, totalSettlementCount: 1 }, rpcTransaction: { status: 'NOT_APPLICABLE' },
+    settlement: { quoteCount: 1, count: 0, states: [], totalQuoteCount: 3, totalSettlementCount: 1 }, rpcTransaction: { status: 'NOT_APPLICABLE' },
+  });
+  expect(evidence.events.map(event => event.type)).toEqual(['authority.DENIED']);
+  expect(evidence.resourceHash).toBeNull();
+});
+
+it('reports a revoked-Grant denial as a complete no-payment proof', async () => {
+  const value = await fixture();
+  const evidence = await collectE2eEvidence('revoked-request', {
+    dataDirectory: value.directory, settlementDatabase: value.settlementPath, config, fetcher: value.fetcher,
+  });
+  expect(evidence).toMatchObject({
+    requestId: 'revoked-request', purchaseId: 'revoked-request', executionMode: 'live_devnet',
+    decision: { decision: 'DENIED', status: 'DENIED', reason: 'SPEND_GRANT_REVOKED' },
+    paymentStatus: 'NOT_STARTED', deliveryStatus: 'NOT_DELIVERED', amountPaid: '0',
+    paymentPayloadPresent: false, transactionSignature: null, resourcePresent: false,
+    paymentPayingEventPresent: false, paymentPaidEventPresent: false,
+    budget: { paid: '200000', reserved: '0', remaining: '4800000' },
+    grant: { status: 'REVOKED', committed: '0', remaining: '5000000' },
+    settlement: { quoteCount: 1, count: 0, states: [], totalQuoteCount: 3, totalSettlementCount: 1 },
   });
   expect(evidence.events.map(event => event.type)).toEqual(['authority.DENIED']);
   expect(evidence.resourceHash).toBeNull();

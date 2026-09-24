@@ -270,6 +270,22 @@ export class PurchaseLedger {
     return { grantId: grant.id, grantVersion: grant.version, cardMemberId: parsed.cardMemberId,
       connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation };
   }
+  /** Identifies the latest matching grant so policy can persist an inactive-grant denial.
+   * This binding is only an input to reserve(); claim/sign still require an ACTIVE grant. */
+  spendAuthorityForDecision(principal: SpendPrincipal, operation: string, now = this.now()): SpendAuthorityBinding {
+    if (!this.managed) throw new Error('Spend grants require a managed ledger');
+    const parsed = SpendPrincipalSchema.parse(principal);
+    this.assertCardMemberActive(parsed.cardMemberId);
+    return this.atomic(() => {
+      this.expireGrants(now);
+      const row = this.db.prepare('SELECT * FROM spend_grants WHERE card_member_id=? ORDER BY version DESC LIMIT 1').get(parsed.cardMemberId);
+      if (!row) throw new Error('SPEND_GRANT_INACTIVE');
+      const grant = this.parseGrantRow(row);
+      if (grant.operation !== operation) throw new Error('SPEND_GRANT_INACTIVE');
+      return { grantId: grant.id, grantVersion: grant.version, cardMemberId: parsed.cardMemberId,
+        connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation };
+    });
+  }
   spendGrantSummary(now = this.now(), mode?: PurchaseExecutionMode): SpendGrantSummary | null {
     if (!this.managed) return null;
     return this.atomic(() => this.latestGrantSummary(now, mode));
@@ -566,8 +582,10 @@ export class PurchaseLedger {
     if (!this.isCardMemberActive(binding.cardMemberId)) return this.denied('CARD_MEMBER_REVOKED', committed, controls);
     this.expireGrants(now);
     const grant = this.grantById(binding.grantId);
-    if (!grant || grant.status !== 'ACTIVE') return this.denied('SPEND_GRANT_INACTIVE', committed, controls);
-    if (grant.expiresAt <= now) return this.denied('SPEND_GRANT_EXPIRED', committed, controls);
+    if (!grant) return this.denied('SPEND_GRANT_INACTIVE', committed, controls);
+    if (grant.status === 'REVOKED') return this.denied('SPEND_GRANT_REVOKED', committed, controls);
+    if (grant.status === 'EXPIRED' || grant.expiresAt <= now) return this.denied('SPEND_GRANT_EXPIRED', committed, controls);
+    if (grant.status !== 'ACTIVE') return this.denied('SPEND_GRANT_INACTIVE', committed, controls);
     if (grant.version !== binding.grantVersion || grant.cardMemberId !== binding.cardMemberId) return this.denied('SPEND_GRANT_PRINCIPAL_MISMATCH', committed, controls);
     if (grant.operation !== binding.operation || grant.operation !== MARKET_SNAPSHOT_OPERATION || grant.resourceId !== intent.resourceId || grant.providerId !== intent.providerId || grant.network !== intent.network || grant.assetId !== intent.assetId || grant.assetDecimals !== intent.assetDecimals || grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme) {
       return this.denied('SPEND_GRANT_SCOPE_MISMATCH', committed, controls);

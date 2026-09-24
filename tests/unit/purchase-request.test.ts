@@ -170,7 +170,7 @@ it('returns premium DENIED from durable policy facts without invoking payment or
   try {
     const denied = await requestMarketPurchase({ requestId: 'denied-premium', offerId: 'premium', reason: 'Need premium data' },
       { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay, recover });
-    expect(denied).toMatchObject({ amount: '20000000', status: 'DENIED', paymentStatus: 'NOT_STARTED', deliveryStatus: 'NOT_PAID' });
+    expect(denied).toMatchObject({ amount: '20000000', status: 'DENIED', paymentStatus: 'NOT_STARTED', deliveryStatus: 'NOT_DELIVERED' });
     expect(denied).not.toHaveProperty('resource');
     expect(pay).not.toHaveBeenCalled();
     expect(recover).not.toHaveBeenCalled();
@@ -189,7 +189,7 @@ it('does not return a resource while payment is unknown', async () => {
   try {
     const result = await requestMarketPurchase({ requestId: 'unknown-basic', offerId: 'basic', reason: 'Need the SOL snapshot' },
       { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
-    expect(result).toMatchObject({ paymentStatus: 'PAYMENT_UNKNOWN', deliveryStatus: 'NOT_PAID', reused: false });
+    expect(result).toMatchObject({ paymentStatus: 'PAYMENT_UNKNOWN', deliveryStatus: 'NOT_DELIVERED', reused: false });
     expect(result).not.toHaveProperty('resource');
   } finally { ledger.close(); store.close(); }
 });
@@ -319,19 +319,54 @@ it('atomically applies the grant total to concurrent quoted requests', async () 
   } finally { ledger.close(); store.close(); }
 });
 
-it('does not create a request when the grant is revoked while the quote is in flight', async () => {
-  const { ledger, remote, store } = setup();
+it('persists a structured DENIED request when the grant is already revoked', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bound-revoked-denial-'));
+  const ledgerPath = join(directory, 'ledger.sqlite');
+  const { ledger, remote, store } = setup('5000000', ledgerPath);
+  const pay = vi.fn();
+  const recover = vi.fn();
   const paidApi = createPaidMarketApi(config, remote, store);
   const fetcher = vi.fn<typeof fetch>(async input => {
     const url = new URL(String(input));
-    const response = await paidApi({ asset: 'SOL', offer: url.searchParams.get('offer') });
-    ledger.revokeActiveSpendGrant(now + 1);
-    return response;
+    return paidApi({ asset: 'SOL', offer: url.searchParams.get('offer') });
   });
+  let reopened: PurchaseLedger | undefined;
   try {
-    await expect(requestMarketPurchase({ requestId: 'revoked-during-quote', offerId: 'basic', reason: 'Need data' },
-      { config, ledger, execute: false, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now + 2 })).rejects.toThrow('SPEND_GRANT_INACTIVE');
-    expect(ledger.list()).toHaveLength(0);
+    ledger.revokeActiveSpendGrant(now + 1);
+    const beforeBudget = ledger.managedSummary(now + 2, 'live_devnet');
+    const beforeGrant = ledger.spendGrantSummary(now + 2, 'live_devnet');
+    const denied = await requestMarketPurchase({ requestId: 'revoked-during-quote', offerId: 'basic', reason: 'Need data' },
+      { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now + 2, pay, recover });
+    expect(denied).toMatchObject({
+      purchaseId: 'revoked-during-quote', offerId: 'basic', amount: '200000', executionMode: 'live_devnet',
+      decision: { decision: 'DENIED', reason: 'SPEND_GRANT_REVOKED' }, paymentStatus: 'NOT_STARTED',
+      deliveryStatus: 'NOT_DELIVERED', reused: false,
+    });
+    expect(denied).not.toHaveProperty('resource');
+    const record = ledger.get('revoked-during-quote');
+    expect(record).toMatchObject({ status: 'DENIED', executionMode: 'live_devnet', paymentPayloadPresent: false });
+    expect(record).not.toHaveProperty('transaction');
+    expect(record).not.toHaveProperty('data');
+    expect(ledger.events('revoked-during-quote').map(event => event.type)).toEqual(['authority.DENIED']);
+    expect(ledger.managedSummary(now + 2, 'live_devnet')).toEqual(beforeBudget);
+    expect(ledger.spendGrantSummary(now + 2, 'live_devnet')).toEqual(beforeGrant);
+    expect(beforeGrant).toMatchObject({ status: 'REVOKED', committed: '0' });
+    expect(store.getQuote(String(record?.quote.extra?.memo))).toBeDefined();
+    expect(store.getByQuote(String(record?.quote.extra?.memo))).toBeUndefined();
+    expect(pay).not.toHaveBeenCalled();
+    expect(recover).not.toHaveBeenCalled();
     expect(remote.verify).not.toHaveBeenCalled(); expect(remote.settle).not.toHaveBeenCalled();
-  } finally { ledger.close(); store.close(); }
+    ledger.close();
+    reopened = new PurchaseLedger(ledgerPath, { managed: true, requireSpendGrant: true, now: () => now + 2,
+      timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
+    expect(reopened.get('revoked-during-quote')).toMatchObject({
+      status: 'DENIED', executionMode: 'live_devnet', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_REVOKED' },
+      paymentPayloadPresent: false,
+    });
+  } finally {
+    reopened?.close();
+    if (!reopened) ledger.close();
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

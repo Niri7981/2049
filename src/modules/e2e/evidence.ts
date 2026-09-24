@@ -239,6 +239,7 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
     const buyerMatchesPaymentEvidence = historicalBuyer !== null && paymentEvidencePayer !== null && historicalBuyer === paymentEvidencePayer;
     const resourceHash = digest(data);
     const settlementResourceHash = digest(settlementBody);
+    const eventTypes = new Set(events.map(event => event.type));
 
     const [tokenBalances, rpcConfirmation] = await Promise.all([
       balances(options.config, historicalBuyer, options.fetcher ?? fetch),
@@ -249,9 +250,9 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
     return {
       requestId,
       purchaseId: String(row.task_id),
-      decision: { status: decision.decision, reason: decision.reason },
+      decision: { decision: decision.decision, status: decision.decision, reason: decision.reason },
       paymentStatus: paymentStatus(status),
-      deliveryStatus: status === 'PAID' ? (Boolean(row.delivered) ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
+      deliveryStatus: status === 'PAID' ? (Boolean(row.delivered) ? 'COMPLETE' : 'PENDING') : 'NOT_DELIVERED',
       executionMode: mode,
       buyer: tokenBalances.buyer,
       historicalBuyerEvidenceComplete: historicalBuyer !== null,
@@ -262,6 +263,8 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
       amountPaid: livePaymentProofVerified ? quote.amount : '0',
       transactionSignature: transaction,
       paymentPayloadPresent: payloadPresent,
+      paymentPayingEventPresent: eventTypes.has('payment.PAYING'),
+      paymentPaidEventPresent: eventTypes.has('payment.PAID'),
       livePaymentProof: {
         verified: livePaymentProofVerified,
         transactionSignaturePresent: transaction !== null && signaturePattern.test(transaction),
@@ -274,6 +277,7 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
         paid: String(paid), reserved: String(reserved), remaining: dailyLimit === null ? null : String(Math.max(0, dailyLimit - paid - reserved)),
       },
       grant,
+      resourcePresent: Boolean(row.delivered),
       resourceHash,
       resourceMatchesSettlement: resourceHash !== null && resourceHash === settlementResourceHash,
       settlement: {
