@@ -1,5 +1,5 @@
 import { appRuntime } from '@/modules/app/app-runtime';
-import { localRequestOrigin, smallJson } from '@/modules/demo/local-request';
+import { localRequestOrigin, smallJson } from '@/modules/http/local-request';
 import { PurchaseRequestInputSchema } from '@/modules/purchases/request-market-purchase';
 
 export const runtime = 'nodejs';

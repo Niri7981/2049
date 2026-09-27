@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { appRuntime } from '@/modules/app/app-runtime';
 import { managementError, requireManagementRequest } from '@/modules/app/management-auth';
-import { smallJson } from '@/modules/demo/local-request';
+import { smallJson } from '@/modules/http/local-request';
 
 export const runtime = 'nodejs';
 export async function PUT(request: Request) {

@@ -1,113 +1,70 @@
-# 架构与运行文档索引
+# 文档索引
 
-## macOS App 第一版计划（2026-09-14）
+当前产品范围、实施阶段和验收证据以根目录的 [`plan.md`](../plan.md) 为准；开发与资金安全约束以 [`AGENTS.md`](../AGENTS.md) 为准。本文只负责导航。历史文档中的旧范围和旧状态不覆盖这两份文件。
 
-- [当前实施计划与验收标准](../plan.md)
-- [编码规范与资金边界](../AGENTS.md)
-- [macOS App 壳与本地服务生命周期](architecture/macos-app-shell.md)
+## 当前产品与架构
 
-新 App 采用 macOS 管理窗口、本地后端和后续 Codex MCP 接口。M0–M2 和 M3 无付款路径已经实现；Codex 接入、真实 Devnet 最终付款验收和主网尚未完成。下面保留的是已有测试网 Demo 的设计与运行记录；其中“不使用 MCP”等旧范围限定不覆盖新的实施计划。
+- [macOS App 壳与本地服务生命周期](architecture/macos-app-shell.md)：App 壳、进程与本地服务边界。
+- [Authority Core（阶段一）](architecture/authority-core.md)：当前通用消费意图、授权决策与预算预占模型。
+- [MCP 接入](architecture/mcp-integration.md)：当前 MCP 工具、权限边界、验证状态与限制。
+- [按职责命名与历史数据兼容](architecture/naming.md)：代码重命名与旧数据标识兼容。
+- [原生 macOS UI 设计参考](design/README.md)：Agent Card 视觉参考；产品约束以 [`2049-ui` Skill](../.codex/skills/2049-ui/SKILL.md) 为准。
 
-## 当前运行入口
+当前进度和验收结果请直接查阅 [`plan.md`](../plan.md)。上面的架构文档补充模块细节，不单独代表最新验收状态。
 
-- [网页演示](demo/demo-runbook.md)
-- [完整任务验收](demo/task-acceptance-runbook.md)
-- [自动购买](demo/purchase-runbook.md)
-- [独立支付](demo/payment-runbook.md)
-- [命名对照与数据兼容](architecture/naming.md)
+## V0 测试网 Demo：历史架构设计
 
-以下设计记录保留原开发阶段编号，便于追溯当时的范围与决定。
+以下文档保留早期固定行情 Demo 的设计背景和安全约束，不作为新 App 的现行产品规格。遇到冲突时，以 `plan.md`、`AGENTS.md` 和当前实现为准。
 
-## 阅读顺序
+### 产品范围与总体结构
 
-| Step | Document | Decision |
-|---:|---|---|
-| 1 | [Product Definition](architecture/product-definition.md) | 冻结一句话目标和核心证明 |
-| 2 | [Demo Input](demo/demo-input.md) | 冻结唯一用户输入及其解释 |
-| 3 | [Demo Output](demo/demo-output.md) | 冻结最终必须展示的结果 |
-| 4 | [V0 Scope](architecture/v0-scope.md) | 冻结必做、非目标和 Scope Cut |
-| 5 | [System Actors](architecture/system-actors.md) | 冻结角色、职责和信任区域 |
-| 6 | [Happy Path](architecture/happy-path.md) | 冻结完整成功执行序列 |
-| 7 | [State Machine](architecture/state-machine.md) | 冻结任务、购买、支付和 Tool 状态 |
-| 8 | [Resource Schema](architecture/resource-schema.md) | 冻结 Tool Metadata 和 Discovery 合同 |
-| 9 | [PurchaseRequest Schema](architecture/purchase-request-schema.md) | 冻结购买请求和不可变字段 |
-| 10 | [Spending Policy](architecture/spending-policy.md) | 冻结 Approved、Rejected 和 NeedsConfirmation |
-| 11 | [Wallet Architecture](architecture/wallet-architecture.md) | 冻结钱包、Private Key 和签名边界 |
-| 12 | [x402 Flow](architecture/x402-flow.md) | 冻结 402、签名、结算和 200 流程 |
-| 13 | [Paid Market Data](architecture/paid-market-data.md) | 冻结 Paid API 数据合同 |
-| 14 | [Execution Trace](architecture/execution-trace.md) | 冻结可观察事件和敏感信息边界 |
-| 15 | [Risks and Fallbacks](architecture/risks-and-fallbacks.md) | 冻结风险 Gate、Fallback 和 Preflight |
-| 16 | [资源发现开发计划](demo/discovery-plan.md) | 冻结下一天的开发入口和验收标准 |
-| — | [Architecture Overview](architecture/overview.md) | 汇总整体架构、控制流和数据流 |
+- [Product Definition](architecture/product-definition.md)
+- [V0 Scope](architecture/v0-scope.md)
+- [Architecture Overview](architecture/overview.md)
 
-## Day 1 已冻结的关键决定
+### 角色、流程与状态
 
-- TypeScript 全栈。
-- Next.js Node runtime。
-- 单用户、单 Agent、单 Resource、单 Provider。
-- Static Local Resource Registry。
-- Premium SOL Market Snapshot API。
-- 0.01 Solana Devnet 测试 USDC。
-- x402 V2 `exact` scheme。
-- Dedicated backend Demo Buyer Wallet。
-- Agent 只能发 Purchase Intent，不能直接付款。
-- Policy 是唯一消费授权方。
-- Wallet Signer 是唯一 Private Key 使用方。
-- 市场数据使用演示前刷新的缓存快照。
-- SQLite 保存预算、幂等和 Execution Events。
-- Web Activity Feed 与 Console 共用同一事件源。
-- 不使用 MCP、Marketplace、Mainnet、多链或多 Provider。
+- [System Actors](architecture/system-actors.md)
+- [Happy Path](architecture/happy-path.md)
+- [State Machine](architecture/state-machine.md)
+- [Execution Trace](architecture/execution-trace.md)
 
-## 实现前仍需填入的运行时值
+### Resource 与购买合同
 
-以下不是架构开放问题，而是实施时生成或配置的具体值：
+- [Resource Schema](architecture/resource-schema.md)
+- [PurchaseRequest Schema](architecture/purchase-request-schema.md)：旧 V0 请求记录；当前通用消费意图见 Authority Core。
+- [Paid Market Data](architecture/paid-market-data.md)：固定行情 Demo 的 API 数据合同。
 
-- Demo Buyer Wallet public address。
-- Demo Merchant Wallet public address。
-- Buyer runtime secret。
-- Paid API 实际本地 endpoint。
-- Primary 和备用 Solana Devnet RPC URL。
-- 实际使用的 x402 Facilitator URL。
-- 演示当天的 Market Snapshot 数值与 `as_of`。
+### 授权、钱包与支付
 
-Private Key 不会写入任何设计文档。
+- [Spending Policy](architecture/spending-policy.md)：旧 V0 策略设计；当前授权决策名称和边界以 Authority Core 与实施计划为准。
+- [Wallet Architecture](architecture/wallet-architecture.md)
+- [x402 Payment Flow](architecture/x402-flow.md)
+- [Risks and Fallbacks](architecture/risks-and-fallbacks.md)
 
-## Day 1 Definition of Done
+## 验证与演示资料
 
-- [x] 一句话产品目标已冻结。
-- [x] 标准 Demo 输入已冻结。
-- [x] 最终 Demo 输出已冻结。
-- [x] V0 Scope 和 non-goals 已冻结。
-- [x] 系统参与者和权限边界已冻结。
-- [x] Happy Path 已编号。
-- [x] 状态机和终止状态已冻结。
-- [x] Resource Schema 已冻结。
-- [x] PurchaseRequest Schema 已冻结。
-- [x] Spending Policy 已冻结。
-- [x] Wallet 与 Private Key 边界已冻结。
-- [x] x402 两次 HTTP 请求流程已冻结。
-- [x] Paid API 数据合同已冻结。
-- [x] Execution Trace 已冻结。
-- [x] 风险、Fallback 和每日 Gate 已冻结。
-- [x] Day 2 小任务和验收标准已冻结。
-- [x] 没有编写产品源码或安装依赖。
+### 隔离验收
 
-## Day 1 Demo Checkpoint
+- [Bound Devnet E2E validation](demo/bound-e2e-validation.md)：隔离数据目录下的验收准备与只读证据检查。
 
-现在应该可以只依靠这些文档，在五分钟内完整讲清：
+### 历史演示与运行手册
 
-```text
-用户提交任务
-→ Agent 判断需要市场数据
-→ Registry 找到付费 Tool
-→ API 返回 402
-→ Agent 请求购买
-→ Policy 自动批准
-→ Wallet 在后端签名
-→ x402 通过 Facilitator 在 Solana Devnet 结算
-→ Paid API 返回 JSON
-→ 数据加入 Context
-→ Agent 完成原始分析
-```
+这些手册记录旧网页 Demo、CLI 购买和独立支付流程，保留供测试设施追溯使用，不代表新 App 的默认运行方式。部分步骤会调用真实模型或执行 Devnet 付款；执行前须按实施计划核对当前环境和授权范围。
 
-下一阶段从 Day 2 Plan 开始，不再重新设计产品范围。
+- [网页 Demo 运行与验收](demo/demo-runbook.md)
+- [完整任务运行与验收](demo/task-acceptance-runbook.md)
+- [受规则约束的自动购买](demo/purchase-runbook.md)
+- [独立支付运行与验收](demo/payment-runbook.md)
+- [标准 Demo 输入](demo/demo-input.md) · [标准 Demo 输出](demo/demo-output.md)
+- [资源发现开发计划（历史设计）](demo/discovery-plan.md)
+
+## 设计素材
+
+- [2049 UI 设计参考](design/README.md)：说明卡片图片与 Phantom 录屏的使用边界，并链接素材。
+
+## 历史审计
+
+- [2026-09-21 仓库审计与黑客松交付分析](hackathon-audit-2026-09-21.md)：以文档中注明的提交和日期为基线的审计快照；后续状态请查阅 `plan.md`。
+
+本机可能另有被 Git 忽略的 `docs/daily-summary.md` 和 `.DS_Store`。它们不是共享项目文档或当前状态来源。

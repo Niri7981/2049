@@ -1,4 +1,4 @@
-import { requireLocalRequest, smallJson } from "@/modules/demo/local-request";
+import { requireLocalRequest, smallJson } from "@/modules/http/local-request";
 import { runDemoPreflight } from "@/modules/demo/preflight";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -7,7 +7,7 @@ import {
   localRequestOrigin,
   requireLocalRequest,
   smallJson,
-} from "../../src/modules/demo/local-request";
+} from "../../src/modules/http/local-request";
 
 afterEach(() => vi.unstubAllEnvs());
 function request(

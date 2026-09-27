@@ -59,6 +59,22 @@ describe('authenticated local management boundary', () => {
 });
 
 describe('managed budget and Devnet test records', () => {
+  it('returns local Authority data while balance RPC stalls or fails', async () => {
+    const app = runtime();
+    let release!: () => void;
+    const pending = new Promise<Response>(resolve => { release = () => resolve(Response.error()); });
+    const fetcher = vi.fn(() => pending);
+    try {
+      const balance = app.balance(address, fetcher);
+      const overview = await app.overview();
+      expect(overview.wallet).toEqual({ address, reused: true });
+      expect(overview.budget.dailyLimit).toBeNull();
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      release();
+      expect((await balance).available).toBe(false);
+      expect((await app.overview()).budget.dailyLimit).toBeNull();
+    } finally { app.close(); }
+  });
   it('keeps canonical App test purchases behind SpendGrant when legacy tasks are disabled', async () => {
     vi.stubEnv('APP2049_ENABLE_LEGACY_DEMO_TASKS', '');
     vi.stubEnv('APP2049_ENABLE_DEVNET_PURCHASES', '');
@@ -72,7 +88,7 @@ describe('managed budget and Devnet test records', () => {
       const purchase = await app.createTestPurchase('app-canonical-with-grant', origin);
       expect(purchase).toMatchObject({ status: 'PAID', simulated: true });
       expect(app.ledger.get('app-canonical-with-grant')?.intent.authority?.grantId).toBe(grant.id);
-    } finally { app.ledger.close(); }
+    } finally { app.close(); }
   });
 
   it('keeps a policy-only purchase request away from wallet initialization', async () => {
@@ -84,7 +100,7 @@ describe('managed budget and Devnet test records', () => {
         { cardMemberId: app.ledger.defaultCardMember().id, connectionId: randomUUID(), connectionGeneration: 1 })).rejects.toThrow('尚未初始化');
       expect(initializeWallet).not.toHaveBeenCalled();
       expect(app.ledger.list()).toHaveLength(0);
-    } finally { app.ledger.close(); }
+    } finally { app.close(); }
   });
 
   it('binds a finite grant to the current Agent and reports successful authorization', () => {
@@ -102,7 +118,7 @@ describe('managed budget and Devnet test records', () => {
       expect(app.ledger.spendGrantSummary()).toMatchObject({ id: grant.id, status: 'ACTIVE', remaining: '5000000' });
       app.setAgentConnection(false, origin);
       expect(app.ledger.spendGrantSummary()?.status).toBe('REVOKED');
-    } finally { app.ledger.close(); }
+    } finally { app.close(); }
   });
 
   it('persists the default CardMember across successive MCP connections and App restart', () => {
@@ -120,7 +136,7 @@ describe('managed budget and Devnet test records', () => {
       const reconnected = readConnection(dir);
       expect(reconnected.cardMemberId).toBe(firstMember);
       expect(reconnected.connectionId).not.toBe(firstConnection);
-    } finally { first.ledger.close(); }
+    } finally { first.close(); }
 
     const restarted = new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }) });
     try {
@@ -128,7 +144,7 @@ describe('managed budget and Devnet test records', () => {
       const descriptor = readConnection(dir);
       expect(descriptor.cardMemberId).toBe(firstMember!);
       expect(descriptor.connectionId).not.toBe(firstConnection!);
-    } finally { restarted.ledger.close(); }
+    } finally { restarted.close(); }
   });
 
   it('quit waits for a request loading its wallet and prevents it from making a purchase', async () => {
@@ -152,7 +168,7 @@ describe('managed budget and Devnet test records', () => {
       await expect(app.createTestPurchase('after-quit', 'http://127.0.0.1:3049')).rejects.toThrow('正在退出');
       release(); await rejected; await quit;
       expect(ready).toBe(true); expect(app.ledger.list()).toHaveLength(0);
-    } finally { app.ledger.close(); }
+    } finally { app.close(); }
   });
 
   it('startup recovers original pending purchases once even when paused and live purchases are disabled', async () => {
@@ -188,7 +204,7 @@ describe('managed budget and Devnet test records', () => {
       expect(vi.mocked(recoverApprovedPayment).mock.calls[0]?.[1]).toBe('startup-original');
       expect(app.ledger.get('startup-original')?.status).toBe('PAYING');
       expect(app.ledger.controls().paused).toBe(true);
-    } finally { app.ledger.close(); }
+    } finally { app.close(); }
   });
   it('reports zero for an unfunded wallet and fails closed on malformed RPC data', async () => {
     const app = runtime();
@@ -197,7 +213,7 @@ describe('managed budget and Devnet test records', () => {
       const malformed = await app.balance(address, async () => Response.json({ jsonrpc: '2.0', id: 1, result: { value: { owner: 'wrong' } } }));
       expect(empty).toEqual({ amount: '0', display: '0.00 test USDC', available: true });
       expect(malformed.available).toBe(false);
-    } finally { app.ledger.close(); }
+    } finally { app.close(); }
   });
 
   it('starts without an implicit limit and blocks zero-limit and paused purchases', async () => {
@@ -213,7 +229,7 @@ describe('managed budget and Devnet test records', () => {
       app.setDailyLimit('100000'); app.setPaused(true);
       result = await app.createTestPurchase(`app-${randomUUID()}`, 'http://127.0.0.1:3049');
       expect(result.policy.reason).toBe('PAYMENTS_PAUSED');
-    } finally { app.ledger.close(); }
+    } finally { app.close(); }
   });
 
   it('records a simulated purchase once and persists settings and history after restart', async () => {
@@ -231,10 +247,10 @@ describe('managed budget and Devnet test records', () => {
       const blocked = await app.createTestPurchase(`app-${randomUUID()}`, 'http://127.0.0.1:3049');
       expect(blocked.policy.reason).toBe('DAILY_BUDGET_EXCEEDED');
       app.setPaused(true);
-    } finally { app.ledger.close(); }
+    } finally { app.close(); }
     const restarted = create();
     try { expect(restarted.ledger.managedSummary()).toMatchObject({ dailyLimit: '5000', paid: '10000', remaining: '0', paused: true }); expect(restarted.ledger.list()).toHaveLength(2); }
-    finally { restarted.ledger.close(); }
+    finally { restarted.close(); }
   });
 
   it('reuses same-mode simulated App purchases and scopes displayed grant accounting by mode', async () => {
@@ -258,7 +274,7 @@ describe('managed budget and Devnet test records', () => {
       vi.stubEnv('APP2049_ENABLE_DEVNET_PURCHASES', '1');
       expect(app.spendGrantSummary()).toMatchObject({ committed: '0', remaining: '1000000' });
       expect(app.ledger.list()).toHaveLength(1);
-    } finally { app.ledger.close(); }
+    } finally { app.close(); }
   });
 
   it('advances at local midnight without allowing a time-zone change or clock rollback to open another window', () => {
@@ -273,7 +289,7 @@ describe('managed budget and Devnet test records', () => {
       expect(app.ledger.managedSummary(Date.parse('2026-09-14T07:00:00Z')).day).toBe('2026-09-14');
       expect(app.ledger.managedSummary(Date.parse('2026-09-14T06:45:00Z')).day).toBe('2026-09-14');
     }
-    finally { app.ledger.close(); }
+    finally { app.close(); }
   });
 
   it('serializes concurrent App requests against one shared managed limit', async () => {
@@ -286,7 +302,7 @@ describe('managed budget and Devnet test records', () => {
       const results = await Promise.all([first.createTestPurchase(`app-${randomUUID()}`, origin), first.createTestPurchase(`app-${randomUUID()}`, origin)]);
       expect(results.map(result => result.status).sort()).toEqual(['DENIED', 'PAID']);
       expect(first.ledger.managedSummary()).toMatchObject({ paid: '10000', remaining: '0' });
-    } finally { first.ledger.close(); }
+    } finally { first.close(); }
   });
 
   it('rechecks pause and a lowered limit before signing and before submission', () => {

@@ -3,6 +3,7 @@
 ## 工作范围与文档
 
 - 开始实现前阅读根目录 [plan.md](plan.md)，再阅读当前模块及相关测试。新 App 范围以 plan.md 为准，旧 V0 设计用于理解已有行为。
+- 任何涉及 SwiftUI、macOS UI、Agent Card、Liquid Glass、交互、动画、Agent switching 或 settings/control surface 的任务，必须先使用项目 `2049-ui` Skill（`.codex/skills/2049-ui/SKILL.md`）。
 - 本轮交付仅为文档。后续只有用户要求实现时才开始对应阶段；按阶段完成和验收，不一次性开发未授权功能。
 - 用户的新指示优先于本文件。不得把计划、任务列表或示例当成实际付款、部署或推送授权。
 - 报告实际完成项、验证结果和未解决限制；不能把历史验收当作当前运行成功的证据。

@@ -1,0 +1,352 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A0000000000000000000000B /* TwentyFortyNineApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000008 /* TwentyFortyNineApp.swift */; };
+		A0000000000000000000001A /* CardWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000016 /* CardWindow.swift */; };
+		A0000000000000000000001B /* AgentIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000017 /* AgentIdentity.swift */; };
+		A0000000000000000000001C /* AgentCardFront.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000018 /* AgentCardFront.swift */; };
+		A0000000000000000000001D /* CardMaterial.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000019 /* CardMaterial.swift */; };
+		A00000000000000000000023 /* AgentCardNSWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000021 /* AgentCardNSWindow.swift */; };
+		A00000000000000000000024 /* CardApplicationDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000022 /* CardApplicationDelegate.swift */; };
+		A00000000000000000000025 /* AgentCardBack.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000026 /* AgentCardBack.swift */; };
+		A00000000000000000000027 /* CardMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000002A /* CardMetrics.swift */; };
+		A00000000000000000000028 /* WindowControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000002B /* WindowControls.swift */; };
+		A0000000000000000000002D /* BackSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000002C /* BackSection.swift */; };
+		A0000000000000000000002F /* BackOverview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000002E /* BackOverview.swift */; };
+		A00000000000000000000031 /* BackControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000030 /* BackControls.swift */; };
+		A00000000000000000000033 /* BackLatestPurchase.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000032 /* BackLatestPurchase.swift */; };
+		A00000000000000000000035 /* BackNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000034 /* BackNavigation.swift */; };
+		A00000000000000000000037 /* BackPlaceholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000036 /* BackPlaceholder.swift */; };
+		A00000000000000000000039 /* AgentsMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000038 /* AgentsMenu.swift */; };
+		A0000000000000000000003B /* BackFlipButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000003A /* BackFlipButton.swift */; };
+		A0000000000000000000003D /* AppOverview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000003C /* AppOverview.swift */; };
+		A0000000000000000000003F /* AuthorityOverviewPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000003E /* AuthorityOverviewPresentation.swift */; };
+		A00000000000000000000041 /* OverviewClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000040 /* OverviewClient.swift */; };
+		A00000000000000000000044 /* NativeServiceRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000043 /* NativeServiceRuntime.swift */; };
+		A00000000000000000000046 /* ManagementTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000045 /* ManagementTransport.swift */; };
+		A00000000000000000000048 /* BackendLaunchConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000047 /* BackendLaunchConfiguration.swift */; };
+		A0000000000000000000004A /* BackendChildProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000049 /* BackendChildProcess.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A00000000000000000000008 /* TwentyFortyNineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwentyFortyNineApp.swift; sourceTree = "<group>"; };
+		A0000000000000000000000A /* 2049.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = 2049.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000016 /* CardWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardWindow.swift; sourceTree = "<group>"; };
+		A00000000000000000000017 /* AgentIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentIdentity.swift; sourceTree = "<group>"; };
+		A00000000000000000000018 /* AgentCardFront.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCardFront.swift; sourceTree = "<group>"; };
+		A00000000000000000000019 /* CardMaterial.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardMaterial.swift; sourceTree = "<group>"; };
+		A00000000000000000000021 /* AgentCardNSWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCardNSWindow.swift; sourceTree = "<group>"; };
+		A00000000000000000000022 /* CardApplicationDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardApplicationDelegate.swift; sourceTree = "<group>"; };
+		A00000000000000000000026 /* AgentCardBack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCardBack.swift; sourceTree = "<group>"; };
+		A0000000000000000000002A /* CardMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardMetrics.swift; sourceTree = "<group>"; };
+		A0000000000000000000002B /* WindowControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowControls.swift; sourceTree = "<group>"; };
+		A0000000000000000000002C /* BackSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackSection.swift; sourceTree = "<group>"; };
+		A0000000000000000000002E /* BackOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackOverview.swift; sourceTree = "<group>"; };
+		A00000000000000000000030 /* BackControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackControls.swift; sourceTree = "<group>"; };
+		A00000000000000000000032 /* BackLatestPurchase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackLatestPurchase.swift; sourceTree = "<group>"; };
+		A00000000000000000000034 /* BackNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackNavigation.swift; sourceTree = "<group>"; };
+		A00000000000000000000036 /* BackPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackPlaceholder.swift; sourceTree = "<group>"; };
+		A00000000000000000000038 /* AgentsMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentsMenu.swift; sourceTree = "<group>"; };
+		A0000000000000000000003A /* BackFlipButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackFlipButton.swift; sourceTree = "<group>"; };
+		A0000000000000000000003C /* AppOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppOverview.swift; sourceTree = "<group>"; };
+		A0000000000000000000003E /* AuthorityOverviewPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthorityOverviewPresentation.swift; sourceTree = "<group>"; };
+		A00000000000000000000040 /* OverviewClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewClient.swift; sourceTree = "<group>"; };
+		A00000000000000000000043 /* NativeServiceRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeServiceRuntime.swift; sourceTree = "<group>"; };
+		A00000000000000000000045 /* ManagementTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagementTransport.swift; sourceTree = "<group>"; };
+		A00000000000000000000047 /* BackendLaunchConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendLaunchConfiguration.swift; sourceTree = "<group>"; };
+		A00000000000000000000049 /* BackendChildProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendChildProcess.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A0000000000000000000000E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A00000000000000000000003 = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000004 /* 2049App */,
+				A00000000000000000000007 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A00000000000000000000004 /* 2049App */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000005 /* App */,
+				A0000000000000000000001E /* Models */,
+				A00000000000000000000042 /* Services */,
+				A00000000000000000000006 /* Views */,
+				A0000000000000000000001F /* Materials */,
+			);
+			path = 2049App;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000005 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000008 /* TwentyFortyNineApp.swift */,
+				A00000000000000000000016 /* CardWindow.swift */,
+				A00000000000000000000021 /* AgentCardNSWindow.swift */,
+				A00000000000000000000022 /* CardApplicationDelegate.swift */,
+				A0000000000000000000002A /* CardMetrics.swift */,
+				A0000000000000000000002B /* WindowControls.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000006 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000020 /* Card */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		A0000000000000000000001E /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000017 /* AgentIdentity.swift */,
+				A0000000000000000000003C /* AppOverview.swift */,
+				A0000000000000000000003E /* AuthorityOverviewPresentation.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		A0000000000000000000001F /* Materials */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000019 /* CardMaterial.swift */,
+			);
+			path = Materials;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000042 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000040 /* OverviewClient.swift */,
+				A00000000000000000000043 /* NativeServiceRuntime.swift */,
+				A00000000000000000000045 /* ManagementTransport.swift */,
+				A00000000000000000000047 /* BackendLaunchConfiguration.swift */,
+				A00000000000000000000049 /* BackendChildProcess.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000020 /* Card */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000018 /* AgentCardFront.swift */,
+				A00000000000000000000026 /* AgentCardBack.swift */,
+				A0000000000000000000002C /* BackSection.swift */,
+				A0000000000000000000002E /* BackOverview.swift */,
+				A00000000000000000000030 /* BackControls.swift */,
+				A00000000000000000000032 /* BackLatestPurchase.swift */,
+				A00000000000000000000034 /* BackNavigation.swift */,
+				A00000000000000000000036 /* BackPlaceholder.swift */,
+				A00000000000000000000038 /* AgentsMenu.swift */,
+				A0000000000000000000003A /* BackFlipButton.swift */,
+			);
+			path = Card;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000007 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A0000000000000000000000A /* 2049.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A00000000000000000000002 /* 2049 */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000011 /* Build configuration list for PBXNativeTarget "2049" */;
+			buildPhases = (
+				A0000000000000000000000D /* Sources */,
+				A0000000000000000000000E /* Frameworks */,
+				A0000000000000000000000F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = 2049;
+			productName = 2049;
+			productReference = A0000000000000000000000A /* 2049.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					A00000000000000000000002 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+				};
+			};
+			buildConfigurationList = A00000000000000000000010 /* Build configuration list for PBXProject "2049" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+		);
+			mainGroup = A00000000000000000000003;
+			productRefGroup = A00000000000000000000007 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A00000000000000000000002 /* 2049 */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A0000000000000000000000F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A0000000000000000000000D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A0000000000000000000000B /* TwentyFortyNineApp.swift in Sources */,
+				A0000000000000000000001A /* CardWindow.swift in Sources */,
+				A0000000000000000000001B /* AgentIdentity.swift in Sources */,
+				A0000000000000000000001C /* AgentCardFront.swift in Sources */,
+				A0000000000000000000001D /* CardMaterial.swift in Sources */,
+				A00000000000000000000023 /* AgentCardNSWindow.swift in Sources */,
+				A00000000000000000000024 /* CardApplicationDelegate.swift in Sources */,
+				A00000000000000000000025 /* AgentCardBack.swift in Sources */,
+				A00000000000000000000027 /* CardMetrics.swift in Sources */,
+				A00000000000000000000028 /* WindowControls.swift in Sources */,
+				A0000000000000000000002D /* BackSection.swift in Sources */,
+				A0000000000000000000002F /* BackOverview.swift in Sources */,
+				A00000000000000000000031 /* BackControls.swift in Sources */,
+				A00000000000000000000033 /* BackLatestPurchase.swift in Sources */,
+				A00000000000000000000035 /* BackNavigation.swift in Sources */,
+				A00000000000000000000037 /* BackPlaceholder.swift in Sources */,
+				A00000000000000000000039 /* AgentsMenu.swift in Sources */,
+				A0000000000000000000003B /* BackFlipButton.swift in Sources */,
+				A0000000000000000000003D /* AppOverview.swift in Sources */,
+				A0000000000000000000003F /* AuthorityOverviewPresentation.swift in Sources */,
+				A00000000000000000000041 /* OverviewClient.swift in Sources */,
+				A00000000000000000000044 /* NativeServiceRuntime.swift in Sources */,
+				A00000000000000000000046 /* ManagementTransport.swift in Sources */,
+				A00000000000000000000048 /* BackendLaunchConfiguration.swift in Sources */,
+				A0000000000000000000004A /* BackendChildProcess.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A00000000000000000000012 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A00000000000000000000013 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		A00000000000000000000014 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = 2049App/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = 2049;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.twentyfortynine.macos;
+				PRODUCT_MODULE_NAME = TwentyFortyNineApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000015 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = 2049App/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = 2049;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.twentyfortynine.macos;
+				PRODUCT_MODULE_NAME = TwentyFortyNineApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A00000000000000000000010 /* Build configuration list for PBXProject "2049" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000012 /* Debug */,
+				A00000000000000000000013 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A00000000000000000000011 /* Build configuration list for PBXNativeTarget "2049" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000014 /* Debug */,
+				A00000000000000000000015 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A00000000000000000000001 /* Project object */;
+}

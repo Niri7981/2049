@@ -24,7 +24,7 @@ vi.mock('@/modules/demo/demo-store', () => ({
 vi.mock('@/modules/purchases/purchase-ledger', () => ({
   PurchaseLedger: class { constructor() { state.ledgerConstructed(); } },
 }));
-vi.mock('@/modules/demo/local-request', async () => await import('../../src/modules/demo/local-request'));
+vi.mock('@/modules/http/local-request', async () => await import('../../src/modules/http/local-request'));
 vi.mock('@/modules/app/product-mode', async () => await import('../../src/modules/app/product-mode'));
 
 import { GET, POST } from '../../src/app/api/demo/tasks/route';

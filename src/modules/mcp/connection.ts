@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { requireLocalRequest } from '../demo/local-request';
+import { requireLocalRequest } from '../http/local-request';
 import { SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
 
 const CapabilitySchema = z.enum(['read', 'request_purchase']);

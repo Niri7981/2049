@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { DemoInput, DemoStore } from "@/modules/demo/demo-store";
-import { requireLocalRequest, smallJson } from "@/modules/demo/local-request";
+import { requireLocalRequest, smallJson } from "@/modules/http/local-request";
 import { PurchaseLedger } from "@/modules/purchases/purchase-ledger";
 import { legacyDemoTasksAllowed } from "@/modules/app/product-mode";
 export const runtime = "nodejs";

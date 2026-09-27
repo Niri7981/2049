@@ -3,10 +3,11 @@ import { beforeEach, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   authenticate: vi.fn(),
   overview: vi.fn(),
+  balance: vi.fn(),
 }));
 
 vi.mock('@/modules/app/app-runtime', () => ({
-  appRuntime: () => ({ agentConnection: { authenticate: state.authenticate }, overview: state.overview }),
+  appRuntime: () => ({ agentConnection: { authenticate: state.authenticate }, overview: state.overview, balance: state.balance }),
 }));
 vi.mock('@/modules/purchases/market-quote', () => ({ readMarketQuote: vi.fn() }));
 
@@ -14,6 +15,7 @@ import { GET } from '../../src/app/api/agent/route';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  state.balance.mockResolvedValue({ amount: null, display: '暂时无法读取', available: false });
 });
 
 function overview(purchaseMode: 'simulated' | 'live_devnet') {

@@ -1,0 +1,79 @@
+import Foundation
+
+/// Read-only projection of GET /api/app/overview. Payment decisions stay in the backend.
+struct AppOverview: Decodable {
+    let service: Service
+    let budget: Budget
+    let grant: Grant?
+    let purchases: [Purchase]
+
+    struct Service: Decodable {
+        let status: Status
+        let purchaseMode: PurchaseMode
+
+        enum Status: String, Decodable {
+            case running, stopping
+        }
+
+        enum PurchaseMode: String, Decodable {
+            case simulated, liveDevnet = "live_devnet"
+        }
+    }
+
+    struct Budget: Decodable {
+        let dailyLimit: MinorUnits?
+        let paid: MinorUnits
+        let reserved: MinorUnits
+        let remaining: MinorUnits?
+        let paused: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case dailyLimit, paid, reserved, remaining, paused
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            dailyLimit = try values.decodeIfPresent(MinorUnits.self, forKey: .dailyLimit)
+            paid = try values.decode(MinorUnits.self, forKey: .paid)
+            reserved = try values.decode(MinorUnits.self, forKey: .reserved)
+            remaining = try values.decodeIfPresent(MinorUnits.self, forKey: .remaining)
+            paused = try values.decode(Bool.self, forKey: .paused)
+            guard (dailyLimit == nil) == (remaining == nil) else {
+                throw DecodingError.dataCorruptedError(forKey: .remaining, in: values, debugDescription: "Daily limit and remaining must both be set or absent")
+            }
+        }
+    }
+
+    struct Grant: Decodable {
+        let status: Status
+        let remaining: MinorUnits
+        let singleLimit: MinorUnits
+        let assetDecimals: Int
+
+        enum Status: String, Decodable {
+            case active = "ACTIVE", revoked = "REVOKED", expired = "EXPIRED"
+        }
+    }
+
+    struct Purchase: Decodable {
+        let purchaseId: String
+        let status: String
+        let amount: MinorUnits
+        let createdAt: Int64
+        let offerId: String?
+    }
+}
+
+struct MinorUnits: Decodable, Equatable {
+    let value: Int64
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        guard !raw.isEmpty, raw.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+              let value = Int64(raw), value >= 0 else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid nonnegative minor-unit amount")
+        }
+        self.value = value
+    }
+}

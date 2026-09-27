@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { appRuntime } from '@/modules/app/app-runtime';
 import { managementError, requireManagementRequest } from '@/modules/app/management-auth';
-import { smallJson } from '@/modules/demo/local-request';
+import { smallJson } from '@/modules/http/local-request';
 
 const Input = z.union([
   z.object({ dailyLimit: z.string().regex(/^\d{1,15}$/).nullable() }).strict(),

@@ -13,7 +13,7 @@ vi.mock('@/modules/app/management-auth', () => ({
   requireManagementRequest: state.requireManagementRequest,
   managementError: state.managementError,
 }));
-vi.mock('@/modules/demo/local-request', () => ({ smallJson: state.smallJson }));
+vi.mock('@/modules/http/local-request', () => ({ smallJson: state.smallJson }));
 
 import { POST } from '../../src/app/api/app/test-purchases/route';
 

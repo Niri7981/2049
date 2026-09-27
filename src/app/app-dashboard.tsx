@@ -4,11 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 type Overview = {
   connection: { enabled: boolean; lastSeen: number | null; access: 'read_only' | 'purchase_intent'; capabilities: Array<'read' | 'request_purchase'> };
   service: { status: string; network: string; testEnvironment: boolean; purchaseMode: 'simulated' | 'live_devnet' };
-  wallet: { address: string; reused: boolean; balance: { amount: string | null; display: string; available: boolean } };
+  wallet: { address: string; reused: boolean };
   budget: { day: string; timeZone: string; dailyLimit: string | null; paidDisplay: string; reservedDisplay: string; remainingDisplay: string; dailyLimitDisplay: string; paused: boolean; unresolved: number };
   grant: null | { id: string; status: 'ACTIVE' | 'REVOKED' | 'EXPIRED'; totalLimit: string; singleLimit: string; committed: string; remaining: string; expiresAt: number; operation: string };
   purchases: Array<{ purchaseId: string; status: string; deliveryStatus: 'NOT_PAID' | 'PENDING' | 'COMPLETE'; amount: string; createdAt: number; transaction: string | null; offerId?: string; reason?: string; decisionReason?: string; grantId?: string }>;
 };
+type Balance = { amount: string | null; display: string; available: boolean };
 type BridgeResponse = { ok: boolean; status: number; body: unknown };
 declare global { interface Window { app2049?: { request(path: string, options?: { method?: string; body?: unknown }): Promise<BridgeResponse> } } }
 
@@ -40,6 +41,7 @@ function defaultExpiry() {
 
 export function AppDashboard() {
   const [data, setData] = useState<Overview>();
+  const [balance, setBalance] = useState<Balance>();
   const [limit, setLimit] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -57,6 +59,8 @@ export function AppDashboard() {
     try {
       const next = await api('/api/app/overview') as Overview;
       setData(next); setLimit(fromMinor(next.budget.dailyLimit)); setError('');
+      void api('/api/app/balance').then(result => setBalance((result as { balance: Balance }).balance), () =>
+        setBalance({ amount: null, display: '暂时无法读取', available: false }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : '无法连接本地服务。'); }
   }, [api]);
   useEffect(() => {
@@ -87,7 +91,7 @@ export function AppDashboard() {
   return <main className="app-shell">
     <header><div><p className="eyebrow">2049 · 本地购买服务</p><h1>消费钱包</h1></div><span className={data?.budget.paused ? 'pill warn' : 'pill'}>{data?.budget.paused ? '付款已暂停' : '服务运行中'}</span></header>
     {error && <p className="error" role="alert">{error}</p>}
-    <section><h2>钱包</h2><p className="address">{data?.wallet.address || '正在初始化…'}</p><div className="metric"><span>Devnet 余额</span><strong>{data?.wallet.balance.display || '—'}</strong></div><p className="hint">从 Phantom 等外部钱包向上方地址转入测试 USDC。私钥仅保存在 macOS 钥匙串。</p></section>
+    <section><h2>钱包</h2><p className="address">{data?.wallet.address || '正在初始化…'}</p><div className="metric"><span>Devnet 余额</span><strong>{balance?.display || '—'}</strong></div><p className="hint">从 Phantom 等外部钱包向上方地址转入测试 USDC。私钥仅保存在 macOS 钥匙串。</p></section>
     <section><h2>每日共用额度</h2><div className="limit-row"><label><span>额度（test USDC）</span><input value={limit} onChange={event => setLimit(event.target.value)} placeholder="例如 1.00" inputMode="decimal" /></label><button disabled={busy} onClick={() => void saveLimit()}>保存额度</button></div>
       <div className="metrics"><div><span>今日已消费</span><strong>{data?.budget.paidDisplay || '—'}</strong></div><div><span>预占</span><strong>{data?.budget.reservedDisplay || '—'}</strong></div><div><span>剩余</span><strong>{data?.budget.remainingDisplay || '—'}</strong></div></div><p className="hint">{data ? `${data.budget.day} · ${data.budget.timeZone}` : '读取中…'}。修改额度不会清空今天的消费。</p>
       <button className="secondary" disabled={busy} onClick={() => void mutate('/api/app/settings', { paused: !data?.budget.paused })}>{data?.budget.paused ? '继续付款' : '暂停付款'}</button></section>

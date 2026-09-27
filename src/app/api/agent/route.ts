@@ -13,7 +13,8 @@ export async function GET(request: Request) {
     const operation = query.get('operation');
     if (operation === 'status') {
       const overview = await app.overview();
-      return Response.json({ wallet: overview.wallet, budget: overview.budget, grant: overview.grant,
+      const balance = await app.balance(overview.wallet.address);
+      return Response.json({ wallet: { ...overview.wallet, balance }, budget: overview.budget, grant: overview.grant,
         spendingAuthorized: overview.connection.enabled && overview.grant?.status === 'ACTIVE',
         paymentEnabled: overview.service.purchaseMode === 'live_devnet' }, { headers: { 'cache-control': 'no-store' } });
     }

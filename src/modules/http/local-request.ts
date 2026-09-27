@@ -1,9 +1,14 @@
-/** Browser origins cannot authorize cross-site requests to the local wallet demo. */
+export class LocalRequestError extends Error {}
+export class RequestBodyError extends Error {}
+
+/** Browser origins cannot authorize cross-site requests to the local service. */
 export function requireLocalRequest(request: Request, mutation = false) {
   const url = new URL(request.url);
   const host = request.headers.get("host");
   // Next normalizes Request.url to localhost; validate the actual Host separately.
-  const address = new URL(`http://${host ?? url.host}`);
+  let address: URL;
+  try { address = new URL(`http://${host ?? url.host}`); }
+  catch { throw new LocalRequestError("只允许本机访问。"); }
   const loopback = (value: URL) =>
     value.protocol === "http:" &&
     ["127.0.0.1", "localhost", "[::1]"].includes(value.hostname);
@@ -13,15 +18,15 @@ export function requireLocalRequest(request: Request, mutation = false) {
     address.port !== url.port ||
     address.host !== (host ?? url.host)
   )
-    throw new Error("只允许本机访问。");
+    throw new LocalRequestError("只允许本机访问。");
   const site = request.headers.get("sec-fetch-site");
-  if (site === "cross-site") throw new Error("不允许跨站请求。");
+  if (site === "cross-site") throw new LocalRequestError("不允许跨站请求。");
   if (
     mutation &&
     (request.headers.get("origin") !== address.origin ||
       request.headers.get("content-type")?.split(";")[0] !== "application/json")
   )
-    throw new Error("需要同源 JSON 请求。");
+    throw new LocalRequestError("需要同源 JSON 请求。");
 }
 
 /** Return the validated socket origin; Next may normalize Request.url to localhost. */
@@ -32,7 +37,7 @@ export function localRequestOrigin(request: Request) {
 }
 export async function smallJson(request: Request) {
   const reader = request.body?.getReader();
-  if (!reader) throw new Error("缺少请求内容。");
+  if (!reader) throw new RequestBodyError("缺少请求内容。");
   let size = 0;
   const chunks: Uint8Array[] = [];
   try {
@@ -40,10 +45,11 @@ export async function smallJson(request: Request) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > 8192) throw new Error("任务内容过长。");
+      if (size > 8192) throw new RequestBodyError("任务内容过长。");
       chunks.push(value);
     }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+    catch { throw new RequestBodyError("请求内容不是有效 JSON。"); }
   } finally {
     await reader.cancel().catch(() => {});
     reader.releaseLock();

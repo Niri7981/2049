@@ -20,7 +20,7 @@ import { loadBuyerSigner } from '../../src/modules/payment/wallet';
 vi.mock('@/modules/app/app-runtime', () => ({
   appRuntime: () => (globalThis as typeof globalThis & { __app2049?: { runtime?: AppRuntime } }).__app2049?.runtime,
 }));
-vi.mock('@/modules/demo/local-request', async () => await import('../../src/modules/demo/local-request'));
+vi.mock('@/modules/http/local-request', async () => await import('../../src/modules/http/local-request'));
 vi.mock('@/modules/purchases/request-market-purchase', async () => await import('../../src/modules/purchases/request-market-purchase'));
 vi.mock('../../src/modules/purchases/approved-payment', async importOriginal => ({
   ...await importOriginal<typeof import('../../src/modules/purchases/approved-payment')>(),
@@ -205,7 +205,7 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
   } finally {
     for (const { client, transport } of clients) { await client.close(); await transport.close(); }
     await new Promise<void>(done => http.close(() => done()));
-    app.ledger.close(); store.close();
+    app.close(); store.close();
     if (previous === undefined) delete state.__app2049; else state.__app2049 = previous;
     vi.unstubAllEnvs(); vi.clearAllMocks();
     rmSync(directory, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { appRuntime } from '@/modules/app/app-runtime';
 import { managementError, requireManagementRequest } from '@/modules/app/management-auth';
-import { smallJson } from '@/modules/demo/local-request';
+import { smallJson } from '@/modules/http/local-request';
 
 const Input = z.object({ purchaseId: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/) }).strict();
 export const runtime = 'nodejs';
