@@ -38,6 +38,9 @@
 		A00000000000000000000052 /* PurchasePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000051 /* PurchasePresentation.swift */; };
 		A00000000000000000000054 /* ActivityDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000053 /* ActivityDetail.swift */; };
 		A00000000000000000000056 /* PurchaseDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000055 /* PurchaseDetail.swift */; };
+		A00000000000000000000058 /* CardMemberSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000057 /* CardMemberSession.swift */; };
+		A0000000000000000000005A /* MembersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000059 /* MembersView.swift */; };
+		A0000000000000000000005C /* CardMemberSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000005B /* CardMemberSelection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -73,6 +76,9 @@
 		A00000000000000000000051 /* PurchasePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchasePresentation.swift; sourceTree = "<group>"; };
 		A00000000000000000000053 /* ActivityDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityDetail.swift; sourceTree = "<group>"; };
 		A00000000000000000000055 /* PurchaseDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchaseDetail.swift; sourceTree = "<group>"; };
+		A00000000000000000000057 /* CardMemberSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardMemberSession.swift; sourceTree = "<group>"; };
+		A00000000000000000000059 /* MembersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembersView.swift; sourceTree = "<group>"; };
+		A0000000000000000000005B /* CardMemberSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardMemberSelection.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -134,6 +140,8 @@
 				A0000000000000000000003C /* AppOverview.swift */,
 				A0000000000000000000003E /* AuthorityOverviewPresentation.swift */,
 				A00000000000000000000051 /* PurchasePresentation.swift */,
+				A00000000000000000000057 /* CardMemberSession.swift */,
+				A0000000000000000000005B /* CardMemberSelection.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -170,6 +178,7 @@
 				A0000000000000000000004F /* AgentConnectionDetail.swift */,
 				A00000000000000000000053 /* ActivityDetail.swift */,
 				A00000000000000000000055 /* PurchaseDetail.swift */,
+				A00000000000000000000059 /* MembersView.swift */,
 				A00000000000000000000030 /* BackControls.swift */,
 				A00000000000000000000032 /* BackLatestPurchase.swift */,
 				A00000000000000000000034 /* BackNavigation.swift */,
@@ -272,6 +281,9 @@
 				A00000000000000000000052 /* PurchasePresentation.swift in Sources */,
 				A00000000000000000000054 /* ActivityDetail.swift in Sources */,
 				A00000000000000000000056 /* PurchaseDetail.swift in Sources */,
+				A00000000000000000000058 /* CardMemberSession.swift in Sources */,
+				A0000000000000000000005A /* MembersView.swift in Sources */,
+				A0000000000000000000005C /* CardMemberSelection.swift in Sources */,
 				A00000000000000000000031 /* BackControls.swift in Sources */,
 				A00000000000000000000033 /* BackLatestPurchase.swift in Sources */,
 				A00000000000000000000035 /* BackNavigation.swift in Sources */,

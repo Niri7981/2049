@@ -18,7 +18,7 @@ final class CardApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDe
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
-        window.contentView = NSHostingView(rootView: CardWindow(identity: .niri, overviewClient: OverviewClient(runtime: serviceRuntime)))
+        window.contentView = NSHostingView(rootView: CardWindow(overviewClient: OverviewClient(runtime: serviceRuntime)))
         window.setFrame(windowRect, display: false)
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(button)?.isHidden = true

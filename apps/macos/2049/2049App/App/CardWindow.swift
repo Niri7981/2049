@@ -1,11 +1,16 @@
 import SwiftUI
 
 struct CardWindow: View {
-    let identity: AgentIdentity
     let overviewClient: OverviewClient
+    @State private var memberSession: CardMemberSession
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingBack = false
+
+    init(overviewClient: OverviewClient) {
+        self.overviewClient = overviewClient
+        _memberSession = State(initialValue: CardMemberSession(client: overviewClient))
+    }
 
     var body: some View {
         ZStack {
@@ -15,7 +20,7 @@ struct CardWindow: View {
                         .gesture(WindowDragGesture())
                         .allowsWindowActivationEvents()
                     if showingBack {
-                        AgentCardBack(onFlip: flip, overviewClient: overviewClient)
+                        AgentCardBack(onFlip: flip, overviewClient: overviewClient, memberSession: memberSession)
                             .transition(.opacity)
                     } else {
                         frontFace
@@ -33,7 +38,7 @@ struct CardWindow: View {
                         .modifier(FlipFaceVisibility(angle: showingBack ? 180 : 0, isBack: false))
                         .allowsHitTesting(!showingBack)
 
-                    AgentCardBack(onFlip: flip, overviewClient: overviewClient)
+                    AgentCardBack(onFlip: flip, overviewClient: overviewClient, memberSession: memberSession)
                         .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0), perspective: 0)
                         .modifier(FlipFaceVisibility(angle: showingBack ? 180 : 0, isBack: true))
                         .allowsHitTesting(showingBack)
@@ -49,10 +54,11 @@ struct CardWindow: View {
         .padding(CardMetrics.windowInset)
         .frame(width: CardMetrics.windowSize.width, height: CardMetrics.windowSize.height)
         .environment(\.colorScheme, .light)
+        .task { await memberSession.refresh() }
     }
 
     private var frontFace: some View {
-        AgentCardFront(identity: identity, onFlip: flip)
+        AgentCardFront(identity: memberSession.selectedMember.map { AgentIdentity(name: $0.label) }, onFlip: flip)
             .overlay(alignment: .topLeading) {
                 WindowControls()
                     .padding(.leading, 24)

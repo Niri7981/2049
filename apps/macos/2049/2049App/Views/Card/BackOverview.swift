@@ -2,6 +2,8 @@ import SwiftUI
 
 struct BackOverview: View {
     let overviewClient: OverviewClient
+    let memberID: UUID
+    let onMemberChanged: () async -> Void
 
     @State private var state: LoadState = .loading
     @State private var writeState: WriteState = .idle
@@ -273,7 +275,7 @@ struct BackOverview: View {
         defer { activityRefreshing = false }
         activityRefreshError = nil
         do {
-            let refreshed = try await overviewClient.load()
+            let refreshed = try await loadSelectedOverview()
             guard case .some(.activity) = selectedDetail else { return }
             state = .loaded(refreshed)
         } catch is CancellationError {
@@ -325,7 +327,7 @@ struct BackOverview: View {
         writeState = .idle
         state = .loading
         do {
-            let result = try await overviewClient.load(retry: retry)
+            let result = try await loadSelectedOverview(retry: retry)
             guard !Task.isCancelled else { return }
             state = .loaded(result)
         } catch is CancellationError {
@@ -350,20 +352,21 @@ struct BackOverview: View {
                 try await overviewClient.setDailyLimit(limit)
                 success = "Daily limit saved"
             case .createGrant(let total, let single, let expiration):
-                try await overviewClient.createGrant(totalLimit: total, singleLimit: single, expiresAt: expiration)
+                try await overviewClient.createMemberGrant(memberID, totalLimit: total, singleLimit: single, expiresAt: expiration)
                 success = "Grant saved. Reconnect the MCP host."
             case .revokeGrant:
-                try await overviewClient.revokeGrant()
+                try await overviewClient.revokeMemberGrant(memberID)
                 success = "Grant revoked. Reconnect the MCP host."
             case .connection(let enabled):
-                try await overviewClient.setConnection(enabled)
+                try await overviewClient.setMemberConnection(memberID, enabled: enabled)
                 success = enabled ? "Connection enabled. Reconnect the MCP host." : "Connection revoked. Active grant revoked."
             }
         } catch {
             let failure = (error as? OverviewLoadError)?.message ?? "Setting change failed"
             // A lost response does not prove the write was rejected; re-read the source of truth.
             do {
-                state = .loaded(try await overviewClient.load())
+                state = .loaded(try await loadSelectedOverview())
+                await onMemberChanged()
             } catch {
                 selectedDetail = nil
                 state = .failed((error as? OverviewLoadError) ?? .invalidResponse)
@@ -373,12 +376,29 @@ struct BackOverview: View {
         }
 
         do {
-            state = .loaded(try await overviewClient.load())
+            state = .loaded(try await loadSelectedOverview())
+            await onMemberChanged()
             writeState = .success(success)
         } catch {
             selectedDetail = nil
             state = .failed((error as? OverviewLoadError) ?? .invalidResponse)
             writeState = .failure("Saved, but current status could not be loaded")
+        }
+    }
+
+    private func loadSelectedOverview(retry: Bool = false) async throws -> AppOverview {
+        do {
+            async let shared = overviewClient.load(retry: retry)
+            async let member = overviewClient.loadMember(memberID, retry: retry)
+            let (sharedOverview, snapshot) = try await (shared, member)
+            guard snapshot.member.status == .active else {
+                await onMemberChanged()
+                throw OverviewLoadError.memberInactive
+            }
+            return AppOverview(shared: sharedOverview, member: snapshot)
+        } catch OverviewLoadError.memberNotFound {
+            await onMemberChanged()
+            throw OverviewLoadError.memberNotFound
         }
     }
 }

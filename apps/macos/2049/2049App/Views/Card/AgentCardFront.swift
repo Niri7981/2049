@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AgentCardFront: View {
-    let identity: AgentIdentity
+    let identity: AgentIdentity?
     let onFlip: () -> Void
 
     var body: some View {
@@ -31,18 +31,15 @@ struct AgentCardFront: View {
 }
 
 private struct AgentIdentityBlock: View {
-    let identity: AgentIdentity
+    let identity: AgentIdentity?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text(identity.name)
+            Text(identity?.name ?? "No agent selected")
                 .font(.system(size: 27, weight: .medium))
                 .tracking(2.4)
-
-            Text(identity.label)
-                .font(.system(size: 13, weight: .medium))
-                .tracking(3.2)
-                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
         }
     }
 }

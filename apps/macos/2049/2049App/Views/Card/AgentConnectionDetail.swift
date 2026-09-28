@@ -21,7 +21,7 @@ struct AgentConnectionDetail: View {
                     .font(.title2)
                 Text(connection.enabled ? "Enabled" : "Not connected")
                     .font(.largeTitle)
-                Text("Single Agent connection · Solana Devnet")
+                Text("Agent connection · Solana Devnet")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

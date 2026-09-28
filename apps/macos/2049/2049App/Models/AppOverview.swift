@@ -8,6 +8,15 @@ struct AppOverview: Decodable {
     let connection: Connection
     let purchases: [Purchase]
 
+    /// Shared controls come from the card overview; member facts come only from that member's endpoint.
+    init(shared: AppOverview, member: CardMemberSnapshot) {
+        service = shared.service
+        budget = shared.budget
+        grant = member.grant
+        connection = member.connection
+        purchases = member.purchases
+    }
+
     struct Service: Decodable {
         let status: Status
         let isDefault: Bool
@@ -130,6 +139,7 @@ struct CardMemberSnapshot: Decodable {
         let id: UUID
         let label: String
         let status: Status
+        let isDefault: Bool
         let createdAt: Int64
         let updatedAt: Int64
 
@@ -151,4 +161,10 @@ struct CardMemberSummary: Decodable {
     let member: CardMemberSnapshot.Member
     let connection: AppOverview.Connection
     let grant: AppOverview.Grant?
+
+    init(snapshot: CardMemberSnapshot) {
+        member = snapshot.member
+        connection = snapshot.connection
+        grant = snapshot.grant
+    }
 }

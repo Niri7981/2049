@@ -80,12 +80,12 @@ struct OverviewClient {
         try await write(.setConnection(enabled))
     }
 
-    func loadMembers() async throws -> [CardMemberSummary] {
-        try await read(.members, as: MembersResponse.self).members
+    func loadMembers(retry: Bool = false) async throws -> [CardMemberSummary] {
+        try await read(.members, as: MembersResponse.self, retry: retry).members
     }
 
-    func loadMember(_ id: UUID) async throws -> CardMemberSnapshot {
-        try await read(.member(id), as: CardMemberSnapshot.self)
+    func loadMember(_ id: UUID, retry: Bool = false) async throws -> CardMemberSnapshot {
+        try await read(.member(id), as: CardMemberSnapshot.self, retry: retry)
     }
 
     func createMember(label: String) async throws -> CardMemberSnapshot {
@@ -112,8 +112,8 @@ struct OverviewClient {
         try await write(.revokeMemberGrant(id))
     }
 
-    private func read<T: Decodable>(_ endpoint: ServiceEndpoint, as type: T.Type) async throws -> T {
-        let (data, response) = try await request(endpoint)
+    private func read<T: Decodable>(_ endpoint: ServiceEndpoint, as type: T.Type, retry: Bool = false) async throws -> T {
+        let (data, response) = try await request(endpoint, retry: retry)
         if response.statusCode == 401 || response.statusCode == 403 { throw OverviewLoadError.unauthorized }
         if response.statusCode == 404 { throw OverviewLoadError.memberNotFound }
         guard response.statusCode == 200, data.count <= 1_048_576,
