@@ -33,7 +33,9 @@ const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/api/app/health') return send(200, { ready: true });
   if (request.method === 'GET' && request.url === '/api/app/overview') {
     return send(200, {
-      service: { status: 'running', purchaseMode: 'simulated' },
+      service: { status: 'running', recoveryStatus: 'complete', network: 'Solana Devnet',
+        testEnvironment: true, purchaseMode: 'simulated' },
+      wallet: { address: 'PublicWalletAddress', reused: true },
       budget: { dailyLimit, dailyLimitDisplay: dailyLimit ?? 'Not set', paid: '0', reserved: '0', remaining: dailyLimit, remainingDisplay: dailyLimit ?? 'Not set', paused },
       grant, connection, purchases,
     });

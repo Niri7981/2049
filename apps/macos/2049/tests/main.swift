@@ -64,13 +64,16 @@ check(CardMemberSelection.choose(current: id(researchID), from: [revokedResearch
 check(CardMemberSelection.choose(current: nil, from: [buyerSummary, researchSummary]) == id(researchID), "stable first active fallback")
 
 let overviewPayload: [String: Any] = [
-    "service": ["status": "running", "isDefault": true, "purchaseMode": "simulated", "network": "Solana Devnet"],
+    "service": ["status": "running", "recoveryStatus": "complete", "testEnvironment": true,
+                "purchaseMode": "simulated", "network": "Solana Devnet"],
     "wallet": ["address": "PublicWalletAddress", "reused": true],
     "budget": ["dailyLimit": "1000000", "dailyLimitDisplay": "1 test USDC", "paid": "10000", "reserved": "0",
                "remaining": "990000", "remainingDisplay": "0.99 test USDC", "paused": false],
     "grant": grant("default-grant"), "connection": connection(false), "purchases": [purchase("default-purchase")],
 ]
 let shared = try decode(AppOverview.self, overviewPayload)
+check(shared.service.status == .running && shared.service.purchaseMode == .simulated &&
+      shared.service.network == "Solana Devnet", "backend overview service decodes without member-only isDefault")
 let research = try snapshot(researchMember, enabled: true, grantValue: grant("research-grant"), purchases: [purchase("research-purchase")])
 let selectedResearch = AppOverview(shared: shared, member: research)
 check(selectedResearch.budget.dailyLimit?.value == 1_000_000, "daily budget stays shared")
@@ -88,7 +91,8 @@ check(settings.serviceStatus == "Running", "Settings reads backend service statu
 check(settings.executionMode == "Simulated" && settings.network == "Solana Devnet", "Settings reads backend mode and network")
 check(settings.walletAddress == "PublicWalletAddress", "Settings reads the public wallet address")
 var livePayload = overviewPayload
-livePayload["service"] = ["status": "stopping", "isDefault": true, "purchaseMode": "live_devnet", "network": "Solana Devnet"]
+livePayload["service"] = ["status": "stopping", "recoveryStatus": "pending", "testEnvironment": true,
+                          "purchaseMode": "live_devnet", "network": "Solana Devnet"]
 let liveSettings = CardSettingsPresentation(try decode(AppOverview.self, livePayload))
 check(liveSettings.serviceStatus == "Stopping" && liveSettings.executionMode == "Live · Devnet", "Settings reflects changed runtime state")
 

@@ -21,7 +21,6 @@ struct AppOverview: Decodable {
 
     struct Service: Decodable {
         let status: Status
-        let isDefault: Bool
         let purchaseMode: PurchaseMode
         let network: String
 
