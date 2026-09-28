@@ -3,6 +3,7 @@ import SwiftUI
 struct BackOverview: View {
     let overviewClient: OverviewClient
     let memberID: UUID
+    let isActive: Bool
     let onMemberChanged: () async -> Void
 
     @State private var state: LoadState = .loading
@@ -10,6 +11,7 @@ struct BackOverview: View {
     @State private var selectedDetail: Detail?
     @State private var activityRefreshing = false
     @State private var activityRefreshError: String?
+    @State private var isRefreshing = false
 
     private enum Detail {
         case daily, grant, connection, activity, purchase(String)
@@ -70,7 +72,7 @@ struct BackOverview: View {
                     AuthoritySettingsDetail(
                         overview: overview,
                         overviewClient: overviewClient,
-                        isSaving: writeState.isSaving,
+                        isSaving: writeState.isSaving || isRefreshing,
                         writeMessage: writeState.message,
                         writeFailed: writeState.isFailure,
                         onBack: { self.selectedDetail = nil },
@@ -79,7 +81,7 @@ struct BackOverview: View {
                 case .grant:
                     SpendGrantDetail(
                         overview: overview,
-                        isSaving: writeState.isSaving,
+                        isSaving: writeState.isSaving || isRefreshing,
                         writeMessage: writeState.message,
                         writeFailed: writeState.isFailure,
                         onBack: { self.selectedDetail = nil },
@@ -92,7 +94,7 @@ struct BackOverview: View {
                 case .connection:
                     AgentConnectionDetail(
                         connection: overview.connection,
-                        isSaving: writeState.isSaving,
+                        isSaving: writeState.isSaving || isRefreshing,
                         writeMessage: writeState.message,
                         writeFailed: writeState.isFailure,
                         onBack: { self.selectedDetail = nil },
@@ -125,7 +127,14 @@ struct BackOverview: View {
                 overviewContent
             }
         }
-        .task { await reload() }
+        .task { if isActive { await reload() } }
+        .onChange(of: isActive) { _, active in
+            if active {
+                Task { await reload(preservingContent: true) }
+            } else {
+                selectedDetail = nil
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
             selectedDetail = nil
             writeState = .idle
@@ -145,7 +154,7 @@ struct BackOverview: View {
 
             BackControls(
                 payments: presentation?.payments ?? "—",
-                paymentsEnabled: overview?.service.status == .running ? overview.map { !$0.budget.paused } : nil,
+                paymentsEnabled: !isRefreshing && overview?.service.status == .running ? overview.map { !$0.budget.paused } : nil,
                 paymentsUpdating: writeState.isSaving,
                 onPaymentsChange: { enabled in Task { await write(.paused(!enabled)) } },
                 execution: presentation?.execution ?? "—"
@@ -158,7 +167,7 @@ struct BackOverview: View {
                 amount: presentation?.latest?.amount ?? "—",
                 connectionEnabled: overview?.connection.enabled,
                 onConnection: { open(.connection) },
-                activityAvailable: overview != nil && !writeState.isSaving,
+                activityAvailable: overview != nil && !writeState.isSaving && !isRefreshing,
                 onActivity: {
                     open(.activity)
                     Task { await refreshActivity() }
@@ -210,7 +219,7 @@ struct BackOverview: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
-        .disabled(overview == nil || writeState.isSaving)
+        .disabled(overview == nil || writeState.isSaving || isRefreshing)
         .accessibilityLabel("Daily Authority, \(presentation?.remaining ?? "unavailable") remaining. Change daily limit")
     }
 
@@ -237,7 +246,7 @@ struct BackOverview: View {
             }
         }
         .buttonStyle(.plain)
-        .disabled(overview == nil || writeState.isSaving)
+        .disabled(overview == nil || writeState.isSaving || isRefreshing)
         .accessibilityLabel("Spend grant, \(presentation?.grantRemaining ?? "unavailable") remaining; per transaction \(presentation?.perTransaction ?? "unavailable"). Manage grant")
     }
 
@@ -262,7 +271,7 @@ struct BackOverview: View {
     }
 
     private func open(_ detail: Detail) {
-        guard overview != nil, !writeState.isSaving else { return }
+        guard overview != nil, !writeState.isSaving, !isRefreshing else { return }
         writeState = .idle
         activityRefreshError = nil
         selectedDetail = detail
@@ -310,7 +319,10 @@ struct BackOverview: View {
                 ProgressView("Loading authority")
                     .controlSize(.small)
             case .loaded:
-                EmptyView()
+                if isRefreshing {
+                    ProgressView("Refreshing authority")
+                        .controlSize(.small)
+                }
             case .failed(let error):
                 HStack(spacing: 8) {
                     Text(error.message)
@@ -323,9 +335,12 @@ struct BackOverview: View {
     }
 
     @MainActor
-    private func reload(retry: Bool = false) async {
+    private func reload(retry: Bool = false, preservingContent: Bool = false) async {
+        guard !isRefreshing, !writeState.isSaving else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
         writeState = .idle
-        state = .loading
+        if !preservingContent || overview == nil { state = .loading }
         do {
             let result = try await loadSelectedOverview(retry: retry)
             guard !Task.isCancelled else { return }
@@ -340,7 +355,7 @@ struct BackOverview: View {
 
     @MainActor
     private func write(_ change: SettingsChange) async {
-        guard overview != nil, !writeState.isSaving else { return }
+        guard overview != nil, !writeState.isSaving, !isRefreshing else { return }
         writeState = .saving
         let success: String
         do {

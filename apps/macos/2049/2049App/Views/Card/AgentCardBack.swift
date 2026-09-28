@@ -28,16 +28,28 @@ struct AgentCardBack: View {
             .frame(height: 44)
             .padding(.top, 22)
 
-            Group {
+            ZStack {
+                // Keep the selected Authority view alive across tab changes so its last
+                // confirmed snapshot is available immediately when returning from Members.
+                if let memberID = memberSession.selectedMemberID {
+                    BackOverview(
+                        overviewClient: overviewClient,
+                        memberID: memberID,
+                        isActive: selectedSection == .authority,
+                        onMemberChanged: { await memberSession.refresh() }
+                    )
+                    .id(memberID)
+                    .opacity(selectedSection == .authority ? 1 : 0)
+                    .allowsHitTesting(selectedSection == .authority)
+                    .accessibilityHidden(selectedSection != .authority)
+                } else if selectedSection == .authority {
+                    ContentUnavailableView(memberSession.loadError == nil ? "No active agent" : "Agents unavailable", systemImage: "person.crop.circle.badge.questionmark",
+                        description: Text(memberSession.loadError ?? "Add an agent in Members to continue."))
+                }
+
                 switch selectedSection {
                 case .authority:
-                    if let memberID = memberSession.selectedMemberID {
-                        BackOverview(overviewClient: overviewClient, memberID: memberID, onMemberChanged: { await memberSession.refresh() })
-                            .id(memberID)
-                    } else {
-                        ContentUnavailableView(memberSession.loadError == nil ? "No active agent" : "Agents unavailable", systemImage: "person.crop.circle.badge.questionmark",
-                            description: Text(memberSession.loadError ?? "Add an agent in Members to continue."))
-                    }
+                    EmptyView()
                 case .members:
                     MembersView(session: memberSession)
                 case .settings:
