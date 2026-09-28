@@ -10,6 +10,14 @@ enum ServiceEndpoint {
     case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64)
     case revokeGrant
     case setConnection(Bool)
+    case members
+    case member(UUID)
+    case createMember(String)
+    case renameMember(UUID, String)
+    case revokeMember(UUID)
+    case setMemberConnection(UUID, Bool)
+    case createMemberGrant(UUID, totalLimit: String, singleLimit: String, expiresAt: Int64)
+    case revokeMemberGrant(UUID)
     case prepareQuit
 
     var path: String {
@@ -20,22 +28,30 @@ enum ServiceEndpoint {
         case .setPaused, .setDailyLimit: "/api/app/settings"
         case .createGrant, .revokeGrant: "/api/app/grant"
         case .setConnection: "/api/app/connection"
+        case .members, .createMember: "/api/app/members"
+        case .member(let id), .renameMember(let id, _), .revokeMember(let id): "/api/app/members/\(id.uuidString.lowercased())"
+        case .setMemberConnection(let id, _): "/api/app/members/\(id.uuidString.lowercased())/connection"
+        case .createMemberGrant(let id, _, _, _), .revokeMemberGrant(let id): "/api/app/members/\(id.uuidString.lowercased())/grant"
         case .prepareQuit: "/api/app/lifecycle"
         }
     }
 
     var isMutation: Bool {
         switch self {
-        case .health, .overview, .balance: false
-        case .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection, .prepareQuit: true
+        case .health, .overview, .balance, .members, .member: false
+        case .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection, .createMember,
+             .renameMember, .revokeMember, .setMemberConnection, .createMemberGrant, .revokeMemberGrant, .prepareQuit: true
         }
     }
 
     var method: String {
         switch self {
-        case .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection: "PUT"
+        case .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection,
+             .renameMember, .setMemberConnection, .createMemberGrant, .revokeMemberGrant: "PUT"
+        case .createMember: "POST"
+        case .revokeMember: "DELETE"
         case .prepareQuit: "POST"
-        case .health, .overview, .balance: "GET"
+        case .health, .overview, .balance, .members, .member: "GET"
         }
     }
 
@@ -51,9 +67,17 @@ enum ServiceEndpoint {
             Data(#"{"action":"revoke"}"#.utf8)
         case .setConnection(let enabled):
             try JSONEncoder().encode(["enabled": enabled])
+        case .createMember(let label), .renameMember(_, let label):
+            try JSONEncoder().encode(["label": label])
+        case .setMemberConnection(_, let enabled):
+            try JSONEncoder().encode(["enabled": enabled])
+        case .createMemberGrant(_, let totalLimit, let singleLimit, let expiresAt):
+            try JSONEncoder().encode(GrantCreateRequest(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt))
+        case .revokeMemberGrant:
+            Data(#"{"action":"revoke"}"#.utf8)
         case .prepareQuit:
             Data(#"{"action":"prepareQuit"}"#.utf8)
-        case .health, .overview, .balance:
+        case .health, .overview, .balance, .members, .member, .revokeMember:
             nil
         }
     }

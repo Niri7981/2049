@@ -109,13 +109,13 @@ export class PurchaseLedger {
           pay_to TEXT NOT NULL, payment_scheme TEXT NOT NULL,
           total_limit INTEGER NOT NULL, single_limit INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('ACTIVE','REVOKED','EXPIRED')),
           created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER);
-        CREATE UNIQUE INDEX IF NOT EXISTS one_active_spend_grant ON spend_grants(status) WHERE status='ACTIVE';
         CREATE TABLE IF NOT EXISTS spend_grant_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, grant_id TEXT NOT NULL, type TEXT NOT NULL, at INTEGER NOT NULL);
         INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('001_app_controls',unixepoch('now') * 1000);
         INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('002_spend_grants',unixepoch('now') * 1000);
         INSERT OR IGNORE INTO app_schema_migrations (id,applied_at) VALUES ('004_purchase_execution_isolation',unixepoch('now') * 1000);
         COMMIT;`);
       this.migrateCardMemberIdentity();
+      this.migrateMemberScopedPurchasesAndGrants();
       const now = this.now(); const zone = this.timeZone();
       this.db.prepare('INSERT OR IGNORE INTO app_budget_clock (id,spending_day,time_zone,next_boundary,last_seen) VALUES (1,?,?,?,?)')
         .run(spendingDay(now, zone), zone, nextSpendingDayBoundary(now, zone), now);
@@ -169,6 +169,32 @@ export class PurchaseLedger {
       throw error;
     }
   }
+  private migrateMemberScopedPurchasesAndGrants() {
+    if (this.db.prepare("SELECT id FROM app_schema_migrations WHERE id='005_member_scope'").get()) return;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      // SQLite cannot remove the old inline UNIQUE(task_id) constraint. Copy every
+      // row, including unknown payments and signed payloads, before replacing it.
+      this.db.exec(`CREATE TABLE purchases_member_scope (
+        id TEXT PRIMARY KEY, task_id TEXT NOT NULL, approval_id TEXT NOT NULL UNIQUE,
+        purchase TEXT NOT NULL, quote TEXT NOT NULL, decision TEXT NOT NULL, status TEXT NOT NULL,
+        amount INTEGER NOT NULL, confirmed_day TEXT, transaction_id TEXT, data TEXT, payload TEXT, owner_card_member_id TEXT,
+        execution_mode TEXT CHECK(execution_mode IN ('simulated','live_devnet')), payment_evidence TEXT);
+        INSERT INTO purchases_member_scope SELECT id,task_id,approval_id,purchase,quote,decision,status,amount,confirmed_day,
+          transaction_id,data,payload,owner_card_member_id,execution_mode,payment_evidence FROM purchases;
+        DROP TABLE purchases;
+        ALTER TABLE purchases_member_scope RENAME TO purchases;
+        CREATE UNIQUE INDEX purchase_request_per_member ON purchases(owner_card_member_id,task_id) WHERE owner_card_member_id IS NOT NULL;
+        CREATE UNIQUE INDEX legacy_purchase_request_unique ON purchases(task_id) WHERE owner_card_member_id IS NULL;
+        CREATE TRIGGER purchases_execution_mode_immutable BEFORE UPDATE OF execution_mode ON purchases
+          WHEN NEW.execution_mode IS NOT OLD.execution_mode
+          BEGIN SELECT RAISE(ABORT, 'purchase execution mode is immutable'); END;
+        DROP INDEX IF EXISTS one_active_spend_grant;
+        CREATE UNIQUE INDEX one_active_spend_grant_per_member ON spend_grants(card_member_id) WHERE status='ACTIVE';`);
+      this.db.prepare("INSERT INTO app_schema_migrations (id,applied_at) VALUES ('005_member_scope',?)").run(this.now());
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
   private atomic<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
     try { const result = fn(); this.db.exec('COMMIT'); return result; }
@@ -191,7 +217,7 @@ export class PurchaseLedger {
   }
   private parseCardMemberRow(row: Record<string, unknown>): CardMember {
     return CardMemberSchema.parse({ id: String(row.id), label: String(row.label), status: String(row.status),
-      createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) });
+      isDefault: Boolean(row.is_default), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) });
   }
   defaultCardMember() {
     if (!this.managed) throw new Error('CardMember identity requires a managed ledger');
@@ -203,6 +229,24 @@ export class PurchaseLedger {
     if (!this.managed) return undefined;
     const row = this.db.prepare('SELECT * FROM card_members WHERE id=?').get(id);
     return row ? this.parseCardMemberRow(row) : undefined;
+  }
+  cardMembers() {
+    if (!this.managed) return [];
+    return this.db.prepare('SELECT * FROM card_members ORDER BY is_default DESC, created_at, id').all().map(row => this.parseCardMemberRow(row));
+  }
+  createCardMember(label: string, now = this.now()) {
+    if (!this.managed) throw new Error('CardMember identity requires a managed ledger');
+    const cleanLabel = CardMemberSchema.shape.label.parse(label);
+    const id = randomUUID();
+    this.atomic(() => this.db.prepare("INSERT INTO card_members (id,label,status,is_default,created_at,updated_at) VALUES (?,?,'ACTIVE',0,?,?)")
+      .run(id, cleanLabel, now, now));
+    return this.cardMember(id)!;
+  }
+  renameCardMember(id: string, label: string, now = this.now()) {
+    const cleanLabel = CardMemberSchema.shape.label.parse(label);
+    const changed = this.atomic(() => this.db.prepare("UPDATE card_members SET label=?,updated_at=? WHERE id=? AND status='ACTIVE'").run(cleanLabel, now, id).changes);
+    if (!changed) throw new Error('CARD_MEMBER_NOT_ACTIVE');
+    return this.cardMember(id)!;
   }
   isCardMemberActive(id: string) { return this.cardMember(id)?.status === 'ACTIVE'; }
   assertCardMemberActive(id: string) {
@@ -234,7 +278,7 @@ export class PurchaseLedger {
     if (input.expiresAt <= now + 60_000 || input.expiresAt > now + 7 * 24 * 60 * 60 * 1000) throw new Error('授权有效期必须在 1 分钟到 7 天之间。');
     return this.atomic(() => {
       this.expireGrants(now);
-      const previous = this.db.prepare("UPDATE spend_grants SET status='REVOKED',revoked_at=? WHERE status='ACTIVE' RETURNING id").all(now);
+      const previous = this.db.prepare("UPDATE spend_grants SET status='REVOKED',revoked_at=? WHERE status='ACTIVE' AND card_member_id=? RETURNING id").all(now, principal.cardMemberId);
       for (const row of previous) this.grantEvent(String(row.id), 'grant.REVOKED_REPLACED', now);
       const version = Number(this.db.prepare('SELECT COALESCE(MAX(version),0)+1 AS version FROM spend_grants').get()!.version);
       const id = randomUUID();
@@ -242,27 +286,31 @@ export class PurchaseLedger {
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'ACTIVE',?,?,NULL)`).run(id, version, principal.cardMemberId, principal.connectionId, principal.connectionGeneration, scope.resourceId, scope.providerId,
         scope.operation, scope.network, scope.assetId, scope.assetDecimals, scope.payTo, scope.paymentScheme, totalLimit, singleLimit, now, input.expiresAt);
       this.grantEvent(id, 'grant.CREATED', now);
-      return this.latestGrantSummary(now, mode)!;
+      return this.latestGrantSummary(now, mode, principal.cardMemberId)!;
     });
   }
-  revokeActiveSpendGrant(now = this.now(), event = 'grant.REVOKED') {
+  revokeActiveSpendGrant(now = this.now(), event = 'grant.REVOKED', memberId?: string) {
     if (!this.managed) return false;
     return this.atomic(() => {
-      const rows = this.db.prepare("UPDATE spend_grants SET status='REVOKED',revoked_at=? WHERE status='ACTIVE' RETURNING id").all(now);
+      const rows = memberId
+        ? this.db.prepare("UPDATE spend_grants SET status='REVOKED',revoked_at=? WHERE status='ACTIVE' AND card_member_id=? RETURNING id").all(now, memberId)
+        : this.db.prepare("UPDATE spend_grants SET status='REVOKED',revoked_at=? WHERE status='ACTIVE' RETURNING id").all(now);
       for (const row of rows) this.grantEvent(String(row.id), event, now);
       return rows.length > 0;
     });
   }
-  activeSpendGrant(now = this.now()) {
+  activeSpendGrant(now = this.now(), memberId?: string) {
     if (!this.managed) return undefined;
     return this.atomic(() => {
       this.expireGrants(now);
-      const row = this.db.prepare("SELECT * FROM spend_grants WHERE status='ACTIVE' ORDER BY version DESC LIMIT 1").get();
+      const row = memberId
+        ? this.db.prepare("SELECT * FROM spend_grants WHERE status='ACTIVE' AND card_member_id=? ORDER BY version DESC LIMIT 1").get(memberId)
+        : this.db.prepare("SELECT * FROM spend_grants WHERE status='ACTIVE' ORDER BY version DESC LIMIT 1").get();
       return row ? this.parseGrantRow(row) : undefined;
     });
   }
   spendAuthority(principal: SpendPrincipal, operation: string, now = this.now()): SpendAuthorityBinding {
-    const parsed = SpendPrincipalSchema.parse(principal); const grant = this.activeSpendGrant(now);
+    const parsed = SpendPrincipalSchema.parse(principal); const grant = this.activeSpendGrant(now, parsed.cardMemberId);
     this.assertCardMemberActive(parsed.cardMemberId);
     if (!grant || grant.cardMemberId !== parsed.cardMemberId || grant.operation !== operation) {
       throw new Error('当前 Agent 连接没有可用的消费授权。');
@@ -285,13 +333,15 @@ export class PurchaseLedger {
         connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation };
     });
   }
-  spendGrantSummary(now = this.now(), mode?: PurchaseExecutionMode): SpendGrantSummary | null {
+  spendGrantSummary(now = this.now(), mode?: PurchaseExecutionMode, memberId?: string): SpendGrantSummary | null {
     if (!this.managed) return null;
-    return this.atomic(() => this.latestGrantSummary(now, mode));
+    return this.atomic(() => this.latestGrantSummary(now, mode, memberId));
   }
-  private latestGrantSummary(now: number, mode?: StoredPurchaseExecutionMode): SpendGrantSummary | null {
+  private latestGrantSummary(now: number, mode?: StoredPurchaseExecutionMode, memberId?: string): SpendGrantSummary | null {
     this.expireGrants(now);
-    const row = this.db.prepare('SELECT * FROM spend_grants ORDER BY version DESC LIMIT 1').get();
+    const row = memberId
+      ? this.db.prepare('SELECT * FROM spend_grants WHERE card_member_id=? ORDER BY version DESC LIMIT 1').get(memberId)
+      : this.db.prepare('SELECT * FROM spend_grants ORDER BY version DESC LIMIT 1').get();
     if (!row) return null;
     const grant = this.parseGrantRow(row); const committed = this.grantCommitted(grant.id, mode);
     return { id: grant.id, version: grant.version, status: grant.status, resourceId: grant.resourceId, providerId: grant.providerId, operation: grant.operation,
@@ -335,8 +385,8 @@ export class PurchaseLedger {
   /** Called synchronously immediately before the signer and before submission. */
   assertCanSign(approvalId: string, now = this.now(), validate?: (record: PurchaseRecord) => void) {
     if (this.stopping) throw new Error('Service is stopping');
-    const row = this.db.prepare('SELECT task_id FROM purchases WHERE approval_id=?').get(approvalId);
-    const record = row ? this.get(String(row.task_id)) : undefined;
+    const row = this.db.prepare('SELECT task_id,owner_card_member_id FROM purchases WHERE approval_id=?').get(approvalId);
+    const record = row ? this.get(String(row.task_id), row.owner_card_member_id ? String(row.owner_card_member_id) : undefined) : undefined;
     if (record?.executionMode !== 'live_devnet') throw new Error('PURCHASE_EXECUTION_MODE_MISMATCH');
     if (record?.status !== 'PAYING' || record.intent.expiresAt <= now) throw new Error('Approval inactive or expired');
     validate?.(record);
@@ -359,10 +409,16 @@ export class PurchaseLedger {
     });
   }
   pendingRecovery() {
-    return this.db.prepare("SELECT task_id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND data IS NULL)").all().map(row => String(row.task_id));
+    return this.db.prepare("SELECT task_id,owner_card_member_id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN') OR (status='PAID' AND data IS NULL)").all()
+      .map(row => ({ requestId: String(row.task_id), ownerCardMemberId: row.owner_card_member_id ? String(row.owner_card_member_id) : undefined }));
   }
-  get(idempotencyKey: string): SpendReservation | undefined {
-    const row = this.db.prepare('SELECT * FROM purchases WHERE task_id=?').get(idempotencyKey);
+  get(idempotencyKey: string, memberId?: string): SpendReservation | undefined {
+    const row = memberId
+      ? this.db.prepare('SELECT * FROM purchases WHERE task_id=? AND owner_card_member_id=?').get(idempotencyKey, memberId)
+      : this.managed
+        ? this.db.prepare(`SELECT * FROM purchases WHERE task_id=? ORDER BY
+          CASE WHEN owner_card_member_id=(SELECT id FROM card_members WHERE is_default=1) THEN 0 ELSE 1 END, rowid LIMIT 1`).get(idempotencyKey)
+        : this.db.prepare('SELECT * FROM purchases WHERE task_id=?').get(idempotencyKey);
     if (!row) return undefined;
     const ownerCardMemberId = row.owner_card_member_id ? String(row.owner_card_member_id) : undefined;
     const intent = parseStoredSpendIntent(JSON.parse(String(row.purchase)), ownerCardMemberId);
@@ -400,7 +456,8 @@ export class PurchaseLedger {
     if (mode !== 'UNKNOWN') PurchaseExecutionModeSchema.parse(mode);
     if (ownerCardMemberId && intent.authority && ownerCardMemberId !== intent.authority.cardMemberId) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
     return this.atomic(() => {
-      const existing = this.get(intent.idempotencyKey);
+      const memberId = ownerCardMemberId ?? intent.authority?.cardMemberId;
+      const existing = this.get(intent.idempotencyKey, memberId);
       if (existing) {
         if (this.requireSpendGrant && existing.ownerCardMemberId !== (ownerCardMemberId ?? intent.authority?.cardMemberId)) {
           throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
@@ -422,7 +479,7 @@ export class PurchaseLedger {
         .run(intent.id, intent.idempotencyKey, randomUUID(), JSON.stringify(intent), JSON.stringify(quote), JSON.stringify(decision), decision.decision, intent.amount,
           ownerCardMemberId ?? intent.authority?.cardMemberId ?? null, mode === 'UNKNOWN' ? null : mode);
       this.event(intent.id, `authority.${decision.decision}`);
-      return this.get(intent.idempotencyKey)!;
+      return this.get(intent.idempotencyKey, memberId)!;
     });
   }
   /** Release only approvals that never reached the signer. Caller holds the write lock. */
@@ -431,10 +488,10 @@ export class PurchaseLedger {
     for (const row of rows) this.event(String(row.id), 'purchase.EXPIRED');
   }
   releaseExpired(now = Date.now()) { this.atomic(() => this.expireUnclaimed(now)); }
-  saveAnswer(taskId: string, answer: string) {
+  saveAnswer(taskId: string, answer: string, memberId?: string) {
     if (!answer.trim() || answer.length > 12000) throw new Error('Invalid final answer');
     this.atomic(() => {
-      const record = this.get(taskId);
+      const record = this.get(taskId, memberId);
       if (record?.status !== 'PAID' || !record.data) throw new Error('Answer requires paid data');
       const result = this.db.prepare('INSERT OR IGNORE INTO purchase_answers (purchase_id,answer) VALUES (?,?)').run(record.intent.id, answer);
       if (result.changes) this.event(record.intent.id, 'task.ANSWERED');
@@ -443,9 +500,9 @@ export class PurchaseLedger {
   claim(approvalId: string, now = this.now(), validate?: (record: PurchaseRecord) => void, expectedMode?: PurchaseExecutionMode): SpendReservation {
     return this.atomic(() => {
       if (this.stopping) throw new Error('Service is stopping');
-      const row = this.db.prepare('SELECT task_id FROM purchases WHERE approval_id=?').get(approvalId);
+      const row = this.db.prepare('SELECT task_id,owner_card_member_id FROM purchases WHERE approval_id=?').get(approvalId);
       if (!row) throw new Error('Unknown approval');
-      const record = this.get(String(row.task_id))!;
+      const record = this.get(String(row.task_id), row.owner_card_member_id ? String(row.owner_card_member_id) : undefined)!;
       if (expectedMode && record.executionMode !== expectedMode) throw new Error('PURCHASE_EXECUTION_MODE_MISMATCH');
       if (record.status !== 'APPROVED' || record.decision.decision !== 'APPROVED' || record.intent.expiresAt <= now) throw new Error('Approval inactive or expired');
       validate?.(record);
@@ -462,7 +519,7 @@ export class PurchaseLedger {
       if (this.db.prepare(`SELECT id FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN')${modeFilter} LIMIT 1`).get()) throw new Error('Another payment requires reconciliation');
       this.db.prepare("UPDATE purchases SET status='PAYING' WHERE approval_id=? AND status='APPROVED'").run(approvalId);
       this.event(record.intent.id, 'payment.PAYING');
-      return this.get(record.intent.idempotencyKey)!;
+      return this.get(record.intent.idempotencyKey, record.ownerCardMemberId)!;
     });
   }
   savePayload(approvalId: string, payload: unknown, validate?: (record: PurchaseRecord) => void) {
@@ -493,9 +550,9 @@ export class PurchaseLedger {
       || verification.settlementConfirmed !== true || !['confirmed', 'finalized'].includes(verification.confirmationStatus)) {
       throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID');
     }
-    const row = this.db.prepare('SELECT task_id,payload,payment_evidence,status,execution_mode FROM purchases WHERE approval_id=?').get(approvalId);
+    const row = this.db.prepare('SELECT task_id,owner_card_member_id,payload,payment_evidence,status,execution_mode FROM purchases WHERE approval_id=?').get(approvalId);
     if (!row) throw new Error('Unknown approval');
-    const record = this.get(String(row.task_id));
+    const record = this.get(String(row.task_id), row.owner_card_member_id ? String(row.owner_card_member_id) : undefined);
     if (!record || record.executionMode === 'simulated' || !row.payload) throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID');
     let payload: unknown;
     try { payload = JSON.parse(String(row.payload)); } catch { throw new Error('LIVE_PAYMENT_EVIDENCE_INVALID'); }
@@ -519,9 +576,9 @@ export class PurchaseLedger {
   finish(approvalId: string, result: { transaction: string; data: MarketSnapshotOutput }, now = Date.now()) {
     this.atomic(() => {
       const data = MarketSnapshotOutputSchema.parse(result.data);
-      const row = this.db.prepare('SELECT task_id,status,execution_mode FROM purchases WHERE approval_id=?').get(approvalId);
+      const row = this.db.prepare('SELECT task_id,owner_card_member_id,status,execution_mode FROM purchases WHERE approval_id=?').get(approvalId);
       if (!row) throw new Error('Unknown approval');
-      const record = this.get(String(row.task_id));
+      const record = this.get(String(row.task_id), row.owner_card_member_id ? String(row.owner_card_member_id) : undefined);
       if (record?.executionMode === 'simulated') {
         if (!result.transaction.startsWith('simulated-') || !['PAYING', 'PAID'].includes(record.status)) throw new Error('Simulated purchase cannot be completed from this state');
         if (record.status !== 'PAID') {
@@ -562,15 +619,18 @@ export class PurchaseLedger {
       paid: String(paid), reserved: String(reserved), remaining: controls.dailyBudget === null ? null : String(Math.max(0, controls.dailyBudget - paid - reserved)), paused: controls.paused,
       unresolved: Number(this.db.prepare(`SELECT COUNT(*) AS n FROM purchases WHERE status IN ('PAYING','PAYMENT_UNKNOWN')${modeFilter}`).get()!.n) };
   }
-  list(limit = 50) {
+  list(limit = 50, memberId?: string) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid record limit');
     return this.db.prepare(`SELECT task_id,status,amount,transaction_id,data IS NOT NULL AS delivered,execution_mode,json_extract(purchase,'$.createdAt') AS created_at,
       json_extract(purchase,'$.offerId') AS offer_id,json_extract(purchase,'$.reason') AS reason,json_extract(decision,'$.reason') AS decision_reason,
       json_extract(purchase,'$.network') AS network,json_extract(purchase,'$.currency') AS currency,
       COALESCE(json_extract(purchase,'$.assetId'),json_extract(purchase,'$.mint')) AS asset_id,
       COALESCE(json_extract(purchase,'$.assetDecimals'),json_extract(purchase,'$.decimals')) AS asset_decimals,
-      json_extract(purchase,'$.authority.grantId') AS grant_id FROM purchases ORDER BY created_at DESC LIMIT ?`).all(limit)
-      .map(row => ({ purchaseId: String(row.task_id), status: currentAuthorityStatus(String(row.status)), deliveryStatus: row.status === 'PAID' ? (row.delivered ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
+      json_extract(purchase,'$.authority.grantId') AS grant_id,owner_card_member_id FROM purchases
+      ${memberId ? 'WHERE owner_card_member_id=?' : ''} ORDER BY created_at DESC,id DESC LIMIT ?`)
+      .all(...(memberId ? [memberId, limit] : [limit]))
+      .map(row => ({ purchaseId: String(row.task_id), ownerCardMemberId: row.owner_card_member_id ? String(row.owner_card_member_id) : null,
+        status: currentAuthorityStatus(String(row.status)), deliveryStatus: row.status === 'PAID' ? (row.delivered ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
         amount: String(row.amount), createdAt: Number(row.created_at), transaction: row.transaction_id ? String(row.transaction_id) : null,
         executionMode: storedExecutionMode(row.execution_mode), network: row.network ? String(row.network) : null,
         currency: row.currency ? String(row.currency) : null, assetId: row.asset_id ? String(row.asset_id) : null,
@@ -578,7 +638,10 @@ export class PurchaseLedger {
         ...(row.offer_id ? { offerId: String(row.offer_id) } : {}), ...(row.reason ? { reason: String(row.reason) } : {}),
         ...(row.decision_reason ? { decisionReason: String(row.decision_reason) } : {}), ...(row.grant_id ? { grantId: String(row.grant_id) } : {}) }));
   }
-  events(taskId: string) { return this.db.prepare('SELECT e.sequence,e.type,e.at FROM purchase_events e JOIN purchases p ON p.id=e.purchase_id WHERE p.task_id=? ORDER BY e.sequence').all(taskId); }
+  events(taskId: string, memberId?: string) {
+    return this.db.prepare(`SELECT e.sequence,e.type,e.at FROM purchase_events e JOIN purchases p ON p.id=e.purchase_id
+      WHERE p.task_id=? ${memberId ? 'AND p.owner_card_member_id=?' : ''} ORDER BY e.sequence`).all(...(memberId ? [taskId, memberId] : [taskId]));
+  }
   private denied(reason: string, committed: number, controls: SpendingControls): AuthorityDecision {
     return { decision: 'DENIED', reason, committedBefore: committed, remainingAfter: controls.dailyBudget === null ? 0 : Math.max(0, controls.dailyBudget - committed) };
   }

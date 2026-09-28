@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: Request) {
   const app = appRuntime();
   let principal;
-  try { principal = app.agentConnection.authenticate(request, 'request_purchase'); }
+  try { principal = app.authenticateAgent(request, 'request_purchase'); }
   catch { return Response.json({ code: 'AGENT_UNAUTHORIZED' }, { status: 401 }); }
   try {
     const input = PurchaseRequestInputSchema.parse(await smallJson(request));

@@ -5,7 +5,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   const app = appRuntime();
-  try { app.agentConnection.authenticate(request); }
+  let principal;
+  try { principal = app.authenticateAgent(request); }
   catch { return Response.json({ code: 'AGENT_UNAUTHORIZED' }, { status: 401 }); }
   try {
     const query = new URL(request.url).searchParams;
@@ -14,8 +15,9 @@ export async function GET(request: Request) {
     if (operation === 'status') {
       const overview = await app.overview();
       const balance = await app.balance(overview.wallet.address);
-      return Response.json({ wallet: { ...overview.wallet, balance }, budget: overview.budget, grant: overview.grant,
-        spendingAuthorized: overview.connection.enabled && overview.grant?.status === 'ACTIVE',
+      const member = app.memberOverview(principal.cardMemberId);
+      return Response.json({ wallet: { ...overview.wallet, balance }, budget: overview.budget, grant: member.grant,
+        spendingAuthorized: member.connection.enabled && member.grant?.status === 'ACTIVE',
         paymentEnabled: overview.service.purchaseMode === 'live_devnet' }, { headers: { 'cache-control': 'no-store' } });
     }
     if (operation !== 'quote') return Response.json({ code: 'UNKNOWN_OPERATION' }, { status: 400 });

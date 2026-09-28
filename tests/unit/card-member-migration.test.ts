@@ -32,13 +32,14 @@ it('migrates historical connection owners without merging different connectionId
   const insertPurchase = database.prepare('INSERT INTO purchases VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
   const intent = (connectionId: string, generation: number) => JSON.stringify({ authority: { connectionId, connectionGeneration: generation } });
   insertPurchase.run('p1', 'request-1', 'approval-1', intent(firstConnection, 1), evidence.quote, evidence.decision, 'PAID', 10, '2026-09-22', 'transaction-1', evidence.data, evidence.payload);
-  insertPurchase.run('p2', 'request-2', 'approval-2', intent(firstConnection, 7), evidence.quote, evidence.decision, 'PAID', 10, '2026-09-22', 'transaction-2', evidence.data, evidence.payload);
+  insertPurchase.run('p2', 'request-2', 'approval-2', intent(firstConnection, 7), evidence.quote, evidence.decision, 'PAYMENT_UNKNOWN', 10, null, 'transaction-2', null, evidence.payload);
   insertPurchase.run('p3', 'request-3', 'approval-3', intent(secondConnection, 1), evidence.quote, evidence.decision, 'PAID', 10, '2026-09-22', 'transaction-3', evidence.data, evidence.payload);
   database.prepare("INSERT INTO purchase_events (purchase_id,type,at) VALUES ('p1','payment.PAID',1)").run();
   database.close();
 
   const ledger = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => 10, timeZone: () => 'UTC' });
   const defaultMemberId = ledger.defaultCardMember().id;
+  expect(ledger.pendingRecovery()).toEqual([{ requestId: 'request-2', ownerCardMemberId: expect.any(String) }]);
   ledger.close();
 
   const migrated = new DatabaseSync(path, { readOnly: true });
@@ -50,7 +51,7 @@ it('migrates historical connection owners without merging different connectionId
     expect(defaultMemberId).not.toBe(rows[2]?.owner_card_member_id);
     expect(rows.map(row => [row.quote, row.decision, row.data, row.payload])).toEqual([
       [evidence.quote, evidence.decision, evidence.data, evidence.payload],
-      [evidence.quote, evidence.decision, evidence.data, evidence.payload],
+      [evidence.quote, evidence.decision, null, evidence.payload],
       [evidence.quote, evidence.decision, evidence.data, evidence.payload],
     ]);
     expect(migrated.prepare('SELECT COUNT(*) AS count FROM purchases').get()?.count).toBe(3);

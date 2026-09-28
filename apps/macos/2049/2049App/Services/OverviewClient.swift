@@ -12,6 +12,9 @@ enum OverviewLoadError: Error {
     case dataDirectoryInUse
     case invalidRequest
     case writeRejected
+    case memberNotFound
+    case memberInactive
+    case defaultMemberRequired
 
     var message: String {
         switch self {
@@ -26,6 +29,9 @@ enum OverviewLoadError: Error {
         case .dataDirectoryInUse: "2049 data is open in another service"
         case .invalidRequest: "Check the entered values and try again"
         case .writeRejected: "The setting change was not confirmed"
+        case .memberNotFound: "This agent is no longer available"
+        case .memberInactive: "This agent has been revoked"
+        case .defaultMemberRequired: "The default agent cannot be revoked"
         }
     }
 }
@@ -74,6 +80,67 @@ struct OverviewClient {
         try await write(.setConnection(enabled))
     }
 
+    func loadMembers() async throws -> [CardMemberSummary] {
+        try await read(.members, as: MembersResponse.self).members
+    }
+
+    func loadMember(_ id: UUID) async throws -> CardMemberSnapshot {
+        try await read(.member(id), as: CardMemberSnapshot.self)
+    }
+
+    func createMember(label: String) async throws -> CardMemberSnapshot {
+        try await mutate(.createMember(label), as: CardMemberSnapshot.self, successStatus: 201)
+    }
+
+    func renameMember(_ id: UUID, label: String) async throws -> CardMemberSnapshot {
+        try await mutate(.renameMember(id, label), as: CardMemberSnapshot.self)
+    }
+
+    func revokeMember(_ id: UUID) async throws -> CardMemberSnapshot {
+        try await mutate(.revokeMember(id), as: CardMemberSnapshot.self)
+    }
+
+    func setMemberConnection(_ id: UUID, enabled: Bool) async throws {
+        try await write(.setMemberConnection(id, enabled))
+    }
+
+    func createMemberGrant(_ id: UUID, totalLimit: String, singleLimit: String, expiresAt: Int64) async throws {
+        try await write(.createMemberGrant(id, totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt))
+    }
+
+    func revokeMemberGrant(_ id: UUID) async throws {
+        try await write(.revokeMemberGrant(id))
+    }
+
+    private func read<T: Decodable>(_ endpoint: ServiceEndpoint, as type: T.Type) async throws -> T {
+        let (data, response) = try await request(endpoint)
+        if response.statusCode == 401 || response.statusCode == 403 { throw OverviewLoadError.unauthorized }
+        if response.statusCode == 404 { throw OverviewLoadError.memberNotFound }
+        guard response.statusCode == 200, data.count <= 1_048_576,
+              let value = try? JSONDecoder().decode(type, from: data) else { throw OverviewLoadError.invalidResponse }
+        return value
+    }
+
+    private func mutate<T: Decodable>(_ endpoint: ServiceEndpoint, as type: T.Type, successStatus: Int = 200) async throws -> T {
+        let (data, response) = try await request(endpoint)
+        if response.statusCode == 401 || response.statusCode == 403 { throw OverviewLoadError.unauthorized }
+        guard data.count <= 1_048_576 else { throw OverviewLoadError.writeRejected }
+        guard response.statusCode == successStatus else {
+            if let code = try? JSONDecoder().decode(ManagementErrorResponse.self, from: data).code {
+                switch code {
+                case "INVALID_REQUEST": throw OverviewLoadError.invalidRequest
+                case "CARD_MEMBER_NOT_FOUND": throw OverviewLoadError.memberNotFound
+                case "CARD_MEMBER_NOT_ACTIVE": throw OverviewLoadError.memberInactive
+                case "DEFAULT_CARD_MEMBER_REQUIRED": throw OverviewLoadError.defaultMemberRequired
+                default: break
+                }
+            }
+            throw OverviewLoadError.writeRejected
+        }
+        guard let value = try? JSONDecoder().decode(type, from: data) else { throw OverviewLoadError.invalidResponse }
+        return value
+    }
+
     private func write(_ endpoint: ServiceEndpoint) async throws {
         let (data, response) = try await request(endpoint)
         if response.statusCode == 401 || response.statusCode == 403 { throw OverviewLoadError.unauthorized }
@@ -82,6 +149,8 @@ struct OverviewClient {
         if let code = try? JSONDecoder().decode(ManagementErrorResponse.self, from: data).code {
             if code == "INVALID_REQUEST" { throw OverviewLoadError.invalidRequest }
             if code == "DATA_DIRECTORY_IN_USE" { throw OverviewLoadError.dataDirectoryInUse }
+            if code == "CARD_MEMBER_NOT_FOUND" { throw OverviewLoadError.memberNotFound }
+            if code == "CARD_MEMBER_NOT_ACTIVE" { throw OverviewLoadError.memberInactive }
         }
         throw OverviewLoadError.writeRejected
     }
@@ -111,6 +180,10 @@ struct OverviewClient {
 
 private struct BalanceResponse: Decodable {
     let balance: AppBalance
+}
+
+private struct MembersResponse: Decodable {
+    let members: [CardMemberSummary]
 }
 
 private struct ManagementErrorResponse: Decodable {

@@ -6,10 +6,11 @@ import { readConnection } from '../src/modules/mcp/connection';
 import { appRequestTimeout } from '../src/modules/mcp/request-timeout';
 
 const directory = process.env.APP2049_DATA_DIR || join(homedir(), 'Library', 'Application Support', '2049');
+const memberId = process.env.APP2049_CARD_MEMBER_ID;
 // Capture one connection capability. Revocation/re-enable requires a new MCP session.
 let connection: ReturnType<typeof readConnection> | undefined;
 async function callApp(path: string, init?: RequestInit) {
-  connection ??= readConnection(directory);
+  connection ??= readConnection(directory, memberId);
   const response = await fetch(`${connection.origin}${path}`, {
     headers: { authorization: `Bearer ${connection.token}` },
     redirect: 'error', signal: AbortSignal.timeout(appRequestTimeout(path)), ...init,

@@ -10,6 +10,7 @@ struct AppOverview: Decodable {
 
     struct Service: Decodable {
         let status: Status
+        let isDefault: Bool
         let purchaseMode: PurchaseMode
 
         enum Status: String, Decodable {
@@ -115,4 +116,39 @@ struct AppBalance: Decodable {
     let amount: String?
     let display: String
     let available: Bool
+}
+
+/// Backend-owned member state. The budget is shared; grant, connection and purchases belong to one member.
+struct CardMemberSnapshot: Decodable {
+    let member: Member
+    let connection: AppOverview.Connection
+    let grant: AppOverview.Grant?
+    let purchases: [AppOverview.Purchase]
+    let budget: Budget
+
+    struct Member: Decodable, Identifiable {
+        let id: UUID
+        let label: String
+        let status: Status
+        let createdAt: Int64
+        let updatedAt: Int64
+
+        enum Status: String, Decodable {
+            case active = "ACTIVE", revoked = "REVOKED"
+        }
+    }
+
+    struct Budget: Decodable {
+        let dailyLimit: MinorUnits?
+        let paid: MinorUnits
+        let reserved: MinorUnits
+        let remaining: MinorUnits?
+        let paused: Bool
+    }
+}
+
+struct CardMemberSummary: Decodable {
+    let member: CardMemberSnapshot.Member
+    let connection: AppOverview.Connection
+    let grant: AppOverview.Grant?
 }

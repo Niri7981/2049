@@ -80,13 +80,12 @@ export async function requestMarketPurchase(raw: unknown, options: {
       try { await (options.pay ?? executeApprovedPayment)(options.ledger, record.approvalId, options.config, endpoint); }
       catch { /* Return the durable state; a duplicate never creates another claim. */ }
     } else if (['PAYING', 'PAYMENT_UNKNOWN'].includes(record.status) || record.deliveryStatus === 'PENDING') {
-      await (options.recover ?? recoverApprovedPayment)(options.ledger, input.requestId, options.config, endpoint);
+      await (options.recover ?? recoverApprovedPayment)(options.ledger, input.requestId, options.config, endpoint, undefined, principal.cardMemberId);
     }
-    return result(options.ledger.get(input.requestId)!, input.offerId, reused, executionMode);
+    return result(options.ledger.get(input.requestId, principal.cardMemberId)!, input.offerId, reused, executionMode);
   }
-  const existing = options.ledger.get(input.requestId);
+  const existing = options.ledger.get(input.requestId, principal.cardMemberId);
   if (existing) {
-    if (existing.ownerCardMemberId !== principal.cardMemberId) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
     options.ledger.assertReplayAllowed(existing, executionMode);
     if (existing.intent.requestHash !== requestHash || existing.intent.offerId !== input.offerId) throw new Error('REQUEST_ID_CONFLICT');
     return complete(existing, true);
@@ -118,9 +117,8 @@ export async function requestMarketPurchase(raw: unknown, options: {
     executionBinding: paymentBinding(config, endpoint.href, quote), authority, offerId: input.offerId, reason: input.reason, now: requestStartedAt });
   // Another request can finish its quote while this one is in flight. Reuse its
   // immutable nonce/quote instead of comparing or replacing it with a new one.
-  const winner = options.ledger.get(input.requestId);
+  const winner = options.ledger.get(input.requestId, principal.cardMemberId);
   if (winner) {
-    if (winner.ownerCardMemberId !== principal.cardMemberId) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
     options.ledger.assertReplayAllowed(winner, executionMode);
     if (winner.intent.requestHash !== requestHash || winner.intent.offerId !== input.offerId) throw new Error('REQUEST_ID_CONFLICT');
     return complete(winner, true);

@@ -34,6 +34,7 @@ function localTimeZone() {
 export class AppRuntime {
   readonly ledger: PurchaseLedger;
   readonly agentConnection: AgentConnection;
+  private readonly memberConnections = new Map<string, AgentConnection>();
   private readonly owner: ReturnType<typeof acquireDataDirectoryOwnership>;
   private accepting = true;
   private active = new Set<Promise<unknown>>();
@@ -47,8 +48,11 @@ export class AppRuntime {
     try {
       ledger = new PurchaseLedger(join(directory, 'app-ledger.sqlite'), { managed: true, requireSpendGrant: true, timeZone: dependencies.timeZone ?? localTimeZone, now: dependencies.now });
       this.ledger = ledger;
-      const cardMember = this.ledger.defaultCardMember();
-      this.agentConnection = new AgentConnection(directory, cardMember.id, id => this.ledger.isCardMemberActive(id));
+      const defaultMemberId = this.ledger.defaultCardMember().id;
+      for (const member of this.ledger.cardMembers()) {
+        this.memberConnections.set(member.id, new AgentConnection(directory, member.id, id => this.ledger.isCardMemberActive(id), member.id !== defaultMemberId));
+      }
+      this.agentConnection = this.memberConnections.get(defaultMemberId)!;
       // Connection tokens intentionally do not survive a backend restart. The
       // stable CardMember keeps ownership, but the previous spend delegation is revoked.
       this.ledger.revokeActiveSpendGrant(dependencies.now?.() ?? Date.now(), 'grant.REVOKED_BACKEND_RESTART');
@@ -94,9 +98,10 @@ export class AppRuntime {
         const wallet = await this.initializeWallet();
         const config = loadPaymentConfig();
         if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Recovery wallet mismatch');
-        for (const id of pending) {
+        for (const item of pending) {
           if (!this.accepting) break;
-          try { await recoverApprovedPayment(this.ledger, id, config, paymentEndpoint(origin, this.ledger.get(id)?.intent.offerId)); }
+          try { await recoverApprovedPayment(this.ledger, item.requestId, config,
+            paymentEndpoint(origin, this.ledger.get(item.requestId, item.ownerCardMemberId)?.intent.offerId), () => {}, item.ownerCardMemberId); }
           catch { /* Keep mismatched or unavailable original payments frozen. */ }
         }
       }
@@ -106,7 +111,7 @@ export class AppRuntime {
   async prepareQuit() {
     this.accepting = false;
     this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED_SERVICE_EXIT');
-    this.agentConnection.setEnabled(false, '');
+    for (const connection of this.memberConnections.values()) connection.setEnabled(false, '');
     this.ledger.stopPayments();
     await Promise.allSettled([...this.active]);
   }
@@ -117,25 +122,65 @@ export class AppRuntime {
     const wallet = await this.initializeWallet();
     return assembleAuthorityOverview(this.ledger, this.agentConnection, wallet,
       { status: this.accepting ? 'running' : 'stopping', recoveryStatus: this.recoveryStatus },
-      this.dependencies.now?.() ?? Date.now(), purchaseExecutionMode());
+      this.dependencies.now?.() ?? Date.now(), purchaseExecutionMode(), this.ledger.defaultCardMember().id);
+  }
+  private connectionFor(memberId: string) {
+    const connection = this.memberConnections.get(memberId);
+    if (!connection || !this.ledger.cardMember(memberId)) throw new Error('CARD_MEMBER_NOT_FOUND');
+    return connection;
+  }
+  authenticateAgent(request: Request, capability: 'read' | 'request_purchase' = 'read') {
+    for (const connection of this.memberConnections.values()) {
+      try { return connection.authenticate(request, capability); } catch { /* Try another member capability. */ }
+    }
+    throw new Error('AGENT_UNAUTHORIZED');
+  }
+  memberOverview(memberId: string) {
+    const member = this.ledger.cardMember(memberId);
+    if (!member) throw new Error('CARD_MEMBER_NOT_FOUND');
+    const now = this.dependencies.now?.() ?? Date.now();
+    return { member, connection: this.connectionFor(memberId).status(),
+      grant: this.spendGrantSummary(memberId), purchases: this.ledger.list(50, memberId),
+      budget: this.ledger.managedSummary(now, purchaseExecutionMode()) };
+  }
+  membersOverview() { return this.ledger.cardMembers().map(member => ({ member, connection: this.connectionFor(member.id).status(),
+    grant: this.spendGrantSummary(member.id) })); }
+  createCardMember(label: string) {
+    const member = this.ledger.createCardMember(label);
+    this.memberConnections.set(member.id, new AgentConnection(this.directory, member.id, id => this.ledger.isCardMemberActive(id), true));
+    return this.memberOverview(member.id);
+  }
+  renameCardMember(memberId: string, label: string) {
+    this.ledger.renameCardMember(memberId, label);
+    return this.memberOverview(memberId);
+  }
+  revokeCardMember(memberId: string) {
+    if (memberId === this.ledger.defaultCardMember().id) throw new Error('DEFAULT_CARD_MEMBER_REQUIRED');
+    const connection = this.connectionFor(memberId);
+    if (!this.ledger.revokeCardMember(memberId)) throw new Error('CARD_MEMBER_NOT_ACTIVE');
+    connection.setEnabled(false, '');
+    return this.memberOverview(memberId);
   }
   setDailyLimit(value: string | null) { return this.ledger.setDailyLimit(value); }
-  spendGrantSummary() {
-    return this.ledger.spendGrantSummary(this.dependencies.now?.() ?? Date.now(), purchaseExecutionMode());
+  spendGrantSummary(memberId = this.ledger.defaultCardMember().id) {
+    return this.ledger.spendGrantSummary(this.dependencies.now?.() ?? Date.now(), purchaseExecutionMode(), memberId);
   }
   setPaused(value: boolean) { return this.ledger.setPaused(value); }
-  setAgentConnection(enabled: boolean, origin: string) {
-    this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED_CONNECTION_CHANGED');
-    this.agentConnection.setEnabled(enabled, origin);
-    return this.agentConnection.status();
+  setAgentConnection(enabled: boolean, origin: string, memberId = this.ledger.defaultCardMember().id) {
+    this.ledger.assertCardMemberActive(memberId);
+    this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED_CONNECTION_CHANGED', memberId);
+    const connection = this.connectionFor(memberId);
+    connection.setEnabled(enabled, origin);
+    return connection.status();
   }
-  createSpendGrant(raw: unknown) {
+  createSpendGrant(raw: unknown, memberId = this.ledger.defaultCardMember().id) {
     const input = SpendGrantInputSchema.parse(raw);
     const now = this.dependencies.now?.() ?? Date.now();
     const total = Number(input.totalLimit); const single = Number(input.singleLimit);
     if (total <= 0 || single <= 0 || single > total) throw new Error('授权金额必须为正数，且单笔上限不能大于授权总额。');
     if (input.expiresAt <= now + 60_000 || input.expiresAt > now + 7 * 24 * 60 * 60 * 1000) throw new Error('授权有效期必须在 1 分钟到 7 天之间。');
-    const principal = this.agentConnection.rotateCredential();
+    const connection = this.connectionFor(memberId);
+    const principal = connection.rotateCredential();
     if (!principal) throw new Error('请先启用 Agent 连接。');
     try {
       const payTo = process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
@@ -150,14 +195,14 @@ export class AppRuntime {
         paymentScheme: 'exact',
       }, now, purchaseExecutionMode());
     } catch (error) {
-      this.ledger.revokeActiveSpendGrant(now, 'grant.REVOKED_CONNECTION_ROTATION_FAILED');
-      this.agentConnection.rotateCredential();
+      this.ledger.revokeActiveSpendGrant(now, 'grant.REVOKED_CONNECTION_ROTATION_FAILED', memberId);
+      connection.rotateCredential();
       throw error;
     }
   }
-  revokeSpendGrant() {
-    const revoked = this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now());
-    this.agentConnection.rotateCredential();
+  revokeSpendGrant(memberId = this.ledger.defaultCardMember().id) {
+    const revoked = this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED', memberId);
+    this.connectionFor(memberId).rotateCredential();
     return revoked;
   }
   private authority(principal?: SpendPrincipal) {

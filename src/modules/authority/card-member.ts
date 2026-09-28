@@ -4,6 +4,7 @@ export const CardMemberSchema = z.object({
   id: z.string().uuid(),
   label: z.string().trim().min(1).max(120),
   status: z.enum(['ACTIVE', 'REVOKED']),
+  isDefault: z.boolean(),
   createdAt: z.number().int().nonnegative().safe(),
   updatedAt: z.number().int().nonnegative().safe(),
 }).strict();

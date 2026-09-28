@@ -19,27 +19,31 @@ export const ConnectionSchema = z.object({
   generation: z.number().int().positive().safe(),
   capabilities: z.array(CapabilitySchema).min(1),
 }).strict();
-export const connectionFile = (directory: string) => join(directory, 'mcp-connection.json');
+export const connectionFile = (directory: string, memberId?: string) => memberId
+  ? join(directory, 'members', memberId, 'mcp-connection.json')
+  : join(directory, 'mcp-connection.json');
 
 /** Agent capabilities never expose management operations, keys or arbitrary signing. */
 export class AgentConnection {
   private descriptor?: z.infer<typeof ConnectionSchema>;
   private lastSeen: number | null = null;
-  constructor(private directory: string, private cardMemberId: string, private isCardMemberActive: (id: string) => boolean) {
+  constructor(private directory: string, private cardMemberId: string, private isCardMemberActive: (id: string) => boolean,
+    private memberFile = false) {
     // A new backend must not accept credentials left by an earlier process.
     this.removeFile();
   }
+  private file() { return connectionFile(this.directory, this.memberFile ? this.cardMemberId : undefined); }
   private removeFile() {
-    try { unlinkSync(connectionFile(this.directory)); }
+    try { unlinkSync(this.file()); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   }
   private write(descriptor: z.infer<typeof ConnectionSchema>) {
     const parsed = ConnectionSchema.parse(descriptor);
-    mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-    const temporary = `${connectionFile(this.directory)}.tmp`;
+    mkdirSync(this.memberFile ? join(this.directory, 'members', this.cardMemberId) : this.directory, { recursive: true, mode: 0o700 });
+    const temporary = `${this.file()}.tmp`;
     writeFileSync(temporary, JSON.stringify(parsed), { mode: 0o600 });
     chmodSync(temporary, 0o600);
-    renameSync(temporary, connectionFile(this.directory));
+    renameSync(temporary, this.file());
     this.descriptor = parsed;
     this.lastSeen = null;
   }
@@ -81,6 +85,7 @@ export class AgentConnection {
   }
 }
 
-export function readConnection(directory: string) {
-  return ConnectionSchema.parse(JSON.parse(readFileSync(connectionFile(directory), 'utf8')));
+export function readConnection(directory: string, memberId?: string) {
+  if (memberId) z.string().uuid().parse(memberId);
+  return ConnectionSchema.parse(JSON.parse(readFileSync(connectionFile(directory, memberId), 'utf8')));
 }

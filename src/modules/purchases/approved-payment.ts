@@ -96,8 +96,8 @@ export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId:
   }
 }
 /** Can run concurrently with the initial request: reads only, never signs or settles. */
-export async function recoverApprovedPayment(ledger: PurchaseLedger, taskId: string, config: PaymentConfig, endpoint: string, trace: Trace = () => {}) {
-  const record = ledger.get(taskId);
+export async function recoverApprovedPayment(ledger: PurchaseLedger, taskId: string, config: PaymentConfig, endpoint: string, trace: Trace = () => {}, memberId?: string) {
+  const record = ledger.get(taskId, memberId);
   if (record?.executionMode === 'simulated') return;
   if (!record || (!['PAYING', 'PAYMENT_UNKNOWN'].includes(record.status) && record.deliveryStatus !== 'PENDING')) return;
   trace('RECOVERY_STARTED');

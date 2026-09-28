@@ -101,6 +101,64 @@ it('reuses an idempotent request across connections for the same CardMember', ()
   } finally { value.close(); }
 });
 
+it('scopes grants and requestIds per member while enforcing one shared daily budget', () => {
+  const directory = mkdtempSync(join(tmpdir(), '2049-member-budget-')); paths.push(directory);
+  const path = join(directory, 'ledger.sqlite');
+  const value = ledger(path);
+  try {
+    value.setDailyLimit('300000');
+    const first = authority(value);
+    const secondMember = value.createCardMember('Research', now);
+    const secondPrincipal = { cardMemberId: secondMember.id, connectionId: randomUUID(), connectionGeneration: 1 };
+    value.createSpendGrant({ totalLimit: '500000', singleLimit: '500000', expiresAt: now + 60 * 60 * 1000 }, secondPrincipal, scope, now);
+    const second = value.spendAuthority(secondPrincipal, MARKET_SNAPSHOT_OPERATION, now);
+    const firstPurchase = value.reserve(intent('shared-id', 200_000, first), quote, now, 'simulated', cardMemberId);
+    const secondPurchase = value.reserve(intent('shared-id', 200_000, second), quote, now, 'simulated', secondMember.id);
+    expect(firstPurchase.decision.decision).toBe('APPROVED');
+    expect(secondPurchase.decision.reason).toBe('DAILY_BUDGET_EXCEEDED');
+    expect(firstPurchase.intent.id).not.toBe(secondPurchase.intent.id);
+    expect(value.list(50, cardMemberId)).toHaveLength(1);
+    expect(value.list(50, secondMember.id)).toHaveLength(1);
+    expect(value.spendGrantSummary(now, 'simulated', cardMemberId)).toMatchObject({ status: 'ACTIVE', committed: '200000' });
+    expect(value.spendGrantSummary(now, 'simulated', secondMember.id)).toMatchObject({ status: 'ACTIVE', committed: '0' });
+    const concurrentReader = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+    try {
+      expect(concurrentReader.spendGrantSummary(now, 'simulated', cardMemberId)?.status).toBe('ACTIVE');
+      expect(concurrentReader.spendGrantSummary(now, 'simulated', secondMember.id)?.status).toBe('ACTIVE');
+    } finally { concurrentReader.close(); }
+    value.revokeActiveSpendGrant(now + 1, 'grant.REVOKED', secondMember.id);
+    expect(value.spendGrantSummary(now + 1, 'simulated', cardMemberId)?.status).toBe('ACTIVE');
+    expect(value.spendGrantSummary(now + 1, 'simulated', secondMember.id)?.status).toBe('REVOKED');
+  } finally { value.close(); }
+  const reopened = ledger(path);
+  try {
+    expect(reopened.get('shared-id', cardMemberId)?.ownerCardMemberId).toBe(cardMemberId);
+    expect(reopened.get('shared-id', reopened.cardMembers().find(member => member.label === 'Research')!.id)?.status).toBe('DENIED');
+  } finally { reopened.close(); }
+});
+
+it('keeps payment state and events attached to the right owner for duplicate member requestIds', () => {
+  const value = ledger();
+  try {
+    const first = authority(value);
+    const secondMember = value.createCardMember('Buyer', now);
+    const secondPrincipal = { cardMemberId: secondMember.id, connectionId: randomUUID(), connectionGeneration: 1 };
+    value.createSpendGrant({ totalLimit: '500000', singleLimit: '500000', expiresAt: now + 60 * 60 * 1000 }, secondPrincipal, scope, now);
+    const second = value.spendAuthority(secondPrincipal, MARKET_SNAPSHOT_OPERATION, now);
+    const firstPurchase = value.reserve(intent('same-id', 200_000, first), quote, now, 'simulated', cardMemberId);
+    const secondPurchase = value.reserve(intent('same-id', 200_000, second), quote, now, 'simulated', secondMember.id);
+    value.claim(firstPurchase.approvalId, now);
+    value.finish(firstPurchase.approvalId, { transaction: 'simulated-first', data: demoSnapshot }, now);
+    value.claim(secondPurchase.approvalId, now);
+    value.finish(secondPurchase.approvalId, { transaction: 'simulated-second', data: demoSnapshot }, now);
+    expect(value.get('same-id', cardMemberId)?.transaction).toBe('simulated-first');
+    expect(value.get('same-id', secondMember.id)?.transaction).toBe('simulated-second');
+    expect(value.events('same-id', cardMemberId).map(event => event.type)).toContain('delivery.COMPLETE');
+    expect(value.events('same-id', secondMember.id).map(event => event.type)).toContain('delivery.COMPLETE');
+    expect(value.managedSummary(now, 'simulated')).toMatchObject({ paid: '400000' });
+  } finally { value.close(); }
+});
+
 it('rechecks revocation and expiry before a reserved payment can sign', () => {
   const value = ledger();
   try {

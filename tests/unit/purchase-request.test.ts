@@ -115,7 +115,7 @@ it('bridges basic APPROVED through the existing claim path using the one persist
   } finally { ledger.close(); store.close(); }
 });
 
-it('blocks a different active CardMember from reading or replaying a completed purchase', async () => {
+it('does not replay another CardMember purchase with the same requestId', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bound-purchase-owner-'));
   const ledgerPath = join(directory, 'ledger.sqlite');
   const { ledger, fetcher, store } = setup('5000000', ledgerPath);
@@ -126,16 +126,14 @@ it('blocks a different active CardMember from reading or replaying a completed p
   const input = { requestId: 'member-owned-resource', offerId: 'basic' as const, reason: 'Need the SOL snapshot' };
   try {
     await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049', principal, fetcher, now: () => now, pay });
-    const otherCardMemberId = randomUUID();
-    const database = new DatabaseSync(ledgerPath);
-    try {
-      database.prepare("INSERT INTO card_members (id,label,status,is_default,created_at,updated_at) VALUES (?,?,'ACTIVE',0,?,?)")
-        .run(otherCardMemberId, 'Other Agent', now, now);
-    } finally { database.close(); }
-    await expect(requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049',
-      principal: { cardMemberId: otherCardMemberId, connectionId: randomUUID(), connectionGeneration: 1 }, fetcher, now: () => now, pay }))
-      .rejects.toThrow('PURCHASE_REQUEST_OWNER_MISMATCH');
-    expect(fetcher).toHaveBeenCalledOnce();
+    const otherCardMemberId = ledger.createCardMember('Other Agent', now).id;
+    const other = await requestMarketPurchase(input, { config, ledger, origin: 'http://127.0.0.1:3049',
+      principal: { cardMemberId: otherCardMemberId, connectionId: randomUUID(), connectionGeneration: 1 }, fetcher, now: () => now, pay });
+    expect(other).toMatchObject({ reused: false, status: 'DENIED', paymentStatus: 'NOT_STARTED' });
+    expect(other).not.toHaveProperty('resource');
+    expect(ledger.get(input.requestId, cardMemberId)).toMatchObject({ ownerCardMemberId: cardMemberId, status: 'PAID' });
+    expect(ledger.get(input.requestId, otherCardMemberId)).toMatchObject({ ownerCardMemberId: otherCardMemberId, status: 'DENIED' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
     expect(pay).toHaveBeenCalledOnce();
   } finally {
     ledger.close(); store.close(); rmSync(directory, { recursive: true, force: true });
