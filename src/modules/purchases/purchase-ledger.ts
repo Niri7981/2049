@@ -564,11 +564,17 @@ export class PurchaseLedger {
   }
   list(limit = 50) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid record limit');
-    return this.db.prepare(`SELECT task_id,status,amount,transaction_id,data IS NOT NULL AS delivered,json_extract(purchase,'$.createdAt') AS created_at,
+    return this.db.prepare(`SELECT task_id,status,amount,transaction_id,data IS NOT NULL AS delivered,execution_mode,json_extract(purchase,'$.createdAt') AS created_at,
       json_extract(purchase,'$.offerId') AS offer_id,json_extract(purchase,'$.reason') AS reason,json_extract(decision,'$.reason') AS decision_reason,
+      json_extract(purchase,'$.network') AS network,json_extract(purchase,'$.currency') AS currency,
+      COALESCE(json_extract(purchase,'$.assetId'),json_extract(purchase,'$.mint')) AS asset_id,
+      COALESCE(json_extract(purchase,'$.assetDecimals'),json_extract(purchase,'$.decimals')) AS asset_decimals,
       json_extract(purchase,'$.authority.grantId') AS grant_id FROM purchases ORDER BY created_at DESC LIMIT ?`).all(limit)
       .map(row => ({ purchaseId: String(row.task_id), status: currentAuthorityStatus(String(row.status)), deliveryStatus: row.status === 'PAID' ? (row.delivered ? 'COMPLETE' : 'PENDING') : 'NOT_PAID',
         amount: String(row.amount), createdAt: Number(row.created_at), transaction: row.transaction_id ? String(row.transaction_id) : null,
+        executionMode: storedExecutionMode(row.execution_mode), network: row.network ? String(row.network) : null,
+        currency: row.currency ? String(row.currency) : null, assetId: row.asset_id ? String(row.asset_id) : null,
+        assetDecimals: row.asset_decimals === null ? null : Number(row.asset_decimals),
         ...(row.offer_id ? { offerId: String(row.offer_id) } : {}), ...(row.reason ? { reason: String(row.reason) } : {}),
         ...(row.decision_reason ? { decisionReason: String(row.decision_reason) } : {}), ...(row.grant_id ? { grantId: String(row.grant_id) } : {}) }));
   }

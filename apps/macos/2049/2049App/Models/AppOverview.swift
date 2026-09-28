@@ -77,9 +77,23 @@ struct AppOverview: Decodable {
     struct Purchase: Decodable {
         let purchaseId: String
         let status: String
+        let deliveryStatus: String
         let amount: MinorUnits
         let createdAt: Int64
         let offerId: String?
+        let reason: String?
+        let decisionReason: String?
+        let transaction: String?
+        let executionMode: ExecutionMode
+        let network: String?
+        let currency: String?
+        let assetId: String?
+        let assetDecimals: Int?
+        let grantId: String?
+
+        enum ExecutionMode: String, Decodable {
+            case simulated, liveDevnet = "live_devnet", unknown = "UNKNOWN"
+        }
     }
 }
 

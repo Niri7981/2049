@@ -16,6 +16,11 @@ struct ManagementClientSmoke {
         }
         let initial = try await client.load()
         precondition(!initial.connection.enabled && initial.grant == nil)
+        precondition(initial.purchases.count == 2)
+        let simulated = PurchasePresentation(initial.purchases[0])
+        precondition(simulated.status == "Simulated payment" && simulated.amount == "0.01 USDC")
+        let unknown = PurchasePresentation(initial.purchases[1])
+        precondition(unknown.status == "Payment status unknown" && unknown.amount == "0.000001 USDC")
 
         try await client.setConnection(true)
         let connected = try await client.load()

@@ -15,6 +15,14 @@ let grant = null;
 let dailyLimit = null;
 let paused = false;
 let grantVersion = 0;
+const purchases = [
+  { purchaseId: 'simulated-activity', status: 'PAID', deliveryStatus: 'COMPLETE', amount: '10000', createdAt: Date.now(),
+    offerId: 'basic', reason: 'Need a price snapshot', transaction: 'simulated-simulated-activity', executionMode: 'simulated',
+    network: 'solana:devnet', currency: 'USDC', assetId: 'test-mint', assetDecimals: 6, grantId: null },
+  { purchaseId: 'unknown-activity', status: 'PAYMENT_UNKNOWN', deliveryStatus: 'NOT_PAID', amount: '1', createdAt: Date.now() - 1_000,
+    offerId: 'basic', reason: null, transaction: null, executionMode: 'live_devnet',
+    network: 'solana:devnet', currency: 'USDC', assetId: 'test-mint', assetDecimals: 6, grantId: null },
+];
 
 const server = createServer(async (request, response) => {
   const send = (status, value) => {
@@ -27,7 +35,7 @@ const server = createServer(async (request, response) => {
     return send(200, {
       service: { status: 'running', purchaseMode: 'simulated' },
       budget: { dailyLimit, dailyLimitDisplay: dailyLimit ?? 'Not set', paid: '0', reserved: '0', remaining: dailyLimit, remainingDisplay: dailyLimit ?? 'Not set', paused },
-      grant, connection, purchases: [],
+      grant, connection, purchases,
     });
   }
   if (request.method !== 'PUT' || request.headers.origin !== `http://127.0.0.1:${server.address().port}`
@@ -88,6 +96,7 @@ try {
     'apps/macos/2049/2049App/Services/NativeServiceRuntime.swift',
     'apps/macos/2049/2049App/Services/OverviewClient.swift',
     'apps/macos/2049/2049App/Models/AppOverview.swift',
+    'apps/macos/2049/2049App/Models/PurchasePresentation.swift',
     'tests/native/ManagementClientSmoke.swift',
   ];
   const executable = join(temporary, 'management-client-smoke');

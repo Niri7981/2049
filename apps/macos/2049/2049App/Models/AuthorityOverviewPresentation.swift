@@ -46,25 +46,12 @@ struct AuthorityOverviewPresentation {
         execution = overview.service.purchaseMode == .liveDevnet ? "Live · Devnet" : "Simulated · Devnet"
 
         if let purchase = overview.purchases.first {
-            let title = purchase.offerId.map { ["basic", "premium"].contains($0) } == true ? "SOL price snapshot" : "Activity"
+            let formatted = PurchasePresentation(purchase)
             let date = Date(timeIntervalSince1970: TimeInterval(purchase.createdAt) / 1_000)
             let elapsed = RelativeDateTimeFormatter().localizedString(for: date, relativeTo: now)
-            latest = Latest(title: title, detail: "\(Self.status(purchase.status)) · \(elapsed)", amount: Self.money(purchase.amount, decimals: 6))
+            latest = Latest(title: formatted.title, detail: "\(formatted.status) · \(elapsed)", amount: formatted.amount)
         } else {
             latest = nil
-        }
-    }
-
-    private static func status(_ value: String) -> String {
-        switch value {
-        case "PAID": "Paid"
-        case "APPROVED": "Approved"
-        case "DENIED": "Denied"
-        case "REQUIRES_APPROVAL": "Needs approval"
-        case "PAYING": "Paying"
-        case "PAYMENT_UNKNOWN": "Status unknown"
-        case "FAILED": "Failed"
-        default: "Activity"
         }
     }
 

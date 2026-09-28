@@ -6,9 +6,11 @@ struct BackOverview: View {
     @State private var state: LoadState = .loading
     @State private var writeState: WriteState = .idle
     @State private var selectedDetail: Detail?
+    @State private var activityRefreshing = false
+    @State private var activityRefreshError: String?
 
     private enum Detail {
-        case daily, grant, connection
+        case daily, grant, connection, activity, purchase(String)
     }
 
     private enum LoadState {
@@ -94,6 +96,28 @@ struct BackOverview: View {
                         onBack: { self.selectedDetail = nil },
                         onSetEnabled: { enabled in await write(.connection(enabled)) }
                     )
+                case .activity:
+                    ActivityDetail(
+                        purchases: overview.purchases,
+                        isRefreshing: activityRefreshing,
+                        refreshError: activityRefreshError,
+                        onBack: { self.selectedDetail = nil },
+                        onRefresh: { await refreshActivity() },
+                        onSelect: { self.selectedDetail = .purchase($0) }
+                    )
+                case .purchase(let id):
+                    if let purchase = overview.purchases.first(where: { $0.purchaseId == id }) {
+                        PurchaseDetail(purchase: purchase, onBack: { self.selectedDetail = .activity })
+                    } else {
+                        ActivityDetail(
+                            purchases: overview.purchases,
+                            isRefreshing: activityRefreshing,
+                            refreshError: activityRefreshError,
+                            onBack: { self.selectedDetail = nil },
+                            onRefresh: { await refreshActivity() },
+                            onSelect: { self.selectedDetail = .purchase($0) }
+                        )
+                    }
                 }
             } else {
                 overviewContent
@@ -103,6 +127,8 @@ struct BackOverview: View {
         .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
             selectedDetail = nil
             writeState = .idle
+            activityRefreshing = false
+            activityRefreshError = nil
             state = .failed(.serviceExited)
         }
     }
@@ -129,7 +155,12 @@ struct BackOverview: View {
                 detail: presentation?.latest?.detail ?? "",
                 amount: presentation?.latest?.amount ?? "—",
                 connectionEnabled: overview?.connection.enabled,
-                onConnection: { open(.connection) }
+                onConnection: { open(.connection) },
+                activityAvailable: overview != nil && !writeState.isSaving,
+                onActivity: {
+                    open(.activity)
+                    Task { await refreshActivity() }
+                }
             )
             .padding(.top, 16)
 
@@ -231,7 +262,26 @@ struct BackOverview: View {
     private func open(_ detail: Detail) {
         guard overview != nil, !writeState.isSaving else { return }
         writeState = .idle
+        activityRefreshError = nil
         selectedDetail = detail
+    }
+
+    @MainActor
+    private func refreshActivity() async {
+        guard overview != nil, !activityRefreshing else { return }
+        activityRefreshing = true
+        defer { activityRefreshing = false }
+        activityRefreshError = nil
+        do {
+            let refreshed = try await overviewClient.load()
+            guard case .some(.activity) = selectedDetail else { return }
+            state = .loaded(refreshed)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard case .some(.activity) = selectedDetail else { return }
+            activityRefreshError = (error as? OverviewLoadError)?.message ?? "Activity could not be refreshed"
+        }
     }
 
     @ViewBuilder

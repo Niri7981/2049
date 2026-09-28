@@ -243,6 +243,9 @@ describe('managed budget and Devnet test records', () => {
       const replay = await app.createTestPurchase(id, 'http://127.0.0.1:3049');
       expect(first.status).toBe('PAID'); expect(replay.status).toBe('PAID');
       expect(app.ledger.list()).toHaveLength(1);
+      expect(app.ledger.list()[0]).toMatchObject({ executionMode: 'simulated', network: DEVNET_NETWORK,
+        assetId: DEVNET_USDC_MINT, assetDecimals: 6, currency: 'USDC', deliveryStatus: 'COMPLETE' });
+      expect(app.ledger.list()[0]).not.toHaveProperty('paymentEvidence');
       app.setDailyLimit('5000');
       const blocked = await app.createTestPurchase(`app-${randomUUID()}`, 'http://127.0.0.1:3049');
       expect(blocked.policy.reason).toBe('DAILY_BUDGET_EXCEEDED');
