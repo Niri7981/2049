@@ -35,20 +35,15 @@ struct CardWindow: View {
                         .allowsWindowActivationEvents()
 
                     frontFace
+                        .rotation3DEffect(.degrees(showingBack ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.35)
                         .modifier(FlipFaceVisibility(angle: showingBack ? 180 : 0, isBack: false))
                         .allowsHitTesting(!showingBack)
 
                     AgentCardBack(onFlip: flip, overviewClient: overviewClient, memberSession: memberSession)
-                        .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0), perspective: 0)
                         .modifier(FlipFaceVisibility(angle: showingBack ? 180 : 0, isBack: true))
                         .allowsHitTesting(showingBack)
                 }
                 .frame(width: CardMetrics.cardSize.width, height: CardMetrics.cardSize.height)
-                .rotation3DEffect(
-                    .degrees(showingBack ? 180 : 0),
-                    axis: (x: 0, y: 1, z: 0),
-                    perspective: 0.35
-                )
             }
         }
         .padding(CardMetrics.windowInset)
