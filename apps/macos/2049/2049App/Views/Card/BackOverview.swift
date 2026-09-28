@@ -5,7 +5,11 @@ struct BackOverview: View {
 
     @State private var state: LoadState = .loading
     @State private var writeState: WriteState = .idle
-    @State private var showingDailyDetail = false
+    @State private var selectedDetail: Detail?
+
+    private enum Detail {
+        case daily, grant, connection
+    }
 
     private enum LoadState {
         case loading
@@ -16,6 +20,9 @@ struct BackOverview: View {
     private enum SettingsChange {
         case paused(Bool)
         case dailyLimit(String)
+        case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64)
+        case revokeGrant
+        case connection(Bool)
     }
 
     private enum WriteState {
@@ -53,23 +60,48 @@ struct BackOverview: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            if showingDailyDetail, let overview {
-                AuthoritySettingsDetail(
-                    overview: overview,
-                    overviewClient: overviewClient,
-                    isSaving: writeState.isSaving,
-                    writeMessage: writeState.message,
-                    writeFailed: writeState.isFailure,
-                    onBack: { showingDailyDetail = false },
-                    onSave: { limit in await write(.dailyLimit(limit)) }
-                )
+            if let overview, let selectedDetail {
+                switch selectedDetail {
+                case .daily:
+                    AuthoritySettingsDetail(
+                        overview: overview,
+                        overviewClient: overviewClient,
+                        isSaving: writeState.isSaving,
+                        writeMessage: writeState.message,
+                        writeFailed: writeState.isFailure,
+                        onBack: { self.selectedDetail = nil },
+                        onSave: { limit in await write(.dailyLimit(limit)) }
+                    )
+                case .grant:
+                    SpendGrantDetail(
+                        overview: overview,
+                        isSaving: writeState.isSaving,
+                        writeMessage: writeState.message,
+                        writeFailed: writeState.isFailure,
+                        onBack: { self.selectedDetail = nil },
+                        onConnection: { open(.connection) },
+                        onCreate: { total, single, expiration in
+                            await write(.createGrant(totalLimit: total, singleLimit: single, expiresAt: expiration))
+                        },
+                        onRevoke: { await write(.revokeGrant) }
+                    )
+                case .connection:
+                    AgentConnectionDetail(
+                        connection: overview.connection,
+                        isSaving: writeState.isSaving,
+                        writeMessage: writeState.message,
+                        writeFailed: writeState.isFailure,
+                        onBack: { self.selectedDetail = nil },
+                        onSetEnabled: { enabled in await write(.connection(enabled)) }
+                    )
+                }
             } else {
                 overviewContent
             }
         }
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
-            showingDailyDetail = false
+            selectedDetail = nil
             writeState = .idle
             state = .failed(.serviceExited)
         }
@@ -95,7 +127,9 @@ struct BackOverview: View {
             BackLatestPurchase(
                 title: presentation?.latest?.title ?? (presentation == nil ? "—" : "No activity yet"),
                 detail: presentation?.latest?.detail ?? "",
-                amount: presentation?.latest?.amount ?? "—"
+                amount: presentation?.latest?.amount ?? "—",
+                connectionEnabled: overview?.connection.enabled,
+                onConnection: { open(.connection) }
             )
             .padding(.top, 16)
 
@@ -109,8 +143,7 @@ struct BackOverview: View {
 
     private var dailyAuthority: some View {
         Button {
-            writeState = .idle
-            showingDailyDetail = true
+            open(.daily)
         } label: {
             VStack(spacing: 0) {
                 Text(presentation?.remaining ?? "—")
@@ -149,30 +182,42 @@ struct BackOverview: View {
     }
 
     private var grantLimits: some View {
-        HStack(spacing: 0) {
-            limit(label: "Grant", amount: presentation?.grantRemaining ?? "—", detail: "remaining")
+        Button {
+            open(.grant)
+        } label: {
+            HStack(spacing: 0) {
+                limit(label: "Grant", amount: presentation?.grantRemaining ?? "—", detail: presentation?.grantDetail ?? "unavailable")
 
-            Rectangle()
-                .fill(Color.primary.opacity(0.09))
-                .frame(width: 1, height: 54)
+                Rectangle()
+                    .fill(Color.primary.opacity(0.09))
+                    .frame(width: 1, height: 54)
 
-            limit(label: "Per transaction", amount: presentation?.perTransaction ?? "—", detail: "max")
-                .padding(.leading, 20)
+                limit(label: "Per transaction", amount: presentation?.perTransaction ?? "—", detail: "max")
+                    .padding(.leading, 20)
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 94)
+            .background(Color.white.opacity(0.38), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+            }
         }
-        .padding(.horizontal, 20)
-        .frame(height: 94)
-        .background(Color.white.opacity(0.38), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-        }
+        .buttonStyle(.plain)
+        .disabled(overview == nil || writeState.isSaving)
+        .accessibilityLabel("Spend grant, \(presentation?.grantRemaining ?? "unavailable") remaining; per transaction \(presentation?.perTransaction ?? "unavailable"). Manage grant")
     }
 
     private func limit(label: String, amount: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Text(label)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .medium))
+                    .accessibilityHidden(true)
+            }
+            .font(.system(size: 13))
+            .foregroundStyle(.secondary)
             Text(amount)
                 .font(.system(size: 25, weight: .regular))
                 .monospacedDigit()
@@ -181,6 +226,12 @@ struct BackOverview: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func open(_ detail: Detail) {
+        guard overview != nil, !writeState.isSaving else { return }
+        writeState = .idle
+        selectedDetail = detail
     }
 
     @ViewBuilder
@@ -248,6 +299,15 @@ struct BackOverview: View {
             case .dailyLimit(let limit):
                 try await overviewClient.setDailyLimit(limit)
                 success = "Daily limit saved"
+            case .createGrant(let total, let single, let expiration):
+                try await overviewClient.createGrant(totalLimit: total, singleLimit: single, expiresAt: expiration)
+                success = "Grant saved. Reconnect the MCP host."
+            case .revokeGrant:
+                try await overviewClient.revokeGrant()
+                success = "Grant revoked. Reconnect the MCP host."
+            case .connection(let enabled):
+                try await overviewClient.setConnection(enabled)
+                success = enabled ? "Connection enabled. Reconnect the MCP host." : "Connection revoked. Active grant revoked."
             }
         } catch {
             let failure = (error as? OverviewLoadError)?.message ?? "Setting change failed"
@@ -255,7 +315,7 @@ struct BackOverview: View {
             do {
                 state = .loaded(try await overviewClient.load())
             } catch {
-                showingDailyDetail = false
+                selectedDetail = nil
                 state = .failed((error as? OverviewLoadError) ?? .invalidResponse)
             }
             writeState = .failure(failure)
@@ -266,7 +326,7 @@ struct BackOverview: View {
             state = .loaded(try await overviewClient.load())
             writeState = .success(success)
         } catch {
-            showingDailyDetail = false
+            selectedDetail = nil
             state = .failed((error as? OverviewLoadError) ?? .invalidResponse)
             writeState = .failure("Saved, but current status could not be loaded")
         }

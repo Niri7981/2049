@@ -10,6 +10,7 @@ enum OverviewLoadError: Error {
     case readinessTimedOut
     case serviceExited
     case dataDirectoryInUse
+    case invalidRequest
     case writeRejected
 
     var message: String {
@@ -23,6 +24,7 @@ enum OverviewLoadError: Error {
         case .readinessTimedOut: "Local service did not become ready"
         case .serviceExited: "Local service stopped"
         case .dataDirectoryInUse: "2049 data is open in another service"
+        case .invalidRequest: "Check the entered values and try again"
         case .writeRejected: "The setting change was not confirmed"
         }
     }
@@ -60,10 +62,28 @@ struct OverviewClient {
         try await write(.setDailyLimit(minorUnits))
     }
 
+    func createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64) async throws {
+        try await write(.createGrant(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt))
+    }
+
+    func revokeGrant() async throws {
+        try await write(.revokeGrant)
+    }
+
+    func setConnection(_ enabled: Bool) async throws {
+        try await write(.setConnection(enabled))
+    }
+
     private func write(_ endpoint: ServiceEndpoint) async throws {
         let (data, response) = try await request(endpoint)
         if response.statusCode == 401 || response.statusCode == 403 { throw OverviewLoadError.unauthorized }
-        guard response.statusCode == 200, data.count <= 65_536 else { throw OverviewLoadError.writeRejected }
+        guard data.count <= 65_536 else { throw OverviewLoadError.writeRejected }
+        if response.statusCode == 200 { return }
+        if let code = try? JSONDecoder().decode(ManagementErrorResponse.self, from: data).code {
+            if code == "INVALID_REQUEST" { throw OverviewLoadError.invalidRequest }
+            if code == "DATA_DIRECTORY_IN_USE" { throw OverviewLoadError.dataDirectoryInUse }
+        }
+        throw OverviewLoadError.writeRejected
     }
 
     private func request(_ endpoint: ServiceEndpoint, retry: Bool = false) async throws -> (Data, HTTPURLResponse) {
@@ -91,4 +111,8 @@ struct OverviewClient {
 
 private struct BalanceResponse: Decodable {
     let balance: AppBalance
+}
+
+private struct ManagementErrorResponse: Decodable {
+    let code: String
 }

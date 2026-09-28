@@ -6,6 +6,7 @@ struct AuthorityOverviewPresentation {
     let dailyLimit: String
     let progress: Double
     let grantRemaining: String
+    let grantDetail: String
     let perTransaction: String
     let payments: String
     let execution: String
@@ -29,9 +30,15 @@ struct AuthorityOverviewPresentation {
 
         if let grant = overview.grant, grant.status == .active {
             grantRemaining = Self.money(grant.remaining, decimals: grant.assetDecimals)
+            grantDetail = "remaining"
             perTransaction = Self.money(grant.singleLimit, decimals: grant.assetDecimals)
         } else {
             grantRemaining = "—"
+            switch overview.grant?.status {
+            case .revoked: grantDetail = "revoked"
+            case .expired: grantDetail = "expired"
+            case .active, nil: grantDetail = "not set"
+            }
             perTransaction = "—"
         }
 

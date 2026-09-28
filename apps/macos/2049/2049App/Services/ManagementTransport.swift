@@ -7,6 +7,9 @@ enum ServiceEndpoint {
     case balance
     case setPaused(Bool)
     case setDailyLimit(String)
+    case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64)
+    case revokeGrant
+    case setConnection(Bool)
     case prepareQuit
 
     var path: String {
@@ -15,6 +18,8 @@ enum ServiceEndpoint {
         case .overview: "/api/app/overview"
         case .balance: "/api/app/balance"
         case .setPaused, .setDailyLimit: "/api/app/settings"
+        case .createGrant, .revokeGrant: "/api/app/grant"
+        case .setConnection: "/api/app/connection"
         case .prepareQuit: "/api/app/lifecycle"
         }
     }
@@ -22,13 +27,13 @@ enum ServiceEndpoint {
     var isMutation: Bool {
         switch self {
         case .health, .overview, .balance: false
-        case .setPaused, .setDailyLimit, .prepareQuit: true
+        case .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection, .prepareQuit: true
         }
     }
 
     var method: String {
         switch self {
-        case .setPaused, .setDailyLimit: "PUT"
+        case .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection: "PUT"
         case .prepareQuit: "POST"
         case .health, .overview, .balance: "GET"
         }
@@ -40,12 +45,25 @@ enum ServiceEndpoint {
             try JSONEncoder().encode(["paused": paused])
         case .setDailyLimit(let limit):
             try JSONEncoder().encode(["dailyLimit": limit])
+        case .createGrant(let totalLimit, let singleLimit, let expiresAt):
+            try JSONEncoder().encode(GrantCreateRequest(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt))
+        case .revokeGrant:
+            Data(#"{"action":"revoke"}"#.utf8)
+        case .setConnection(let enabled):
+            try JSONEncoder().encode(["enabled": enabled])
         case .prepareQuit:
             Data(#"{"action":"prepareQuit"}"#.utf8)
         case .health, .overview, .balance:
             nil
         }
     }
+}
+
+private struct GrantCreateRequest: Encodable {
+    let action = "create"
+    let totalLimit: String
+    let singleLimit: String
+    let expiresAt: Int64
 }
 
 private final class NoServiceRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {

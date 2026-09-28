@@ -4,13 +4,24 @@ struct BackLatestPurchase: View {
     let title: String
     let detail: String
     let amount: String
+    let connectionEnabled: Bool?
+    let onConnection: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Latest")
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-                .padding(.leading, 2)
+            HStack {
+                Text("Latest")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 2)
+                Spacer()
+                Button("Connection", systemImage: "link", action: onConnection)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .disabled(connectionEnabled == nil)
+                    .accessibilityLabel("Agent connection, \(connectionEnabled == nil ? "unavailable" : (connectionEnabled == true ? "enabled" : "disabled"))")
+            }
 
             HStack(spacing: 12) {
                 Image(systemName: "chart.line.uptrend.xyaxis")

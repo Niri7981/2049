@@ -5,6 +5,7 @@ struct AppOverview: Decodable {
     let service: Service
     let budget: Budget
     let grant: Grant?
+    let connection: Connection
     let purchases: [Purchase]
 
     struct Service: Decodable {
@@ -49,13 +50,27 @@ struct AppOverview: Decodable {
     }
 
     struct Grant: Decodable {
+        let id: String
         let status: Status
+        let totalLimit: MinorUnits
         let remaining: MinorUnits
         let singleLimit: MinorUnits
         let assetDecimals: Int
+        let expiresAt: Int64
 
         enum Status: String, Decodable {
             case active = "ACTIVE", revoked = "REVOKED", expired = "EXPIRED"
+        }
+    }
+
+    struct Connection: Decodable {
+        let enabled: Bool
+        let lastSeen: Int64?
+        let access: Access
+
+        enum Access: String, Decodable {
+            case purchaseIntent = "purchase_intent"
+            case readOnly = "read_only"
         }
     }
 
