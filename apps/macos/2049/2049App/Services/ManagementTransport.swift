@@ -4,17 +4,48 @@ import Foundation
 enum ServiceEndpoint {
     case health
     case overview
+    case balance
+    case setPaused(Bool)
+    case setDailyLimit(String)
     case prepareQuit
 
     var path: String {
         switch self {
         case .health: "/api/app/health"
         case .overview: "/api/app/overview"
+        case .balance: "/api/app/balance"
+        case .setPaused, .setDailyLimit: "/api/app/settings"
         case .prepareQuit: "/api/app/lifecycle"
         }
     }
 
-    var isMutation: Bool { self == .prepareQuit }
+    var isMutation: Bool {
+        switch self {
+        case .health, .overview, .balance: false
+        case .setPaused, .setDailyLimit, .prepareQuit: true
+        }
+    }
+
+    var method: String {
+        switch self {
+        case .setPaused, .setDailyLimit: "PUT"
+        case .prepareQuit: "POST"
+        case .health, .overview, .balance: "GET"
+        }
+    }
+
+    func body() throws -> Data? {
+        switch self {
+        case .setPaused(let paused):
+            try JSONEncoder().encode(["paused": paused])
+        case .setDailyLimit(let limit):
+            try JSONEncoder().encode(["dailyLimit": limit])
+        case .prepareQuit:
+            Data(#"{"action":"prepareQuit"}"#.utf8)
+        case .health, .overview, .balance:
+            nil
+        }
+    }
 }
 
 private final class NoServiceRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
@@ -56,10 +87,10 @@ struct ServiceConfiguration: Sendable {
         request.setValue("Bearer \(managementToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if endpoint.isMutation {
-            request.httpMethod = "POST"
+            request.httpMethod = endpoint.method
             request.setValue(baseURL.absoluteString, forHTTPHeaderField: "Origin")
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = Data(#"{"action":"prepareQuit"}"#.utf8)
+            request.httpBody = try endpoint.body()
         }
         do {
             let (data, response) = try await Self.session.data(for: request)

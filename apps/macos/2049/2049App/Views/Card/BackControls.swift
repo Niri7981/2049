@@ -2,11 +2,38 @@ import SwiftUI
 
 struct BackControls: View {
     let payments: String
+    let paymentsEnabled: Bool?
+    let paymentsUpdating: Bool
+    let onPaymentsChange: (Bool) -> Void
     let execution: String
+
+    private var paymentsBinding: Binding<Bool> {
+        Binding(get: { paymentsEnabled ?? false }, set: onPaymentsChange)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            row(symbol: "creditcard", title: "Payments", value: payments, valueColor: .primary)
+            HStack(spacing: 13) {
+                Image(systemName: "creditcard")
+                    .font(.system(size: 22, weight: .regular))
+                    .frame(width: 28)
+                    .accessibilityHidden(true)
+
+                Text("Payments")
+                    .font(.system(size: 15))
+
+                Spacer(minLength: 8)
+
+                Text(paymentsUpdating ? "Saving…" : payments)
+                    .font(.system(size: 14))
+
+                Toggle("Payments", isOn: paymentsBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(paymentsEnabled == nil || paymentsUpdating)
+            }
+            .padding(.horizontal, 19)
+            .frame(height: 49)
 
             Rectangle()
                 .fill(Color.primary.opacity(0.08))

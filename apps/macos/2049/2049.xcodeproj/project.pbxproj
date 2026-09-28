@@ -32,6 +32,7 @@
 		A00000000000000000000046 /* ManagementTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000045 /* ManagementTransport.swift */; };
 		A00000000000000000000048 /* BackendLaunchConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000047 /* BackendLaunchConfiguration.swift */; };
 		A0000000000000000000004A /* BackendChildProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000049 /* BackendChildProcess.swift */; };
+		A0000000000000000000004C /* AuthoritySettingsDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000004B /* AuthoritySettingsDetail.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +62,7 @@
 		A00000000000000000000045 /* ManagementTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagementTransport.swift; sourceTree = "<group>"; };
 		A00000000000000000000047 /* BackendLaunchConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendLaunchConfiguration.swift; sourceTree = "<group>"; };
 		A00000000000000000000049 /* BackendChildProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendChildProcess.swift; sourceTree = "<group>"; };
+		A0000000000000000000004B /* AuthoritySettingsDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthoritySettingsDetail.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -152,6 +154,7 @@
 				A00000000000000000000026 /* AgentCardBack.swift */,
 				A0000000000000000000002C /* BackSection.swift */,
 				A0000000000000000000002E /* BackOverview.swift */,
+				A0000000000000000000004B /* AuthoritySettingsDetail.swift */,
 				A00000000000000000000030 /* BackControls.swift */,
 				A00000000000000000000032 /* BackLatestPurchase.swift */,
 				A00000000000000000000034 /* BackNavigation.swift */,
@@ -248,6 +251,7 @@
 				A00000000000000000000028 /* WindowControls.swift in Sources */,
 				A0000000000000000000002D /* BackSection.swift in Sources */,
 				A0000000000000000000002F /* BackOverview.swift in Sources */,
+				A0000000000000000000004C /* AuthoritySettingsDetail.swift in Sources */,
 				A00000000000000000000031 /* BackControls.swift in Sources */,
 				A00000000000000000000033 /* BackLatestPurchase.swift in Sources */,
 				A00000000000000000000035 /* BackNavigation.swift in Sources */,

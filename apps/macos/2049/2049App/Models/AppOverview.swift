@@ -22,21 +22,25 @@ struct AppOverview: Decodable {
 
     struct Budget: Decodable {
         let dailyLimit: MinorUnits?
+        let dailyLimitDisplay: String
         let paid: MinorUnits
         let reserved: MinorUnits
         let remaining: MinorUnits?
+        let remainingDisplay: String
         let paused: Bool
 
         private enum CodingKeys: String, CodingKey {
-            case dailyLimit, paid, reserved, remaining, paused
+            case dailyLimit, dailyLimitDisplay, paid, reserved, remaining, remainingDisplay, paused
         }
 
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             dailyLimit = try values.decodeIfPresent(MinorUnits.self, forKey: .dailyLimit)
+            dailyLimitDisplay = try values.decode(String.self, forKey: .dailyLimitDisplay)
             paid = try values.decode(MinorUnits.self, forKey: .paid)
             reserved = try values.decode(MinorUnits.self, forKey: .reserved)
             remaining = try values.decodeIfPresent(MinorUnits.self, forKey: .remaining)
+            remainingDisplay = try values.decode(String.self, forKey: .remainingDisplay)
             paused = try values.decode(Bool.self, forKey: .paused)
             guard (dailyLimit == nil) == (remaining == nil) else {
                 throw DecodingError.dataCorruptedError(forKey: .remaining, in: values, debugDescription: "Daily limit and remaining must both be set or absent")
@@ -76,4 +80,10 @@ struct MinorUnits: Decodable, Equatable {
         }
         self.value = value
     }
+}
+
+struct AppBalance: Decodable {
+    let amount: String?
+    let display: String
+    let available: Bool
 }
