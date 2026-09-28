@@ -19,6 +19,7 @@ struct BackNavigation: View {
                     .foregroundStyle(selection == section ? Color.primary : Color.secondary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 66)
+                    .contentShape(Rectangle())
                     .background {
                         if selection == section {
                             Capsule()
