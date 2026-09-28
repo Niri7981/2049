@@ -63,12 +63,14 @@ check(CardMemberSelection.choose(current: id(researchID), from: [revokedResearch
 check(CardMemberSelection.choose(current: id(researchID), from: [revokedResearch]) == nil, "empty active state")
 check(CardMemberSelection.choose(current: nil, from: [buyerSummary, researchSummary]) == id(researchID), "stable first active fallback")
 
-let shared = try decode(AppOverview.self, [
-    "service": ["status": "running", "isDefault": true, "purchaseMode": "simulated"],
+let overviewPayload: [String: Any] = [
+    "service": ["status": "running", "isDefault": true, "purchaseMode": "simulated", "network": "Solana Devnet"],
+    "wallet": ["address": "PublicWalletAddress", "reused": true],
     "budget": ["dailyLimit": "1000000", "dailyLimitDisplay": "1 test USDC", "paid": "10000", "reserved": "0",
                "remaining": "990000", "remainingDisplay": "0.99 test USDC", "paused": false],
     "grant": grant("default-grant"), "connection": connection(false), "purchases": [purchase("default-purchase")],
-])
+]
+let shared = try decode(AppOverview.self, overviewPayload)
 let research = try snapshot(researchMember, enabled: true, grantValue: grant("research-grant"), purchases: [purchase("research-purchase")])
 let selectedResearch = AppOverview(shared: shared, member: research)
 check(selectedResearch.budget.dailyLimit?.value == 1_000_000, "daily budget stays shared")
@@ -80,6 +82,15 @@ let buyer = try snapshot(buyerMember, enabled: false, grantValue: NSNull(), purc
 let selectedBuyer = AppOverview(shared: shared, member: buyer)
 check(selectedBuyer.budget.remaining?.value == selectedResearch.budget.remaining?.value, "switch keeps shared remaining")
 check(selectedBuyer.grant == nil && !selectedBuyer.connection.enabled && selectedBuyer.purchases.isEmpty, "switch clears member facts")
+
+let settings = CardSettingsPresentation(shared)
+check(settings.serviceStatus == "Running", "Settings reads backend service status")
+check(settings.executionMode == "Simulated" && settings.network == "Solana Devnet", "Settings reads backend mode and network")
+check(settings.walletAddress == "PublicWalletAddress", "Settings reads the public wallet address")
+var livePayload = overviewPayload
+livePayload["service"] = ["status": "stopping", "isDefault": true, "purchaseMode": "live_devnet", "network": "Solana Devnet"]
+let liveSettings = CardSettingsPresentation(try decode(AppOverview.self, livePayload))
+check(liveSettings.serviceStatus == "Stopping" && liveSettings.executionMode == "Live · Devnet", "Settings reflects changed runtime state")
 
 let memberUUID = id(researchID)
 let memberPath = "/api/app/members/\(researchID.lowercased())"
@@ -93,4 +104,4 @@ check(ServiceEndpoint.createMemberGrant(memberUUID, totalLimit: "200000", single
 check(ServiceEndpoint.revokeMemberGrant(memberUUID).path == "\(memberPath)/grant", "selected grant revoke path")
 let renameBody = (try JSONSerialization.jsonObject(with: ServiceEndpoint.renameMember(memberUUID, "Buyer").body()!)) as? [String: String]
 check(renameBody?["label"] == "Buyer", "member rename body")
-print("Native member selection and scope tests passed")
+print("Native member and settings tests passed")

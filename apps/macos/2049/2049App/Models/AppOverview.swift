@@ -3,6 +3,7 @@ import Foundation
 /// Read-only projection of GET /api/app/overview. Payment decisions stay in the backend.
 struct AppOverview: Decodable {
     let service: Service
+    let wallet: Wallet
     let budget: Budget
     let grant: Grant?
     let connection: Connection
@@ -11,6 +12,7 @@ struct AppOverview: Decodable {
     /// Shared controls come from the card overview; member facts come only from that member's endpoint.
     init(shared: AppOverview, member: CardMemberSnapshot) {
         service = shared.service
+        wallet = shared.wallet
         budget = shared.budget
         grant = member.grant
         connection = member.connection
@@ -21,6 +23,7 @@ struct AppOverview: Decodable {
         let status: Status
         let isDefault: Bool
         let purchaseMode: PurchaseMode
+        let network: String
 
         enum Status: String, Decodable {
             case running, stopping
@@ -29,6 +32,10 @@ struct AppOverview: Decodable {
         enum PurchaseMode: String, Decodable {
             case simulated, liveDevnet = "live_devnet"
         }
+    }
+
+    struct Wallet: Decodable {
+        let address: String
     }
 
     struct Budget: Decodable {

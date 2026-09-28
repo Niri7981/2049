@@ -41,7 +41,7 @@ struct AgentCardBack: View {
                 case .members:
                     MembersView(session: memberSession)
                 case .settings:
-                    BackPlaceholder(section: selectedSection)
+                    CardSettingsView(overviewClient: overviewClient)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
