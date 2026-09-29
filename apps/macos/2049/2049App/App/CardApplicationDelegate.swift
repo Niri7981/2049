@@ -27,7 +27,7 @@ final class CardApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDe
         // Give the transparent window a mouse target even where SwiftUI draws material.
         window.backgroundColor = NSColor(white: 1, alpha: 0.01)
         window.ignoresMouseEvents = false
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.hasShadow = false
         window.level = .normal
         window.collectionBehavior = [.fullScreenPrimary]
