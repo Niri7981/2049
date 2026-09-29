@@ -10,7 +10,6 @@ const state = vi.hoisted(() => ({
 vi.mock('@/modules/app/app-runtime', () => ({
   appRuntime: () => ({ authenticateAgent: state.authenticate, memberOverview: state.memberOverview, overview: state.overview, balance: state.balance }),
 }));
-vi.mock('@/modules/purchases/market-quote', () => ({ readMarketQuote: vi.fn() }));
 
 import { GET } from '../../src/app/api/agent/route';
 

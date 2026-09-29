@@ -23,14 +23,26 @@ export const MARKET_OFFER_RESOURCE_URLS = Object.freeze({
   basic: "/api/paid/market-snapshot?asset=SOL&offer=basic",
   premium: "/api/paid/market-snapshot?asset=SOL&offer=premium",
 });
+export const PAID_MARKET_RESOURCE_URLS = Object.freeze({
+  snapshot: "/api/paid/sol-market-snapshot?asset=SOL",
+  analysis: "/api/paid/market-analysis?asset=SOL",
+});
 
-const PaidMarketInputSchema = MarketSnapshotInputSchema.extend({ offer: MarketOfferIdSchema.optional() }).strict();
+const PaidMarketInputSchema = z.union([
+  MarketSnapshotInputSchema.extend({ offer: MarketOfferIdSchema.optional() }).strict(),
+  MarketSnapshotInputSchema.extend({ resource: z.enum(['snapshot', 'analysis']) }).strict(),
+]);
 type PaidMarketInput = z.infer<typeof PaidMarketInputSchema>;
 
 function terms(input: PaidMarketInput) {
-  if (!input.offer) return { amount: PAYMENT_AMOUNT, resource: MARKET_RESOURCE_URL, description: "Premium SOL market snapshot (demo fixture)" };
+  if ('resource' in input) {
+    return input.resource === 'snapshot'
+      ? { amount: '200000', resource: PAID_MARKET_RESOURCE_URLS.snapshot, description: 'SOL Market Snapshot (demo fixture)', body: paidSnapshotBody }
+      : { amount: '20000000', resource: PAID_MARKET_RESOURCE_URLS.analysis, description: 'SOL Market Analysis (demo fixture)', body: paidAnalysisBody };
+  }
+  if (!input.offer) return { amount: PAYMENT_AMOUNT, resource: MARKET_RESOURCE_URL, description: "Premium SOL market snapshot (demo fixture)", body: snapshotBody };
   const offer = marketOffer(input.offer);
-  return { amount: offer.amount, resource: MARKET_OFFER_RESOURCE_URLS[input.offer], description: `${input.offer} SOL market snapshot offer (demo fixture)` };
+  return { amount: offer.amount, resource: MARKET_OFFER_RESOURCE_URLS[input.offer], description: `${input.offer} SOL market snapshot offer (demo fixture)`, body: snapshotBody };
 }
 
 export const demoSnapshot = MarketSnapshotOutputSchema.parse({
@@ -41,6 +53,16 @@ export const demoSnapshot = MarketSnapshotOutputSchema.parse({
   is_demo_snapshot: true,
 });
 const snapshotBody = JSON.stringify(demoSnapshot);
+const paidSnapshotBody = JSON.stringify({
+  resource_id: 'sol-market-snapshot', asset: demoSnapshot.asset, as_of: demoSnapshot.as_of,
+  spot_price_usd: demoSnapshot.spot_price_usd, source_label: 'Demo snapshot fixture', is_demo_snapshot: true,
+});
+const paidAnalysisBody = JSON.stringify({
+  resource_id: 'sol-market-analysis', asset: demoSnapshot.asset, as_of: demoSnapshot.as_of,
+  assessment: 'Demo analysis: positive short-term momentum with elevated volatility.',
+  indicators: { change_24h_pct: demoSnapshot.change_24h_pct, volatility_7d_pct: demoSnapshot.volatility_7d_pct, rsi_14d: demoSnapshot.rsi_14d },
+  source_label: 'Demo analysis fixture', is_demo_analysis: true,
+});
 
 function jsonError(status: number, error: string, extra?: Record<string, unknown>) {
   return Response.json({ error, ...extra }, { status, headers: { "cache-control": "no-store" } });
@@ -154,7 +176,7 @@ export function createPaidMarketApi(
           if (outcome.status !== "UNKNOWN") {
             const receipt: SettleResponse = { success: outcome.status === "CONFIRMED", transaction: outcome.transaction,
               network: config.network, payer: config.buyer, amount: storedQuote.requirements.amount };
-            if (outcome.status === "CONFIRMED") store.confirm(messageHash, receipt, previous.body ?? snapshotBody);
+            if (outcome.status === "CONFIRMED") store.confirm(messageHash, receipt, previous.body ?? expected.body);
             else store.fail(messageHash, { ...receipt, errorReason: "transaction_failed_on_chain" });
           }
         }
@@ -171,7 +193,7 @@ export function createPaidMarketApi(
 
       // Prepare output first. Commit the durable UNKNOWN claim before calling
       // settlement: timeouts, process exits and write failures never permit re-pay.
-      if (!store.claim(messageHash, storedQuote.id, payloadHash, snapshotBody)) {
+      if (!store.claim(messageHash, storedQuote.id, payloadHash, expected.body)) {
         const claimed = store.get(messageHash);
         return claimed ? previousResponse(claimed, payloadHash) : jsonError(409, "Quote already claimed");
       }
@@ -189,8 +211,8 @@ export function createPaidMarketApi(
             (receipt.amount !== undefined && receipt.amount !== storedQuote.requirements.amount)) {
           return previousResponse(store.get(messageHash)!, payloadHash);
         }
-        store.confirm(messageHash, receipt, snapshotBody);
-        return paidResponse(snapshotBody, receipt);
+        store.confirm(messageHash, receipt, expected.body);
+        return paidResponse(expected.body, receipt);
       } catch {
         return previousResponse(store.get(messageHash)!, payloadHash);
       }

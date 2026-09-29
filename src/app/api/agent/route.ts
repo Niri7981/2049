@@ -1,5 +1,4 @@
 import { appRuntime } from '@/modules/app/app-runtime';
-import { readMarketQuote } from '@/modules/purchases/market-quote';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,7 +20,6 @@ export async function GET(request: Request) {
         paymentEnabled: overview.service.purchaseMode === 'live_devnet' }, { headers: { 'cache-control': 'no-store' } });
     }
     if (operation !== 'quote') return Response.json({ code: 'UNKNOWN_OPERATION' }, { status: 400 });
-    await app.initializeWallet();
-    return Response.json(await readMarketQuote(new URL(request.url).origin), { headers: { 'cache-control': 'no-store' } });
+    return Response.json(await app.quotePaidResources(new URL(request.url).origin), { headers: { 'cache-control': 'no-store' } });
   } catch { return Response.json({ code: 'AGENT_READ_FAILED', error: '暂时无法读取；请求未付款。' }, { status: 503 }); }
 }

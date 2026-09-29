@@ -3,14 +3,16 @@ import { homedir } from 'node:os';
 import { initializeProductWallet } from '../app-wallet/product-wallet';
 import { DEVNET_USDC_MINT, loadPaymentConfig } from '../payment/payment-config';
 import { PurchaseLedger } from '../purchases/purchase-ledger';
-import { paymentEndpoint, recoverApprovedPayment } from '../purchases/approved-payment';
+import { paymentEndpointForIntent, recoverApprovedPayment } from '../purchases/approved-payment';
 import { purchaseMarketSnapshot } from '../purchases/purchase-market-snapshot';
 import { hash } from '../purchases/spending-policy';
 import { AgentConnection } from '../mcp/connection';
 import { MARKET_SNAPSHOT_OPERATION, SpendGrantInputSchema, type SpendPrincipal } from '../authority/spend-grant';
-import { DEMO_MARKET_DATA_PROVIDER_ID, PREMIUM_SOL_MARKET_SNAPSHOT_ID } from '../resources/static-resource-registry';
+import { DEMO_MARKET_DATA_PROVIDER_ID } from '../resources/static-resource-registry';
+import { PAID_RESOURCE_SCOPE_ID } from '../resources/paid-resources';
 import { DEVNET_NETWORK } from '../payment/payment-config';
-import { requestMarketPurchase, type PurchaseRequestResult } from '../purchases/request-market-purchase';
+import { requestPaidResourcePurchase, type PurchaseRequestResult } from '../purchases/request-paid-resource-purchase';
+import { readPaidResourceQuotes } from '../purchases/paid-resource-quote';
 import { acquireDataDirectoryOwnership } from './data-directory-owner';
 import { readWalletBalance } from './wallet-balance';
 import { assembleAuthorityOverview } from './authority-overview';
@@ -100,8 +102,9 @@ export class AppRuntime {
         if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Recovery wallet mismatch');
         for (const item of pending) {
           if (!this.accepting) break;
-          try { await recoverApprovedPayment(this.ledger, item.requestId, config,
-            paymentEndpoint(origin, this.ledger.get(item.requestId, item.ownerCardMemberId)?.intent.offerId), () => {}, item.ownerCardMemberId); }
+          try { const record = this.ledger.get(item.requestId, item.ownerCardMemberId);
+            if (record) await recoverApprovedPayment(this.ledger, item.requestId, config,
+              paymentEndpointForIntent(origin, record.intent), () => {}, item.ownerCardMemberId); }
           catch { /* Keep mismatched or unavailable original payments frozen. */ }
         }
       }
@@ -117,6 +120,12 @@ export class AppRuntime {
   }
   async balance(address: string, fetcher: typeof fetch = fetch) {
     return readWalletBalance(address, fetcher);
+  }
+  async quotePaidResources(origin: string) {
+    const wallet = await this.initializeWallet();
+    const config = loadPaymentConfig();
+    if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Devnet 钱包配置不匹配。');
+    return readPaidResourceQuotes(origin, config, this.dependencies.fetcher);
   }
   async overview() {
     const wallet = await this.initializeWallet();
@@ -185,7 +194,7 @@ export class AppRuntime {
     try {
       const payTo = process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
       return this.ledger.createSpendGrant(input, principal, {
-        resourceId: PREMIUM_SOL_MARKET_SNAPSHOT_ID,
+        resourceId: PAID_RESOURCE_SCOPE_ID,
         providerId: DEMO_MARKET_DATA_PROVIDER_ID,
         operation: MARKET_SNAPSHOT_OPERATION,
         network: DEVNET_NETWORK,
@@ -224,7 +233,7 @@ export class AppRuntime {
     if (config.cluster !== 'devnet' || config.buyer !== buyer) throw new Error('Devnet 钱包配置不匹配。');
     await this.start(origin);
     if (!this.accepting) throw new Error('服务正在退出，不能创建购买请求。');
-    return requestMarketPurchase(input, { config, ledger: this.ledger, origin, principal, execute: purchaseExecutionMode() === 'live_devnet', fetcher: this.dependencies.fetcher, now: this.dependencies.now });
+    return requestPaidResourcePurchase(input, { config, ledger: this.ledger, origin, principal, execute: purchaseExecutionMode() === 'live_devnet', fetcher: this.dependencies.fetcher, now: this.dependencies.now });
   }
   createTestPurchase(id: string, origin: string): Promise<TestPurchaseResult> {
     if (!this.accepting) return Promise.reject(new Error('服务正在退出，不能开始新付款。'));

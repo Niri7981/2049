@@ -55,7 +55,7 @@ it('returns policy denials as structured results while keeping backend failures 
   const directory = mkdtempSync(join(tmpdir(), '2049-stdio-request-'));
   const connection = new AgentConnection(directory, cardMemberId, () => true);
   let received: { url?: string; method?: string; body?: unknown } = {};
-  const purchase = { purchaseId: 'stdio-request-1', offerId: 'basic', amount: '200000', display: '0.20 test USDC',
+  const purchase = { purchaseId: 'stdio-request-1', resourceId: 'market-snapshot', amount: '200000', display: '0.20 test USDC',
     executionMode: 'live_devnet', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_REVOKED' },
     paymentStatus: 'NOT_STARTED', deliveryStatus: 'NOT_DELIVERED', reused: false };
   const http = createServer((incoming, outgoing) => {
@@ -89,12 +89,12 @@ it('returns policy denials as structured results while keeping backend failures 
     env: { APP2049_DATA_DIR: directory }, stderr: 'pipe' });
   try {
     await client.connect(transport);
-    const result = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'stdio-request-1', offerId: 'basic', reason: 'Need SOL data' } });
+    const result = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'stdio-request-1', resourceId: 'market-snapshot', reason: 'Need SOL data' } });
     expect(result.isError).not.toBe(true);
-    expect(received).toEqual({ url: '/api/agent/purchases', method: 'POST', body: { requestId: 'stdio-request-1', offerId: 'basic', reason: 'Need SOL data' } });
+    expect(received).toEqual({ url: '/api/agent/purchases', method: 'POST', body: { requestId: 'stdio-request-1', resourceId: 'market-snapshot', reason: 'Need SOL data' } });
     expect(result).toMatchObject({ content: [{ type: 'text', text: JSON.stringify(purchase) }] });
     const failure = await client.callTool({ name: 'request_purchase', arguments: {
-      requestId: 'infrastructure-failure', offerId: 'basic', reason: 'Exercise backend failure mapping',
+      requestId: 'infrastructure-failure', resourceId: 'market-snapshot', reason: 'Exercise backend failure mapping',
     } });
     expect(failure).toMatchObject({ isError: true, content: [{ type: 'text', text: expect.stringContaining('PURCHASE_REQUEST_FAILED') }] });
   } finally {

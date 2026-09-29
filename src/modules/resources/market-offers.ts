@@ -1,3 +1,4 @@
+/** LEGACY basic/premium terms retained for old paid routes and offerId recovery. */
 import { z } from 'zod';
 import { ResourceMetadataSchema, type ResourceMetadata } from './resource-schema';
 import { DEMO_MARKET_DATA_PROVIDER_ID, SOL_MARKET_SNAPSHOT_RESOURCE_ID, type StaticResourceRegistryConfig } from './static-resource-registry';

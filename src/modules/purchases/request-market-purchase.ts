@@ -1,3 +1,4 @@
+/** LEGACY offer purchase adapter; the current Agent path uses request-paid-resource-purchase. */
 import type { PaymentRequirements } from '@x402/core/types';
 import { z } from 'zod';
 import { address } from '@solana/kit';

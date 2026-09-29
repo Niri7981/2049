@@ -8,7 +8,8 @@ import { join } from "node:path";
 import type { FacilitatorClient } from "@x402/core/server";
 import type { PaymentPayload, PaymentRequired, SettleResponse } from "@x402/core/types";
 import {
-  createPaidMarketApi, paidMarketSnapshotResponse, MARKET_RESOURCE_URL, PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER,
+  createPaidMarketApi, paidMarketSnapshotResponse, MARKET_RESOURCE_URL,
+  PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER,
 } from "../../src/modules/paid-market-api/paid-market-api";
 import { SettlementStore } from "../../src/modules/paid-market-api/settlement-store";
 import type { PaymentConfig } from "../../src/modules/payment/payment-config";
@@ -55,8 +56,8 @@ function setup(path = ":memory:", facilitator = mockFacilitator()) {
 
 function encode(value: unknown) { return Buffer.from(JSON.stringify(value)).toString("base64"); }
 
-async function paymentFor(handler: ReturnType<typeof createPaidMarketApi>) {
-  const response = await handler({ asset: "SOL" });
+async function paymentFor(handler: ReturnType<typeof createPaidMarketApi>, input: { asset: 'SOL'; resource?: 'snapshot' | 'analysis' } = { asset: 'SOL' }) {
+  const response = await handler(input);
   expect(response.status).toBe(402);
   const quote = JSON.parse(Buffer.from(response.headers.get(PAYMENT_REQUIRED_HEADER)!, "base64").toString()) as PaymentRequired;
   const tx = new VersionedTransaction(new TransactionMessage({
@@ -104,6 +105,47 @@ describe("x402 paid market API", () => {
     expect(required.accepts[0]).toMatchObject({ scheme: 'exact', amount, payTo: config.merchant, asset: config.mint, network: config.network });
     expect(facilitator.verify).not.toHaveBeenCalled();
     expect(facilitator.settle).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['snapshot', '200000', '/api/paid/sol-market-snapshot?asset=SOL'],
+    ['analysis', '20000000', '/api/paid/market-analysis?asset=SOL'],
+  ] as const)('quotes the distinct %s resource through x402', async (resource, amount, url) => {
+    const { handler, store, facilitator } = setup();
+    const response = await handler({ asset: 'SOL', resource });
+    expect(response.status).toBe(402);
+    expect(await response.text()).toBe('');
+    const required = JSON.parse(Buffer.from(response.headers.get(PAYMENT_REQUIRED_HEADER)!, 'base64').toString()) as PaymentRequired;
+    expect(required.x402Version).toBe(2);
+    expect(required.resource.url).toBe(url);
+    expect(required.accepts).toHaveLength(1);
+    expect(required.accepts[0]).toMatchObject({ scheme: 'exact', amount, asset: config.mint, network: config.network, payTo: config.merchant });
+    expect(store.getQuote(String(required.accepts[0].extra.memo))?.resource).toBe(url);
+    expect(facilitator.verify).not.toHaveBeenCalled();
+    expect(facilitator.settle).not.toHaveBeenCalled();
+  });
+
+  it('delivers distinct demo payloads only after each resource is paid', async () => {
+    const { handler, facilitator } = setup();
+    const snapshot = await paymentFor(handler, { asset: 'SOL', resource: 'snapshot' });
+    const analysis = await paymentFor(handler, { asset: 'SOL', resource: 'analysis' });
+    expect((await handler({ asset: 'SOL', resource: 'analysis' }, snapshot.header)).status).toBe(402);
+    expect(facilitator.verify).not.toHaveBeenCalled();
+
+    const snapshotResponse = await handler({ asset: 'SOL', resource: 'snapshot' }, snapshot.header);
+    const analysisResponse = await handler({ asset: 'SOL', resource: 'analysis' }, analysis.header);
+    expect(snapshotResponse.status).toBe(200);
+    expect(analysisResponse.status).toBe(200);
+    expect(snapshotResponse.headers.get(PAYMENT_RESPONSE_HEADER)).not.toBeNull();
+    expect(analysisResponse.headers.get(PAYMENT_RESPONSE_HEADER)).not.toBeNull();
+    const snapshotBody = await snapshotResponse.json();
+    const analysisBody = await analysisResponse.json();
+    expect(snapshotBody).toMatchObject({ resource_id: 'sol-market-snapshot', spot_price_usd: 140, is_demo_snapshot: true });
+    expect(snapshotBody).not.toHaveProperty('assessment');
+    expect(analysisBody).toMatchObject({ resource_id: 'sol-market-analysis', assessment: expect.any(String), is_demo_analysis: true });
+    expect(analysisBody).not.toHaveProperty('spot_price_usd');
+    expect(facilitator.verify).toHaveBeenCalledTimes(2);
+    expect(facilitator.settle).toHaveBeenCalledTimes(2);
   });
 
   it("verifies and settles before returning data and PAYMENT-RESPONSE", async () => {

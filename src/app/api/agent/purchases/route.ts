@@ -1,6 +1,6 @@
 import { appRuntime } from '@/modules/app/app-runtime';
 import { localRequestOrigin, smallJson } from '@/modules/http/local-request';
-import { PurchaseRequestInputSchema } from '@/modules/purchases/request-market-purchase';
+import { PurchaseRequestInputSchema } from '@/modules/purchases/request-paid-resource-purchase';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

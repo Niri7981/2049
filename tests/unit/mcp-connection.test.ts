@@ -101,9 +101,9 @@ it('uses the official MCP handshake and exposes a request-only purchase tool wit
     expect(read.mock.calls).toEqual([['quote'], ['quote'], ['quote']]);
     const unknown = await client.callTool({ name: 'pay', arguments: { approved: true } });
     expect(unknown.isError).toBe(true); expect(read).toHaveBeenCalledTimes(3);
-    const requested = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'request-1', offerId: 'basic', reason: 'Need SOL data' } });
+    const requested = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'request-1', resourceId: 'market-snapshot', reason: 'Need SOL data' } });
     expect(requested.isError).not.toBe(true);
-    expect(requestPurchase).toHaveBeenCalledWith({ requestId: 'request-1', offerId: 'basic', reason: 'Need SOL data' });
+    expect(requestPurchase).toHaveBeenCalledWith({ requestId: 'request-1', resourceId: 'market-snapshot', reason: 'Need SOL data' });
     read.mockRejectedValueOnce(new Error('secret-token-and-rpc-url'));
     const failed = await client.callTool({ name: 'get_spending_status', arguments: {} });
     expect(failed.isError).toBe(true); expect(JSON.stringify(failed)).not.toContain('secret-token');

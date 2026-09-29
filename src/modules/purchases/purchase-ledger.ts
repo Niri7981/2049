@@ -9,7 +9,8 @@ import { CardMemberSchema, type CardMember } from '../authority/card-member';
 import { DEFAULT_SPENDING_POLICY, evaluateSpendAuthority, parseStoredAuthorityDecision, type AuthorityDecision, type SpendingControls } from '../authority/authority-policy';
 import { parseStoredSpendIntent, type SpendIntent } from '../authority/spend-intent';
 import { MARKET_SNAPSHOT_OPERATION, SpendGrantInputSchema, SpendGrantSchema, SpendGrantScopeSchema, SpendPrincipalSchema, parseGrantAmount, type SpendAuthorityBinding, type SpendGrant, type SpendGrantInput, type SpendGrantScope, type SpendPrincipal } from '../authority/spend-grant';
-import { MarketSnapshotOutputSchema, type MarketSnapshotOutput } from '../resources/resource-schema';
+import { PAID_RESOURCE_SCOPE_ID, PaidResourceIdSchema, paidResource } from '../resources/paid-resources';
+import { PREMIUM_SOL_MARKET_SNAPSHOT_ID } from '../resources/static-resource-registry';
 import { hash, nextSpendingDayBoundary, spendingDay } from './spending-policy';
 
 export type DeliveryStatus = 'NOT_PAID' | 'PENDING' | 'COMPLETE';
@@ -33,7 +34,7 @@ export type PaymentVerification = { payer: string; messageHash: string; confirma
 export type SpendReservation = {
   intent: SpendIntent; quote: PaymentRequirements; approvalId: string; decision: AuthorityDecision; status: string; deliveryStatus: DeliveryStatus;
   executionMode: StoredPurchaseExecutionMode; paymentPayloadPresent: boolean; paymentPayloadHash?: string; paymentEvidence?: PaymentEvidence;
-  ownerCardMemberId?: string; transaction?: string; data?: MarketSnapshotOutput; answer?: string;
+  ownerCardMemberId?: string; transaction?: string; data?: Record<string, unknown>; answer?: string;
 };
 /** Compatibility name for callers that still expose the market purchase use case. */
 export type PurchaseRecord = SpendReservation;
@@ -434,7 +435,7 @@ export class PurchaseLedger {
       ...(ownerCardMemberId ? { ownerCardMemberId } : {}),
       ...(this.db.prepare("SELECT answer FROM purchase_answers WHERE purchase_id=?").get(String(row.id)) as { answer: string } | undefined),
       ...(row.transaction_id ? { transaction: String(row.transaction_id) } : {}),
-      ...(row.data ? { data: MarketSnapshotOutputSchema.parse(JSON.parse(String(row.data))) } : {}) };
+      ...(row.data ? { data: z.record(z.string(), z.unknown()).parse(JSON.parse(String(row.data))) } : {}) };
   }
   private hasVerifiedPaymentProof(record: SpendReservation) {
     const evidence = record.paymentEvidence;
@@ -573,9 +574,9 @@ export class PurchaseLedger {
   confirmPayment(approvalId: string, transaction: string, verification: PaymentVerification, now = Date.now()) {
     this.atomic(() => this.recordConfirmation(approvalId, transaction, verification, now));
   }
-  finish(approvalId: string, result: { transaction: string; data: MarketSnapshotOutput }, now = Date.now()) {
+  finish(approvalId: string, result: { transaction: string; data: Record<string, unknown> }, now = Date.now()) {
     this.atomic(() => {
-      const data = MarketSnapshotOutputSchema.parse(result.data);
+      const data = z.record(z.string(), z.unknown()).parse(result.data);
       const row = this.db.prepare('SELECT task_id,owner_card_member_id,status,execution_mode FROM purchases WHERE approval_id=?').get(approvalId);
       if (!row) throw new Error('Unknown approval');
       const record = this.get(String(row.task_id), row.owner_card_member_id ? String(row.owner_card_member_id) : undefined);
@@ -656,7 +657,7 @@ export class PurchaseLedger {
     if (grant.status === 'EXPIRED' || grant.expiresAt <= now) return this.denied('SPEND_GRANT_EXPIRED', committed, controls);
     if (grant.status !== 'ACTIVE') return this.denied('SPEND_GRANT_INACTIVE', committed, controls);
     if (grant.version !== binding.grantVersion || grant.cardMemberId !== binding.cardMemberId) return this.denied('SPEND_GRANT_PRINCIPAL_MISMATCH', committed, controls);
-    if (grant.operation !== binding.operation || grant.operation !== MARKET_SNAPSHOT_OPERATION || grant.resourceId !== intent.resourceId || grant.providerId !== intent.providerId || grant.network !== intent.network || grant.assetId !== intent.assetId || grant.assetDecimals !== intent.assetDecimals || grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme) {
+    if (grant.operation !== binding.operation || grant.operation !== MARKET_SNAPSHOT_OPERATION || !this.grantCoversResource(grant, intent) || grant.providerId !== intent.providerId || grant.network !== intent.network || grant.assetId !== intent.assetId || grant.assetDecimals !== intent.assetDecimals || grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme) {
       return this.denied('SPEND_GRANT_SCOPE_MISMATCH', committed, controls);
     }
     if (intent.amount > grant.singleLimit) return this.denied('SPEND_GRANT_SINGLE_LIMIT_EXCEEDED', committed, controls);
@@ -678,13 +679,22 @@ export class PurchaseLedger {
       throw new Error('Spend grant principal changed');
     }
     const intent = record.intent;
-    if (grant.operation !== MARKET_SNAPSHOT_OPERATION || grant.resourceId !== intent.resourceId || grant.providerId !== intent.providerId ||
+    if (grant.operation !== MARKET_SNAPSHOT_OPERATION || !this.grantCoversResource(grant, intent) || grant.providerId !== intent.providerId ||
       grant.network !== intent.network || grant.assetId !== intent.assetId || grant.assetDecimals !== intent.assetDecimals ||
       grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme || intent.amount > grant.singleLimit) {
       throw new Error('Spend grant scope or single limit changed');
     }
     const committed = this.grantCommitted(grant.id, record.executionMode);
     if (!Number.isSafeInteger(committed) || committed < 0 || committed > grant.totalLimit) throw new Error('Spend grant no longer covers reserved payments');
+  }
+  private grantCoversResource(grant: SpendGrant, intent: SpendIntent) {
+    // The App's historical 0.01 test purchase retains its former grant access;
+    // it is not exposed through the current Agent purchase contract.
+    if (!intent.resourceScopeId) return grant.resourceId === intent.resourceId ||
+      (grant.resourceId === PAID_RESOURCE_SCOPE_ID && intent.resourceId === PREMIUM_SOL_MARKET_SNAPSHOT_ID);
+    const id = PaidResourceIdSchema.safeParse(intent.resourceId);
+    return intent.resourceScopeId === PAID_RESOURCE_SCOPE_ID && grant.resourceId === PAID_RESOURCE_SCOPE_ID &&
+      id.success && intent.resourcePath === paidResource(id.data).path;
   }
   close() { this.db.close(); }
 }

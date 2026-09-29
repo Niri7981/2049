@@ -1,3 +1,4 @@
+/** LEGACY 0.01 quote reader; the current Agent path uses paid-resource-quote. */
 import { loadPaymentConfig, PAYMENT_AMOUNT, DEVNET_NETWORK, type PaymentConfig } from '../payment/payment-config';
 import { readPaymentRequiredHeader } from '../payment/x402-client';
 import { MARKET_RESOURCE } from '../payment/solana-payment';

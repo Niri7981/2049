@@ -12,6 +12,10 @@ export const SpendIntentSchema = z.object({
   idempotencyKey: z.string().min(1).max(80),
   requestHash: z.string().min(1),
   resourceId: boundedIdentifier,
+  /** Registered scope for new resources; absent in historical exact-resource rows. */
+  resourceScopeId: boundedIdentifier.optional(),
+  /** Exact path issued in the 402. Historical rows reconstruct from offerId. */
+  resourcePath: z.string().startsWith('/api/paid/').max(200).optional(),
   providerId: boundedIdentifier,
   offerId: boundedIdentifier.optional(),
   reason: z.string().trim().min(1).max(240).optional(),

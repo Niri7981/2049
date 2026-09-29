@@ -1,7 +1,7 @@
 import { MarketSnapshotOutputSchema } from './resource-schema';
 
 /** Bound streamed bytes, not just Content-Length, before parsing untrusted JSON. */
-export async function readMarketSnapshot(response: Response) {
+export async function readBoundedResourceJson(response: Response): Promise<unknown> {
   if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json')) throw new Error('Expected JSON');
   const reader = response.body?.getReader();
   if (!reader) throw new Error('Missing market data');
@@ -15,6 +15,10 @@ export async function readMarketSnapshot(response: Response) {
       if (size > 16_384) throw new Error('Market data too large');
       chunks.push(value);
     }
-    return MarketSnapshotOutputSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+
+export async function readMarketSnapshot(response: Response) {
+  return MarketSnapshotOutputSchema.parse(await readBoundedResourceJson(response));
 }

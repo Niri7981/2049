@@ -9,6 +9,7 @@ import type { FacilitatorClient } from '@x402/core/server';
 import { Keypair } from '@solana/web3.js';
 import { expect, it, vi } from 'vitest';
 import { POST } from '../../src/app/api/agent/purchases/route';
+import { GET } from '../../src/app/api/agent/route';
 import { AppRuntime } from '../../src/modules/app/app-runtime';
 import { readConnection } from '../../src/modules/mcp/connection';
 import { createPaidMarketApi } from '../../src/modules/paid-market-api/paid-market-api';
@@ -21,7 +22,7 @@ vi.mock('@/modules/app/app-runtime', () => ({
   appRuntime: () => (globalThis as typeof globalThis & { __app2049?: { runtime?: AppRuntime } }).__app2049?.runtime,
 }));
 vi.mock('@/modules/http/local-request', async () => await import('../../src/modules/http/local-request'));
-vi.mock('@/modules/purchases/request-market-purchase', async () => await import('../../src/modules/purchases/request-market-purchase'));
+vi.mock('@/modules/purchases/request-paid-resource-purchase', async () => await import('../../src/modules/purchases/request-paid-resource-purchase'));
 vi.mock('../../src/modules/purchases/approved-payment', async importOriginal => ({
   ...await importOriginal<typeof import('../../src/modules/purchases/approved-payment')>(),
   executeApprovedPayment: vi.fn(), recoverApprovedPayment: vi.fn(),
@@ -37,7 +38,7 @@ const config: PaymentConfig = { cluster: 'devnet', rpcUrl: 'https://api.devnet.s
 
 function purchaseRequest(origin: string, token: string, requestId: string) {
   return fetch(`${origin}/api/agent/purchases`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ requestId, offerId: 'basic', reason: 'Check policy without payment' }) });
+    body: JSON.stringify({ requestId, resourceId: 'market-snapshot', reason: 'Check policy without payment' }) });
 }
 
 it('separates authenticated MCP purchase intents from SpendGrant authority across creation, revoke and expiry', async () => {
@@ -50,7 +51,7 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
   const paidApi = createPaidMarketApi(config, facilitator, store);
   const quote = vi.fn<typeof fetch>(async input => {
     const url = new URL(String(input));
-    return paidApi({ asset: url.searchParams.get('asset'), offer: url.searchParams.get('offer') });
+    return paidApi({ asset: url.searchParams.get('asset'), resource: url.pathname.endsWith('/market-analysis') ? 'analysis' : 'snapshot' });
   });
   let now = fixedNow;
   const app = new AppRuntime(directory, { initializeWallet: async () => ({ address: buyer, reused: true }), now: () => now,
@@ -69,9 +70,9 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
       const chunks: Buffer[] = [];
       for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
       const request = new Request(`http://127.0.0.1:${address.port}${incoming.url ?? '/'}`, {
-        method: incoming.method, headers, body: Buffer.concat(chunks),
+        method: incoming.method, headers, ...(incoming.method === 'POST' ? { body: Buffer.concat(chunks) } : {}),
       });
-      const response = await POST(request);
+      const response = incoming.method === 'GET' ? await GET(request) : await POST(request);
       outgoing.writeHead(response.status, Object.fromEntries(response.headers));
       outgoing.end(await response.text());
     } catch { outgoing.writeHead(500); outgoing.end(); }
@@ -102,8 +103,8 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
       clients.push({ client, transport });
       return client;
     }
-    async function call(client: Client, requestId: string, offerId: 'basic' | 'premium' = 'basic') {
-      const response = await client.callTool({ name: 'request_purchase', arguments: { requestId, offerId, reason: 'Check policy without payment' } });
+    async function call(client: Client, requestId: string, resourceId: 'market-snapshot' | 'market-analysis' = 'market-snapshot') {
+      const response = await client.callTool({ name: 'request_purchase', arguments: { requestId, resourceId, reason: 'Check policy without payment' } });
       expect(response.isError).not.toBe(true);
       if (!Array.isArray(response.content)) throw new Error('Missing MCP content');
       const content: unknown = response.content[0];
@@ -113,7 +114,19 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
     }
 
     const initialClient = await connect();
+    const quotesTool = await initialClient.callTool({ name: 'get_market_quote', arguments: {} });
+    expect(quotesTool.isError).not.toBe(true);
+    if (!Array.isArray(quotesTool.content)) throw new Error('Missing quote content');
+    const quoteContent: unknown = quotesTool.content[0];
+    if (!quoteContent || typeof quoteContent !== 'object' || !('type' in quoteContent) || quoteContent.type !== 'text' ||
+      !('text' in quoteContent) || typeof quoteContent.text !== 'string') throw new Error('Missing quote text');
+    const listed = JSON.parse(quoteContent.text);
+    expect(listed.resources).toMatchObject([
+      { resourceId: 'market-snapshot', resourceUrl: '/api/paid/sol-market-snapshot?asset=SOL', amount: '200000' },
+      { resourceId: 'market-analysis', resourceUrl: '/api/paid/market-analysis?asset=SOL', amount: '20000000' },
+    ]);
     const withoutGrant = await call(initialClient, 'intent-no-grant');
+    expect(withoutGrant).toMatchObject({ resourceId: listed.resources[0].resourceId, amount: listed.resources[0].amount });
     expect(withoutGrant).toMatchObject({
       status: 'DENIED', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_REQUIRED' },
       paymentStatus: 'NOT_STARTED', deliveryStatus: 'NOT_DELIVERED', grant: null,
@@ -133,7 +146,7 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
     expect((await purchaseRequest(origin, first.token, 'intent-stale-before-revoke')).status).toBe(401);
     expect(app.ledger.get('intent-stale-before-revoke')).toBeUndefined();
     const activeClient = await connect();
-    const overLimit = await call(activeClient, 'intent-active-over-limit', 'premium');
+    const overLimit = await call(activeClient, 'intent-active-over-limit', 'market-analysis');
     expect(overLimit).toMatchObject({
       status: 'DENIED', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_SINGLE_LIMIT_EXCEEDED' },
     });
@@ -182,7 +195,7 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
     expect(app.ledger.get('intent-invalid-token')).toBeUndefined();
     const crossOrigin = await fetch(`${origin}/api/agent/purchases`, { method: 'POST',
       headers: { authorization: `Bearer ${readConnection(directory).token}`, origin: 'https://untrusted.invalid', 'content-type': 'application/json' },
-      body: JSON.stringify({ requestId: 'intent-cross-origin', offerId: 'basic', reason: 'Check origin validation' }) });
+      body: JSON.stringify({ requestId: 'intent-cross-origin', resourceId: 'market-snapshot', reason: 'Check origin validation' }) });
     expect(crossOrigin.status).toBe(401);
     expect(app.ledger.get('intent-cross-origin')).toBeUndefined();
     const beforeDisable = readConnection(directory);

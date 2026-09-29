@@ -4,7 +4,9 @@ import type { PaymentConfig } from '../payment/payment-config';
 import { prepareSolanaPayment, confirmSolanaTransaction, MARKET_RESOURCE } from '../payment/solana-payment';
 import { inspectOriginalTransaction, transactionMessageHash } from '../payment/reconcile-transaction';
 import { loadBuyerSigner } from '../payment/wallet';
-import { readMarketSnapshot } from '../resources/read-market-snapshot';
+import { readBoundedResourceJson, readMarketSnapshot } from '../resources/read-market-snapshot';
+import { PAID_RESOURCE_SCOPE_ID, paidResource, PaidResourceIdSchema, parsePaidResourceDelivery, type PaidResourceId } from '../resources/paid-resources';
+import type { SpendIntent } from '../authority/spend-intent';
 import { PurchaseLedger, type PurchaseRecord } from './purchase-ledger';
 import { hash } from './spending-policy';
 import { runPaymentPreflight } from '../payment/payment-preflight';
@@ -16,18 +18,33 @@ export function paymentEndpoint(origin: string, offerId?: string) {
   if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || url.username || url.password) throw new Error('Purchase only calls the configured local API');
   return new URL(offerId ? `${MARKET_RESOURCE}&offer=${MarketOfferIdSchema.parse(offerId)}` : MARKET_RESOURCE, url).href;
 }
+export function paymentEndpointForResource(origin: string, id: PaidResourceId) {
+  const base = new URL(paymentEndpoint(origin));
+  return new URL(paidResource(id).path, base).href;
+}
+export function paymentEndpointForIntent(origin: string, intent: SpendIntent) {
+  if (!intent.resourcePath) return paymentEndpoint(origin, intent.offerId);
+  const id = PaidResourceIdSchema.parse(intent.resourceId);
+  if (intent.resourcePath !== paidResource(id).path) throw new Error('Resource binding changed');
+  return paymentEndpointForResource(origin, id);
+}
 export function paymentBinding(config: PaymentConfig, endpoint: string, quote?: PaymentRequirements) {
   const facts = [config.cluster, config.network, config.mint, config.buyer, config.merchant, endpoint];
   return hash(quote ? [...facts, 'GET', quote] : facts);
 }
 export function checkPaymentBinding(record: PurchaseRecord, config: PaymentConfig, endpoint: string) {
   const intent = record.intent;
-  if (intent.executionBinding !== paymentBinding(config, endpoint, intent.offerId ? record.quote : undefined) || intent.quoteFingerprint !== hash(record.quote) || String(intent.amount) !== record.quote.amount
+  if (intent.executionBinding !== paymentBinding(config, endpoint, intent.offerId || intent.resourcePath ? record.quote : undefined) || intent.quoteFingerprint !== hash(record.quote) || String(intent.amount) !== record.quote.amount
     || intent.assetId !== config.mint || intent.network !== config.network || intent.payTo !== config.merchant) throw new Error('Approval binding changed');
   if (intent.paymentScheme !== record.quote.scheme || record.quote.asset !== intent.assetId || record.quote.network !== intent.network || record.quote.payTo !== intent.payTo) throw new Error('Approval terms changed');
   if (intent.offerId) {
     const offer = marketOffer(MarketOfferIdSchema.parse(intent.offerId));
     if (endpoint !== paymentEndpoint(endpoint, intent.offerId) || record.quote.amount !== offer.amount) throw new Error('Offer binding changed');
+  }
+  if (intent.resourcePath) {
+    const id = PaidResourceIdSchema.parse(intent.resourceId);
+    if (intent.offerId || intent.resourcePath !== paidResource(id).path || endpoint !== paymentEndpointForResource(endpoint, id)) throw new Error('Resource binding changed');
+    if (intent.resourceScopeId !== PAID_RESOURCE_SCOPE_ID) throw new Error('Resource scope changed');
   }
 }
 async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, config: PaymentConfig, endpoint: string, payload: PaymentPayload, recovery: boolean, trace: Trace) {
@@ -64,8 +81,10 @@ async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, co
   });
   trace('CHAIN_CONFIRMED', transaction);
   if (response.status !== 200 || receipt.success !== true) throw new Error('Delivery unavailable');
-  const data = await readMarketSnapshot(response);
-  trace('DATA_VALIDATED', `历史演示快照 · ${data.as_of}`);
+  const data = record.intent.resourcePath
+    ? parsePaidResourceDelivery(PaidResourceIdSchema.parse(record.intent.resourceId), await readBoundedResourceJson(response))
+    : await readMarketSnapshot(response);
+  trace('DATA_VALIDATED');
   ledger.finish(record.approvalId, { transaction, data });
   return { transaction, data };
 }
@@ -76,7 +95,7 @@ export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId:
   const beforeSign = () => ledger.assertCanSign(approvalId, undefined, validate);
   try {
     checkPaymentBinding(record, config, endpoint);
-    if (record.intent.offerId) {
+    if (record.intent.offerId || record.intent.resourcePath) {
       const preflight = await runPaymentPreflight(config, { amount: record.quote.amount });
       if (preflight.facilitator.feePayer !== record.quote.extra?.feePayer) throw new Error('Quote fee payer changed');
     }
@@ -84,7 +103,7 @@ export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId:
     trace('SIGNING');
     const signer = await loadBuyerSigner(config.buyer);
     beforeSign();
-    const payload = await prepareSolanaPayment(config, signer, record.quote, beforeSign, record.intent.offerId ? { amount: record.quote.amount, resource: new URL(endpoint).pathname + new URL(endpoint).search } : undefined);
+    const payload = await prepareSolanaPayment(config, signer, record.quote, beforeSign, record.intent.offerId || record.intent.resourcePath ? { amount: record.quote.amount, resource: new URL(endpoint).pathname + new URL(endpoint).search } : undefined);
     ledger.savePayload(approvalId, payload, validate);
     beforeSign();
     trace('SIGNED');
