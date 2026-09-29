@@ -42,6 +42,7 @@
 		A0000000000000000000005C /* CardMemberSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000005B /* CardMemberSelection.swift */; };
 		A0000000000000000000005E /* CardSettingsPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000005D /* CardSettingsPresentation.swift */; };
 		A00000000000000000000060 /* CardSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000005F /* CardSettingsView.swift */; };
+		A00000000000000000000062 /* AppInstanceLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000061 /* AppInstanceLock.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -81,6 +82,7 @@
 		A0000000000000000000005B /* CardMemberSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardMemberSelection.swift; sourceTree = "<group>"; };
 		A0000000000000000000005D /* CardSettingsPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardSettingsPresentation.swift; sourceTree = "<group>"; };
 		A0000000000000000000005F /* CardSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardSettingsView.swift; sourceTree = "<group>"; };
+		A00000000000000000000061 /* AppInstanceLock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInstanceLock.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -121,6 +123,7 @@
 				A00000000000000000000016 /* CardWindow.swift */,
 				A00000000000000000000021 /* AgentCardNSWindow.swift */,
 				A00000000000000000000022 /* CardApplicationDelegate.swift */,
+				A00000000000000000000061 /* AppInstanceLock.swift */,
 				A0000000000000000000002A /* CardMetrics.swift */,
 				A0000000000000000000002B /* WindowControls.swift */,
 			);
@@ -273,6 +276,7 @@
 				A0000000000000000000001D /* CardMaterial.swift in Sources */,
 				A00000000000000000000023 /* AgentCardNSWindow.swift in Sources */,
 				A00000000000000000000024 /* CardApplicationDelegate.swift in Sources */,
+				A00000000000000000000062 /* AppInstanceLock.swift in Sources */,
 				A00000000000000000000025 /* AgentCardBack.swift in Sources */,
 				A00000000000000000000027 /* CardMetrics.swift in Sources */,
 				A00000000000000000000028 /* WindowControls.swift in Sources */,

@@ -3,10 +3,31 @@ import SwiftUI
 
 final class CardApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var cardWindow: AgentCardNSWindow?
-    private let serviceRuntime = NativeServiceRuntime()
+    private var instanceLock: AppInstanceLock?
+    private var serviceRuntime: NativeServiceRuntime?
     private var terminationRequested = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let lockURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "2049/native-app.lock")
+        do {
+            guard let lock = try AppInstanceLock.acquire(at: lockURL) else {
+                if let pid = AppInstanceLock.ownerPID(at: lockURL),
+                   let owner = NSRunningApplication(processIdentifier: pid),
+                   owner.bundleIdentifier == Bundle.main.bundleIdentifier {
+                    owner.activate(options: [.activateAllWindows])
+                }
+                NSApp.terminate(nil)
+                return
+            }
+            instanceLock = lock
+        } catch {
+            NSLog("2049 could not claim the native app instance lock: %@", String(describing: error))
+            NSApp.terminate(nil)
+            return
+        }
+        let serviceRuntime = NativeServiceRuntime()
+        self.serviceRuntime = serviceRuntime
         let windowRect = NSRect(origin: .zero, size: CardMetrics.windowSize)
         let window = AgentCardNSWindow(
             contentRect: windowRect,
@@ -48,6 +69,7 @@ final class CardApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDe
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let serviceRuntime else { return .terminateNow }
         if terminationRequested { return .terminateLater }
         terminationRequested = true
         Task {
