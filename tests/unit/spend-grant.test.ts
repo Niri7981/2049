@@ -64,6 +64,22 @@ it('isolates simulated PAID amounts from live daily and SpendGrant accounting', 
   } finally { value.close(); }
 });
 
+it('releases expired simulated approvals while reading the shared managed budget', () => {
+  const value = ledger();
+  try {
+    value.setDailyLimit('1000000');
+    const binding = authority(value, '400000', '200000');
+    const requestId = 'simulated-expiring-budget';
+    expect(value.reserve(intent(requestId, 200_000, binding), quote, now, 'simulated').status).toBe('APPROVED');
+
+    expect(value.managedSummary(now + 299_999, 'simulated')).toMatchObject({ paid: '0', reserved: '200000', remaining: '800000' });
+    expect(value.get(requestId)?.status).toBe('APPROVED');
+
+    expect(value.managedSummary(now + 300_000, 'simulated')).toMatchObject({ paid: '0', reserved: '0', remaining: '1000000' });
+    expect(value.get(requestId)?.status).toBe('EXPIRED');
+  } finally { value.close(); }
+});
+
 it('denies an oversized amount and every scope or principal mismatch', () => {
   const value = ledger();
   try {

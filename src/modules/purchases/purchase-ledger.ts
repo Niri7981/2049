@@ -611,6 +611,7 @@ export class PurchaseLedger {
     return { paidUSDC: paid / 1_000_000, reservedUSDC: reserved / 1_000_000, remainingUSDC: remaining === null ? 0 : remaining / 1_000_000, unresolved };
   }
   managedSummary(now = Date.now(), mode?: StoredPurchaseExecutionMode) {
+    this.releaseExpired(now);
     const day = this.atomic(() => this.activeDay(now));
     const modeFilter = accountingModeFilter(mode);
     const paid = Number(this.db.prepare(`SELECT COALESCE(SUM(amount),0) AS n FROM purchases WHERE status='PAID' AND confirmed_day=?${modeFilter}`).get(day)!.n);
