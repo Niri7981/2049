@@ -22,6 +22,38 @@ struct ManagementClientSmoke {
         let unknown = PurchasePresentation(initial.purchases[1])
         precondition(unknown.status == "Payment status unknown" && unknown.amount == "0.000001 USDC")
 
+        let activityBase: [String: Any] = ["purchaseId": "activity-fixture", "status": "APPROVED",
+            "deliveryStatus": "NOT_DELIVERED", "amount": "200000", "createdAt": 1_000 as Int64,
+            "resourceId": "market-snapshot", "executionMode": "simulated", "currency": "USDC", "assetDecimals": 6]
+        func activity(_ changes: [String: Any]) throws -> ActivityPurchasePresentation {
+            var fields = activityBase
+            for (key, value) in changes { fields[key] = value }
+            let data = try JSONSerialization.data(withJSONObject: fields)
+            return ActivityPurchasePresentation(try JSONDecoder().decode(AppOverview.Purchase.self, from: data))
+        }
+        let approved = try activity([:])
+        precondition(approved.title == "SOL Market Snapshot" && approved.status == "Approved"
+            && approved.amount == "0.20 USDC" && approved.payment == "No payment made · Simulated"
+            && approved.supportingStatus == "No payment made")
+        let denied = try activity(["resourceId": "market-analysis", "status": "DENIED", "amount": "20000000",
+            "decisionReason": "SPEND_GRANT_SINGLE_LIMIT_EXCEEDED"])
+        precondition(denied.title == "SOL Market Analysis" && denied.status == "Denied"
+            && denied.amount == "20.00 USDC" && denied.denialReason == "Per-transaction limit exceeded")
+        let expired = try activity(["status": "EXPIRED"])
+        let paying = try activity(["status": "PAYING", "executionMode": "live_devnet"])
+        let paymentUnknown = try activity(["status": "PAYMENT_UNKNOWN", "executionMode": "live_devnet"])
+        let failed = try activity(["status": "FAILED", "executionMode": "live_devnet"])
+        precondition(expired.status == "Expired" && paying.status == "Paying"
+            && paymentUnknown.status == "Payment unknown" && failed.status == "Failed")
+        let paid = try activity(["status": "PAID", "deliveryStatus": "PENDING", "executionMode": "live_devnet"])
+        precondition(paid.status == "Paid" && paid.payment == "Paid" && paid.delivery == "Pending")
+        let delivered = try activity(["status": "PAID", "deliveryStatus": "COMPLETE", "executionMode": "live_devnet"])
+        let simulatedPaid = try activity(["status": "PAID", "deliveryStatus": "COMPLETE"])
+        let unknownResource = try activity(["resourceId": "legacy-unknown", "offerId": "premium"])
+        let legacyOffer = try activity(["resourceId": NSNull(), "offerId": "basic"])
+        precondition(delivered.status == "Delivered" && simulatedPaid.status == "Simulated")
+        precondition(unknownResource.title == "Resource request" && legacyOffer.title == "SOL Market Snapshot")
+
         try await client.setConnection(true)
         let connected = try await client.load()
         precondition(connected.connection.enabled)

@@ -2,9 +2,10 @@ import SwiftUI
 
 struct PurchaseDetail: View {
     let purchase: AppOverview.Purchase
+    let agentName: String
     let onBack: () -> Void
 
-    private var item: PurchasePresentation { PurchasePresentation(purchase) }
+    private var item: ActivityPurchasePresentation { ActivityPurchasePresentation(purchase) }
 
     var body: some View {
         ScrollView {
@@ -12,23 +13,42 @@ struct PurchaseDetail: View {
                 Button("Activity", systemImage: "chevron.left", action: onBack)
                     .buttonStyle(.plain)
 
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 5) {
                     Text(item.title)
-                        .font(.title2)
-                    Text(item.amount)
-                        .font(.largeTitle)
-                        .monospacedDigit()
-                    Text(item.mode)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .font(.title2.weight(.semibold))
+                    Text(item.status)
+                        .font(.headline)
+                    if let supportingStatus = item.supportingStatus {
+                        Text(supportingStatus)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Divider()
 
                 VStack(alignment: .leading, spacing: 10) {
-                    fact("Status", item.status)
+                    fact("Agent", agentName)
+                    fact("Requested amount", item.amount)
+                    fact("Policy result", item.policy)
+                    if let denialReason = item.denialReason {
+                        fact("Denial reason", denialReason)
+                    }
+                    if purchase.status == "EXPIRED" {
+                        Text("This request expired before payment started.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 10) {
+                    fact("Payment", item.payment)
                     fact("Delivery", item.delivery)
-                    fact("Created", item.date)
+                    fact("Execution mode", item.mode)
+                    fact("Network", purchase.network ?? "Unavailable")
+                    fact("Time", item.timestamp)
                 }
 
                 if let reason = purchase.reason, !reason.isEmpty {
@@ -38,16 +58,11 @@ struct PurchaseDetail: View {
 
                 Divider()
 
-                labeledText("Purchase ID", purchase.purchaseId)
-                if purchase.executionMode == .simulated {
-                    Text("Simulation: no on-chain payment was made.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else if let transaction = purchase.transaction {
-                    labeledText("Recorded transaction", transaction)
+                labeledText("Request ID", purchase.purchaseId)
+                if purchase.executionMode == .liveDevnet, let transaction = purchase.transaction, !transaction.isEmpty {
+                    labeledText("Transaction ID", transaction)
                 }
-                if let network = purchase.network { labeledText("Network", network) }
-                if let assetId = purchase.assetId { labeledText("Asset", assetId) }
+                if let assetId = purchase.assetId { labeledText("Asset ID", assetId) }
             }
             .padding(.horizontal, 26)
             .padding(.top, 24)
@@ -56,13 +71,8 @@ struct PurchaseDetail: View {
     }
 
     private func fact(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label).foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            Text(value)
-                .multilineTextAlignment(.trailing)
-        }
-        .font(.subheadline)
+        LabeledContent(label, value: value)
+            .font(.subheadline)
     }
 
     private func labeledText(_ label: String, _ value: String) -> some View {

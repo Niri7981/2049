@@ -97,6 +97,7 @@ struct AppOverview: Decodable {
         let amount: MinorUnits
         let createdAt: Int64
         let offerId: String?
+        let resourceId: String?
         let reason: String?
         let decisionReason: String?
         let transaction: String?

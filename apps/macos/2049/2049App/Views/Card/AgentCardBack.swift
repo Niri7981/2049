@@ -35,6 +35,7 @@ struct AgentCardBack: View {
                     BackOverview(
                         overviewClient: overviewClient,
                         memberID: memberID,
+                        agentName: memberSession.selectedMember?.label ?? "Agent",
                         isActive: selectedSection == .authority,
                         onMemberChanged: { await memberSession.refresh() }
                     )

@@ -3,6 +3,7 @@ import SwiftUI
 struct BackOverview: View {
     let overviewClient: OverviewClient
     let memberID: UUID
+    let agentName: String
     let isActive: Bool
     let onMemberChanged: () async -> Void
 
@@ -103,6 +104,7 @@ struct BackOverview: View {
                 case .activity:
                     ActivityDetail(
                         purchases: overview.purchases,
+                        agentName: agentName,
                         isRefreshing: activityRefreshing,
                         refreshError: activityRefreshError,
                         onBack: { self.selectedDetail = nil },
@@ -111,10 +113,11 @@ struct BackOverview: View {
                     )
                 case .purchase(let id):
                     if let purchase = overview.purchases.first(where: { $0.purchaseId == id }) {
-                        PurchaseDetail(purchase: purchase, onBack: { self.selectedDetail = .activity })
+                        PurchaseDetail(purchase: purchase, agentName: agentName, onBack: { self.selectedDetail = .activity })
                     } else {
                         ActivityDetail(
                             purchases: overview.purchases,
+                            agentName: agentName,
                             isRefreshing: activityRefreshing,
                             refreshError: activityRefreshError,
                             onBack: { self.selectedDetail = nil },

@@ -67,6 +67,10 @@ it('quotes both real 402 resources, then evaluates the same resource and amount 
       resourcePath: '/api/paid/sol-market-snapshot?asset=SOL' });
     expect(f.ledger.get('analysis-policy')?.intent).toMatchObject({ resourceScopeId: PAID_RESOURCE_SCOPE_ID,
       resourcePath: '/api/paid/market-analysis?asset=SOL' });
+    expect(f.ledger.list().map(item => ({ resourceId: item.resourceId, status: item.status }))).toEqual([
+      { resourceId: 'market-analysis', status: 'DENIED' },
+      { resourceId: 'market-snapshot', status: 'APPROVED' },
+    ]);
     expect(pay).not.toHaveBeenCalled();
     expect(f.facilitator.verify).not.toHaveBeenCalled();
     expect(f.facilitator.settle).not.toHaveBeenCalled();
