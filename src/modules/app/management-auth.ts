@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { ZodError } from 'zod';
 import { LocalRequestError, RequestBodyError, requireLocalRequest } from '../http/local-request';
 import { DataDirectoryInUseError } from './data-directory-owner';
@@ -7,15 +7,71 @@ export class ManagementApiError extends Error {
   constructor(readonly code: string, readonly status: number, readonly safeMessage: string) { super(code); }
 }
 
+const clockWindowMs = 30_000;
+const nonceLimit = 4096;
+// Next may bundle this module into several routes. Share one process-local replay cache.
+const globals = globalThis as typeof globalThis & { __app2049ManagementNonces?: Map<string, number> };
+const sha256 = (body: Uint8Array) => createHash('sha256').update(body).digest('hex');
+const proof = (secret: string, message: string) => createHmac('sha256', secret).update(message).digest();
+
 export function requireManagementRequest(request: Request, mutation = false) {
   requireLocalRequest(request, mutation);
-  const expected = process.env.APP2049_MANAGEMENT_TOKEN;
-  const provided = request.headers.get('authorization');
-  if (!expected || expected.length < 32 || !provided?.startsWith('Bearer ')) throw new ManagementApiError('UNAUTHORIZED', 401, '未授权的管理请求。');
-  const actual = provided.slice(7);
-  const a = Buffer.from(actual);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) throw new ManagementApiError('UNAUTHORIZED', 401, '未授权的管理请求。');
+  const secret = process.env.APP2049_MANAGEMENT_TOKEN;
+  const timestamp = request.headers.get('x-2049-timestamp') ?? '';
+  const nonce = request.headers.get('x-2049-nonce') ?? '';
+  const bodyHash = request.headers.get('x-2049-body-sha256') ?? '';
+  const signature = request.headers.get('x-2049-proof') ?? '';
+  const now = Date.now();
+  if (!secret || secret.length < 32 || !/^[0-9]{13}$/.test(timestamp)
+    || Math.abs(now - Number(timestamp)) > clockWindowMs
+    || !/^[a-f0-9]{64}$/.test(nonce) || !/^[a-f0-9]{64}$/.test(bodyHash) || !/^[a-f0-9]{64}$/.test(signature))
+    throw new ManagementApiError('UNAUTHORIZED', 401, '未授权的管理请求。');
+  const url = new URL(request.url);
+  const message = ['2049-management-v1', request.method, url.pathname + url.search, timestamp, nonce, bodyHash].join('\n');
+  if (!timingSafeEqual(Buffer.from(signature, 'hex'), proof(secret, message)))
+    throw new ManagementApiError('UNAUTHORIZED', 401, '未授权的管理请求。');
+  const nonces = globals.__app2049ManagementNonces ??= new Map();
+  for (const [value, expires] of nonces) if (expires < now) nonces.delete(value);
+  if (nonces.has(nonce)) throw new ManagementApiError('MANAGEMENT_REPLAY', 401, '管理请求已使用。');
+  // Never evict a still-valid nonce to make room: that would permit replay.
+  if (nonces.size >= nonceLimit) throw new ManagementApiError('MANAGEMENT_BUSY', 503, '管理请求过于频繁。');
+  nonces.set(nonce, Number(timestamp) + clockWindowMs);
+  return { nonce, bodyHash, secret };
+}
+
+/** Authenticate exact body bytes before handlers run; sign success and authenticated errors. */
+export async function managementRoute(request: Request, mutation: boolean, handle: (request: Request) => Promise<Response>) {
+  let identity: ReturnType<typeof requireManagementRequest> | undefined;
+  let response: Response;
+  try {
+    identity = requireManagementRequest(request, mutation);
+    const chunks: Uint8Array[] = [];
+    const reader = request.body?.getReader();
+    let size = 0;
+    if (reader) {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.length;
+          if (size > 8192) throw new RequestBodyError('管理请求过长。');
+          chunks.push(value);
+        }
+      } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+    }
+    const body = Buffer.concat(chunks);
+    if (sha256(body) !== identity.bodyHash) throw new ManagementApiError('UNAUTHORIZED', 401, '管理请求内容不匹配。');
+    const verified = new Request(request.url, { method: request.method, headers: request.headers,
+      ...(request.body === null ? {} : { body }) });
+    response = await handle(verified);
+  } catch (error) { response = managementError(error); }
+  if (!identity) return response;
+  const body = new Uint8Array(await response.arrayBuffer());
+  const headers = new Headers(response.headers);
+  const message = ['2049-management-response-v1', identity.nonce, String(response.status), sha256(body)].join('\n');
+  headers.set('x-2049-response-proof', proof(identity.secret, message).toString('hex'));
+  headers.set('cache-control', 'no-store');
+  return new Response(body, { status: response.status, headers });
 }
 
 export function managementError(error: unknown) {

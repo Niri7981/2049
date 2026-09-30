@@ -73,8 +73,9 @@ final class CardApplicationDelegate: NSObject, NSApplicationDelegate, NSWindowDe
         if terminationRequested { return .terminateLater }
         terminationRequested = true
         Task {
-            await serviceRuntime.shutdown()
-            sender.reply(toApplicationShouldTerminate: true)
+            let stopped = await serviceRuntime.shutdown()
+            if !stopped { terminationRequested = false }
+            sender.reply(toApplicationShouldTerminate: stopped)
         }
         return .terminateLater
     }

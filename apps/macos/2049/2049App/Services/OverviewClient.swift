@@ -6,8 +6,11 @@ enum OverviewLoadError: Error {
     case unauthorized
     case invalidResponse
     case portConflict
+    case authenticatedShutdownFailed
+    case authenticatedShutdownTimedOut
     case startupFailed
     case readinessTimedOut
+    case requestTimedOut
     case serviceExited
     case dataDirectoryInUse
     case invalidRequest
@@ -22,9 +25,12 @@ enum OverviewLoadError: Error {
         case .unavailable: "Local service unavailable"
         case .unauthorized: "Management access denied"
         case .invalidResponse: "Local service data unavailable"
-        case .portConflict: "Local service port in use"
+        case .portConflict: "Unverified local service is using the port"
+        case .authenticatedShutdownFailed: "Owned local service refused to stop"
+        case .authenticatedShutdownTimedOut: "Owned local service did not stop in time"
         case .startupFailed: "Local service could not start"
         case .readinessTimedOut: "Local service did not become ready"
+        case .requestTimedOut: "Local service request timed out"
         case .serviceExited: "Local service stopped"
         case .dataDirectoryInUse: "2049 data is open in another service"
         case .invalidRequest: "Check the entered values and try again"
@@ -165,7 +171,11 @@ struct OverviewClient {
             switch error {
             case .configuration: throw OverviewLoadError.configuration
             case .portConflict: throw OverviewLoadError.portConflict
+            case .authenticatedShutdownFailed: throw OverviewLoadError.authenticatedShutdownFailed
+            case .authenticatedShutdownTimedOut: throw OverviewLoadError.authenticatedShutdownTimedOut
             case .authenticationFailed: throw OverviewLoadError.unauthorized
+            case .requestTimedOut: throw OverviewLoadError.requestTimedOut
+            case .responseTooLarge: throw OverviewLoadError.invalidResponse
             case .cannotStart: throw OverviewLoadError.startupFailed
             case .notReady: throw OverviewLoadError.readinessTimedOut
             case .processExited: throw OverviewLoadError.serviceExited

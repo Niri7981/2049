@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { DataDirectoryInUseError } from '../../src/modules/app/data-directory-owner';
+import { signedManagementRequest } from '../helpers/management-request';
 
 const state = vi.hoisted(() => ({ appRuntime: vi.fn() }));
 vi.mock('@/modules/app/app-runtime', () => ({ appRuntime: state.appRuntime }));
@@ -11,14 +12,17 @@ import { PUT as settings } from '../../src/app/api/app/settings/route';
 
 const origin = 'http://127.0.0.1:3049';
 const token = 'm'.repeat(43);
-const request = (headers: Record<string, string> = {}) => new Request(`${origin}/api/app/overview`,
-  { headers: { host: '127.0.0.1:3049', authorization: `Bearer ${token}`, ...headers } });
+const request = (headers: Record<string, string> = {}) => {
+  const result = signedManagementRequest(`${origin}/api/app/overview`, token);
+  for (const [name, value] of Object.entries(headers)) result.headers.set(name, value);
+  return result;
+};
 
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
 it('preserves management authentication and safe client errors', async () => {
   vi.stubEnv('APP2049_MANAGEMENT_TOKEN', token);
-  const unauthorized = await overview(request({ authorization: 'Bearer wrong' }));
+  const unauthorized = await overview(request({ 'x-2049-proof': '0'.repeat(64) }));
   expect(unauthorized.status).toBe(401);
   await expect(unauthorized.json()).resolves.toEqual({ code: 'UNAUTHORIZED', error: '未授权的管理请求。' });
   const forbidden = await overview(request({ 'sec-fetch-site': 'cross-site' }));
@@ -26,14 +30,14 @@ it('preserves management authentication and safe client errors', async () => {
   await expect(forbidden.json()).resolves.toEqual({ code: 'LOCAL_REQUEST_FORBIDDEN', error: '请求来源不被允许。' });
   const invalidHost = await overview(request({ host: 'not a valid host' }));
   expect(invalidHost.status).toBe(403);
-  const wrongOrigin = await settings(new Request(`${origin}/api/app/settings`, { method: 'PUT',
-    headers: { host: '127.0.0.1:3049', authorization: `Bearer ${token}`, origin: 'http://evil.example', 'content-type': 'application/json' }, body: '{}' }));
+  const wrongOrigin = await settings(signedManagementRequest(`${origin}/api/app/settings`, token, { method: 'PUT',
+    headers: { origin: 'http://evil.example', 'content-type': 'application/json' }, body: '{}' }));
   expect(wrongOrigin.status).toBe(403);
-  const wrongType = await settings(new Request(`${origin}/api/app/settings`, { method: 'PUT',
-    headers: { host: '127.0.0.1:3049', authorization: `Bearer ${token}`, origin, 'content-type': 'text/plain' }, body: '{}' }));
+  const wrongType = await settings(signedManagementRequest(`${origin}/api/app/settings`, token, { method: 'PUT',
+    headers: { origin, 'content-type': 'text/plain' }, body: '{}' }));
   expect(wrongType.status).toBe(403);
-  const malformed = await settings(new Request(`${origin}/api/app/settings`, { method: 'PUT',
-    headers: { host: '127.0.0.1:3049', authorization: `Bearer ${token}`, origin, 'content-type': 'application/json' }, body: '{' }));
+  const malformed = await settings(signedManagementRequest(`${origin}/api/app/settings`, token, { method: 'PUT',
+    headers: { origin, 'content-type': 'application/json' }, body: '{' }));
   expect(malformed.status).toBe(400);
   await expect(malformed.json()).resolves.toEqual({ code: 'INVALID_REQUEST', error: '请求内容无效。' });
   expect(state.appRuntime).not.toHaveBeenCalled();

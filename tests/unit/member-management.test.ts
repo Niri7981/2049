@@ -8,6 +8,7 @@ import { GET, POST } from '../../src/app/api/app/members/route';
 import { DELETE, GET as GETMember, PUT as PUTMember } from '../../src/app/api/app/members/[memberId]/route';
 import { PUT as PUTConnection } from '../../src/app/api/app/members/[memberId]/connection/route';
 import { PUT as PUTGrant } from '../../src/app/api/app/members/[memberId]/grant/route';
+import { signedManagementRequest } from '../helpers/management-request';
 
 const directories: string[] = [];
 const token = 'm'.repeat(48);
@@ -18,9 +19,9 @@ function runtime() {
   const directory = mkdtempSync(join(tmpdir(), '2049-members-')); directories.push(directory);
   return new AppRuntime(directory, { now: () => now });
 }
-function request(path: string, method = 'GET', body?: unknown, authorization = `Bearer ${token}`, requestOrigin = origin) {
-  return new Request(`${origin}${path}`, { method, headers: {
-    host: '127.0.0.1:3049', authorization, origin: requestOrigin, 'content-type': 'application/json',
+function request(path: string, method = 'GET', body?: unknown, secret = token, requestOrigin = origin) {
+  return signedManagementRequest(`${origin}${path}`, secret, { method, headers: {
+    host: '127.0.0.1:3049', origin: requestOrigin, 'content-type': 'application/json',
   }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }
 function agentRequest(authorization: string) {
@@ -73,8 +74,8 @@ it('requires management auth and same-origin writes for member routes', async ()
   const app = runtime(); globals.__app2049 = { runtime: app };
   process.env.APP2049_MANAGEMENT_TOKEN = token;
   try {
-    expect((await GET(request('/api/app/members', 'GET', undefined, 'Bearer wrong'))).status).toBe(401);
-    expect((await POST(request('/api/app/members', 'POST', { label: 'Research' }, `Bearer ${token}`, 'http://evil.example'))).status).toBe(403);
+    expect((await GET(request('/api/app/members', 'GET', undefined, 'wrong'))).status).toBe(401);
+    expect((await POST(request('/api/app/members', 'POST', { label: 'Research' }, token, 'http://evil.example'))).status).toBe(403);
     expect((await POST(request('/api/app/members', 'POST', { label: '' }))).status).toBe(400);
     const created = await POST(request('/api/app/members', 'POST', { label: 'Research' }));
     expect(created.status).toBe(201);

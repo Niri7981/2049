@@ -1,11 +1,18 @@
 import { z } from 'zod';
 import { appRuntime } from '@/modules/app/app-runtime';
-import { managementError, requireManagementRequest } from '@/modules/app/management-auth';
+import { managementRoute } from '@/modules/app/management-auth';
 import { smallJson } from '@/modules/http/local-request';
 
-const Input = z.object({ action: z.literal('prepareQuit') }).strict();
+const Input = z.object({ action: z.enum(['prepareQuit', 'shutdown']) }).strict();
 export const runtime = 'nodejs';
 export async function POST(request: Request) {
-  try { requireManagementRequest(request, true); Input.parse(await smallJson(request)); await appRuntime().prepareQuit(); return Response.json({ ready: true }); }
-  catch (error) { return managementError(error); }
+  return managementRoute(request, true, async request => {
+    const { action } = Input.parse(await smallJson(request));
+    await appRuntime().prepareQuit();
+    if (action === 'shutdown') {
+      // The signer has drained before the backend asks Next to exit. Give the HTTP response time to flush.
+      setTimeout(() => process.kill(process.pid, 'SIGTERM'), 250).unref();
+    }
+    return Response.json({ ready: true }, { headers: { 'cache-control': 'no-store' } });
+  });
 }

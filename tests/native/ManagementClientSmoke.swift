@@ -5,14 +5,20 @@ struct ManagementClientSmoke {
     static func main() async throws {
         let port = ProcessInfo.processInfo.environment["APP2049_PORT"]!
         let token = ProcessInfo.processInfo.environment["APP2049_MANAGEMENT_TOKEN"]!
-        let runtime = NativeServiceRuntime(environment: ["APP2049_PORT": port, "APP2049_MANAGEMENT_TOKEN": token])
+        let dataDirectory = ProcessInfo.processInfo.environment["APP2049_DATA_DIR"]!
+        let repositoryRoot = ProcessInfo.processInfo.environment["APP2049_REPOSITORY_ROOT"]!
+        let runtime = NativeServiceRuntime(allowsLaunch: false,
+            environment: ["APP2049_PORT": port, "APP2049_DATA_DIR": dataDirectory,
+                "APP2049_REPOSITORY_ROOT": repositoryRoot], managementTokenOverride: token)
         let client = OverviewClient(runtime: runtime)
-        let unauthorizedRuntime = NativeServiceRuntime(environment: ["APP2049_PORT": port, "APP2049_MANAGEMENT_TOKEN": String(repeating: "x", count: 43)])
+        let unauthorizedRuntime = NativeServiceRuntime(allowsLaunch: false,
+            environment: ["APP2049_PORT": port, "APP2049_DATA_DIR": dataDirectory,
+                "APP2049_REPOSITORY_ROOT": repositoryRoot], managementTokenOverride: String(repeating: "x", count: 43))
         do {
             _ = try await OverviewClient(runtime: unauthorizedRuntime).load()
             fatalError("Wrong management token unexpectedly worked")
         } catch let error as OverviewLoadError {
-            guard case .unauthorized = error else { throw error }
+            guard case .portConflict = error else { throw error }
         }
         let initial = try await client.load()
         precondition(!initial.connection.enabled && initial.grant == nil)

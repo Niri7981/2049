@@ -1,4 +1,5 @@
 import CFNetwork
+import Darwin
 import Foundation
 import Security
 
@@ -46,11 +47,23 @@ struct BackendLaunchConfiguration {
         token.utf8.count >= 32 && !token.contains("\r") && !token.contains("\n")
     }
 
+    func managementToken() throws -> String {
+        return try BackendManagementIdentity.loadOrCreate()
+    }
+
+    func dataDirectory() -> URL {
+        let path = environment["APP2049_DATA_DIR"] ?? FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: "Library/Application Support/2049").path
+        let standardized = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        guard let resolved = Darwin.realpath(standardized.path, nil) else { return standardized }
+        defer { Darwin.free(resolved) }
+        return URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
+    }
+
     func childEnvironment(token: String) -> [String: String] {
         var childEnvironment = environment
         childEnvironment["APP2049_MANAGEMENT_TOKEN"] = token
-        childEnvironment["APP2049_DATA_DIR"] = environment["APP2049_DATA_DIR"] ?? FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Application Support/2049").path
+        childEnvironment["APP2049_DATA_DIR"] = dataDirectory().path
         childEnvironment["NODE_USE_ENV_PROXY"] = "1"
         addSystemProxyIfNeeded(to: &childEnvironment)
         childEnvironment["NO_PROXY"] = [environment["NO_PROXY"] ?? environment["no_proxy"], "localhost", "127.0.0.1", "::1"]
@@ -71,13 +84,50 @@ struct BackendLaunchConfiguration {
         childEnvironment["HTTP_PROXY"] = childEnvironment["HTTP_PROXY"] ?? proxy
     }
 
-    func randomToken() throws -> String {
+}
+
+private enum BackendManagementIdentity {
+    private static let service = "com.twentyfortynine.backend-management.v1"
+    private static let account = "local-installation"
+
+    static func loadOrCreate() throws -> String {
+        if let existing = try read() { return existing }
         var bytes = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-            throw ServiceRuntimeError.cannotStart
+            throw ServiceRuntimeError.configuration
         }
-        return Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
+        let token = Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        let item: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecValueData: Data(token.utf8),
+        ]
+        let status = SecItemAdd(item as CFDictionary, nil)
+        guard status == errSecSuccess || status == errSecDuplicateItem,
+              let saved = try read() else { throw ServiceRuntimeError.configuration }
+        return saved
+    }
+
+    private static func read() throws -> String? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data,
+              let token = String(data: data, encoding: .utf8),
+              token.utf8.count >= 32, !token.contains("\r"), !token.contains("\n") else {
+            throw ServiceRuntimeError.configuration
+        }
+        return token
     }
 }
 

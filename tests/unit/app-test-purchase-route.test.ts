@@ -1,19 +1,15 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { signedManagementRequest } from '../helpers/management-request';
 
 const state = vi.hoisted(() => ({
   appRuntime: vi.fn(),
-  requireManagementRequest: vi.fn(),
-  managementError: vi.fn((error: unknown) => Response.json({ error: String(error) }, { status: 400 })),
-  smallJson: vi.fn(),
   createTestPurchase: vi.fn(),
 }));
 
 vi.mock('@/modules/app/app-runtime', () => ({ appRuntime: state.appRuntime }));
-vi.mock('@/modules/app/management-auth', () => ({
-  requireManagementRequest: state.requireManagementRequest,
-  managementError: state.managementError,
-}));
-vi.mock('@/modules/http/local-request', () => ({ smallJson: state.smallJson }));
+// Resolve aliases to the real modules; authentication and body parsing remain active.
+vi.mock('@/modules/app/management-auth', async () => await import('../../src/modules/app/management-auth'));
+vi.mock('@/modules/http/local-request', async () => await import('../../src/modules/http/local-request'));
 
 import { POST } from '../../src/app/api/app/test-purchases/route';
 
@@ -23,16 +19,18 @@ afterEach(() => {
 });
 
 it('keeps the canonical App test-purchase route independent of the legacy task opt-in', async () => {
+  const origin = 'http://127.0.0.1:3049';
+  const token = 'm'.repeat(43);
+  vi.stubEnv('APP2049_MANAGEMENT_TOKEN', token);
   vi.stubEnv('APP2049_ENABLE_LEGACY_DEMO_TASKS', '');
   state.appRuntime.mockReturnValue({ createTestPurchase: state.createTestPurchase });
-  state.smallJson.mockResolvedValue({ purchaseId: 'app-route-test' });
   state.createTestPurchase.mockResolvedValue({ purchaseId: 'app-route-test', status: 'PAID', simulated: true });
 
-  const request = new Request('http://127.0.0.1:3049/api/app/test-purchases', { method: 'POST' });
+  const request = signedManagementRequest(`${origin}/api/app/test-purchases`, token, { method: 'POST',
+    headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ purchaseId: 'app-route-test' }) });
   const response = await POST(request);
 
   expect(response.status).toBe(200);
-  expect(state.requireManagementRequest).toHaveBeenCalledWith(request, true);
-  expect(state.createTestPurchase).toHaveBeenCalledWith('app-route-test', 'http://127.0.0.1:3049');
+  expect(state.createTestPurchase).toHaveBeenCalledWith('app-route-test', origin);
   await expect(response.json()).resolves.toMatchObject({ purchase: { status: 'PAID', simulated: true } });
 });

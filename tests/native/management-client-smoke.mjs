@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,13 +24,33 @@ const purchases = [
     network: 'solana:devnet', currency: 'USDC', assetId: 'test-mint', assetDecimals: 6, grantId: null },
 ];
 
+const seen = new Set();
+const hash = body => createHash('sha256').update(body).digest('hex');
 const server = createServer(async (request, response) => {
+  let authenticated = false;
+  const nonce = request.headers['x-2049-nonce'];
   const send = (status, value) => {
-    response.writeHead(status, { 'content-type': 'application/json' });
-    response.end(JSON.stringify(value));
+    const bytes = Buffer.from(JSON.stringify(value));
+    const message = ['2049-management-response-v1', nonce, String(status), hash(bytes)].join('\n');
+    response.writeHead(status, { 'content-type': 'application/json',
+      ...(authenticated ? { 'x-2049-response-proof': createHmac('sha256', token).update(message).digest('hex') } : {}) });
+    response.end(bytes);
   };
-  if (request.headers.authorization !== `Bearer ${token}`) return send(401, { code: 'UNAUTHORIZED' });
-  if (request.method === 'GET' && request.url === '/api/app/health') return send(200, { ready: true });
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const wireBody = Buffer.concat(chunks);
+  assert.ok(!JSON.stringify(request.headers).includes(token) && !request.url.includes(token) && !wireBody.includes(token));
+  assert.equal(request.headers.authorization, undefined);
+  const timestamp = request.headers['x-2049-timestamp'];
+  const signature = request.headers['x-2049-proof'] ?? '';
+  const message = ['2049-management-v1', request.method, request.url, timestamp, nonce, hash(wireBody)].join('\n');
+  if (!/^[a-f0-9]{64}$/.test(signature) || Math.abs(Date.now() - Number(timestamp)) > 30_000 || seen.has(nonce)
+    || !timingSafeEqual(Buffer.from(signature, 'hex'), createHmac('sha256', token).update(message).digest())) return send(401, { code: 'UNAUTHORIZED' });
+  seen.add(nonce);
+  authenticated = true;
+  if (request.method === 'GET' && request.url === '/api/app/health') {
+    return send(200, { ready: true, service: '2049', pid: process.pid, dataDirectory: realpathSync(temporary) });
+  }
   if (request.method === 'GET' && request.url === '/api/app/overview') {
     return send(200, {
       service: { status: 'running', recoveryStatus: 'complete', network: 'Solana Devnet',
@@ -44,9 +64,7 @@ const server = createServer(async (request, response) => {
     || request.headers['content-type'] !== 'application/json') return send(403, { code: 'LOCAL_REQUEST_FORBIDDEN' });
   let body;
   try {
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
-    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    body = JSON.parse(wireBody.toString('utf8'));
   } catch { return send(400, { code: 'INVALID_REQUEST' }); }
 
   if (request.url === '/api/app/connection' && typeof body.enabled === 'boolean') {
@@ -103,7 +121,8 @@ try {
   ];
   const executable = join(temporary, 'management-client-smoke');
   await run('swiftc', ['-parse-as-library', ...sources, '-o', executable]);
-  const output = await run(executable, [], { ...process.env, APP2049_PORT: String(server.address().port), APP2049_MANAGEMENT_TOKEN: token });
+  const output = await run(executable, [], { ...process.env, APP2049_PORT: String(server.address().port), APP2049_MANAGEMENT_TOKEN: token,
+    APP2049_DATA_DIR: temporary, APP2049_REPOSITORY_ROOT: root });
   process.stdout.write(output);
 } finally {
   server.close();

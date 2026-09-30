@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { appRuntime } from '../../../../../../modules/app/app-runtime';
-import { ManagementApiError, managementError, requireManagementRequest } from '../../../../../../modules/app/management-auth';
+import { ManagementApiError, managementRoute } from '../../../../../../modules/app/management-auth';
 import { smallJson } from '../../../../../../modules/http/local-request';
 import { SpendGrantInputSchema } from '../../../../../../modules/authority/spend-grant';
 
@@ -12,8 +12,7 @@ const RequestSchema = z.discriminatedUnion('action', [
 ]);
 
 export async function PUT(request: Request, context: Context) {
-  try {
-    requireManagementRequest(request, true);
+  return managementRoute(request, true, async request => {
     const id = z.string().uuid().parse((await context.params).memberId);
     const input = RequestSchema.parse(await smallJson(request));
     const app = appRuntime();
@@ -23,5 +22,5 @@ export async function PUT(request: Request, context: Context) {
     else app.createSpendGrant({ totalLimit: input.totalLimit, singleLimit: input.singleLimit, expiresAt: input.expiresAt }, id);
     const member = app.memberOverview(id);
     return Response.json({ grant: member.grant, connection: member.connection }, { headers: { 'cache-control': 'no-store' } });
-  } catch (error) { return managementError(error); }
+  });
 }

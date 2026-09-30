@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PaymentRequirements } from '@x402/core/types';
 import { AppRuntime } from '../../src/modules/app/app-runtime';
 import { requireManagementRequest } from '../../src/modules/app/management-auth';
+import { signedManagementRequest } from '../helpers/management-request';
 import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT } from '../../src/modules/payment/payment-config';
 import { createStaticResourceRegistry } from '../../src/modules/resources/static-resource-registry';
@@ -46,7 +47,8 @@ describe('authenticated local management boundary', () => {
     expect(() => requireManagementRequest(request())).toThrow('UNAUTHORIZED');
     expect(() => requireManagementRequest(request(`Bearer ${'b'.repeat(32)}`))).toThrow('UNAUTHORIZED');
     expect(() => requireManagementRequest(request(`Bearer ${'a'.repeat(32)}`, 'cross-site'))).toThrow('跨站');
-    expect(() => requireManagementRequest(request(`Bearer ${'a'.repeat(32)}`))).not.toThrow();
+    expect(() => requireManagementRequest(request(`Bearer ${'a'.repeat(32)}`))).toThrow('UNAUTHORIZED');
+    expect(() => requireManagementRequest(signedManagementRequest(`${origin}/api/app/overview`, 'a'.repeat(32)))).not.toThrow();
   });
   it('keeps legacy demo tasks closed unless explicitly enabled in development or tests', () => {
     expect(legacyDemoTasksAllowed({})).toBe(false);

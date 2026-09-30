@@ -1,7 +1,7 @@
 /* Electron's main entry is intentionally CommonJS so packaged and development launches use the same file. */
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage } = require('electron');
-const { randomBytes } = require('node:crypto');
+const { createHash, createHmac, randomBytes, timingSafeEqual } = require('node:crypto');
 const { execFileSync, spawn } = require('node:child_process');
 const path = require('node:path');
 
@@ -20,9 +20,39 @@ app.setName('2049');
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('APP2049_PORT must be a valid unprivileged port');
 if (!app.requestSingleInstanceLock()) app.quit();
 
-function serviceRequest(route, method = 'GET', body) {
-  return fetch(`${origin}${route}`, { method, headers: { authorization: `Bearer ${token}`, origin,
-    ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(15_000) });
+async function serviceRequest(route, method = 'GET', body) {
+  const wireBody = body === undefined ? undefined : JSON.stringify(body);
+  const nonce = randomBytes(32).toString('hex');
+  const timestamp = String(Date.now());
+  const hash = value => createHash('sha256').update(value).digest('hex');
+  const message = ['2049-management-v1', method, route, timestamp, nonce, hash(wireBody ?? '')].join('\n');
+  const response = await fetch(`${origin}${route}`, { method, headers: { origin,
+    'x-2049-timestamp': timestamp, 'x-2049-nonce': nonce, 'x-2049-body-sha256': hash(wireBody ?? ''),
+    'x-2049-proof': createHmac('sha256', token).update(message).digest('hex'),
+    ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, body: wireBody,
+    redirect: 'error', signal: AbortSignal.timeout(15_000) });
+  const maximum = ['/api/app/health', '/api/app/lifecycle'].includes(route) ? 4096 : 65_536;
+  const chunks = [];
+  let size = 0;
+  const reader = response.body?.getReader();
+  if (reader) {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > maximum) throw new Error('Management response too large');
+        chunks.push(value);
+      }
+    } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+  }
+  const bytes = Buffer.concat(chunks);
+  const signature = response.headers.get('x-2049-response-proof') ?? '';
+  const reply = ['2049-management-response-v1', nonce, String(response.status), hash(bytes)].join('\n');
+  if (!/^[a-f0-9]{64}$/.test(signature)
+    || !timingSafeEqual(Buffer.from(signature, 'hex'), createHmac('sha256', token).update(reply).digest()))
+    throw new Error('Management response authentication failed');
+  return new Response(bytes, { status: response.status, headers: response.headers });
 }
 
 async function waitForService() {

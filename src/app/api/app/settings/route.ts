@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { appRuntime } from '@/modules/app/app-runtime';
-import { managementError, requireManagementRequest } from '@/modules/app/management-auth';
+import { managementRoute } from '@/modules/app/management-auth';
 import { smallJson } from '@/modules/http/local-request';
 
 const Input = z.union([
@@ -9,10 +9,9 @@ const Input = z.union([
 ]);
 export const runtime = 'nodejs';
 export async function PUT(request: Request) {
-  try {
-    requireManagementRequest(request, true);
+  return managementRoute(request, true, async request => {
     const input = Input.parse(await smallJson(request));
     const settings = 'dailyLimit' in input ? appRuntime().setDailyLimit(input.dailyLimit) : appRuntime().setPaused(input.paused);
     return Response.json({ settings });
-  } catch (error) { return managementError(error); }
+  });
 }

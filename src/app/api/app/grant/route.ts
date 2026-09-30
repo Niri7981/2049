@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { appRuntime } from '@/modules/app/app-runtime';
-import { managementError, requireManagementRequest } from '@/modules/app/management-auth';
+import { managementRoute } from '@/modules/app/management-auth';
 import { smallJson } from '@/modules/http/local-request';
 import { SpendGrantInputSchema } from '@/modules/authority/spend-grant';
 
@@ -12,12 +12,11 @@ const RequestSchema = z.discriminatedUnion('action', [
 ]);
 
 export async function PUT(request: Request) {
-  try {
-    requireManagementRequest(request, true);
+  return managementRoute(request, true, async request => {
     const input = RequestSchema.parse(await smallJson(request));
     const app = appRuntime();
     if (input.action === 'revoke') app.revokeSpendGrant();
     else app.createSpendGrant({ totalLimit: input.totalLimit, singleLimit: input.singleLimit, expiresAt: input.expiresAt });
     return Response.json({ grant: app.spendGrantSummary(), connection: app.agentConnection.status() });
-  } catch (error) { return managementError(error); }
+  });
 }
