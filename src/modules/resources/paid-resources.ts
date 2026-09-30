@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PAID_MARKET_RESOURCE_URLS } from '../paid-market-api/paid-market-api';
 import { DEMO_MARKET_DATA_PROVIDER_ID } from './static-resource-registry';
+import { TokenRiskReportSchema } from './token-risk-report';
 
 export const PAID_RESOURCE_SCOPE_ID = 'demo-sol-market-resources';
 
@@ -18,6 +19,8 @@ export const PAID_RESOURCES = Object.freeze({
     path: PAID_MARKET_RESOURCE_URLS.snapshot, providerId: DEMO_MARKET_DATA_PROVIDER_ID, output: snapshot }),
   'market-analysis': Object.freeze({ id: 'market-analysis', name: 'SOL Market Analysis',
     path: PAID_MARKET_RESOURCE_URLS.analysis, providerId: DEMO_MARKET_DATA_PROVIDER_ID, output: analysis }),
+  'token-risk-report': Object.freeze({ id: 'token-risk-report', name: 'SOL Token Risk Report (demo)',
+    path: PAID_MARKET_RESOURCE_URLS.risk, providerId: DEMO_MARKET_DATA_PROVIDER_ID, output: TokenRiskReportSchema }),
 });
 
 export type PaidResourceId = keyof typeof PAID_RESOURCES;

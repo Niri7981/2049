@@ -13,7 +13,7 @@ import { paymentEndpointForIntent } from '../../src/modules/purchases/approved-p
 import { readPaidResourceQuotes } from '../../src/modules/purchases/paid-resource-quote';
 import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';
 import { PurchaseRequestInputSchema, requestPaidResourcePurchase } from '../../src/modules/purchases/request-paid-resource-purchase';
-import { PAID_RESOURCE_SCOPE_ID } from '../../src/modules/resources/paid-resources';
+import { PAID_RESOURCE_SCOPE_ID, PaidResourceIdSchema, paidResource, type PaidResourceId } from '../../src/modules/resources/paid-resources';
 import { DEMO_MARKET_DATA_PROVIDER_ID } from '../../src/modules/resources/static-resource-registry';
 
 const buyer = Keypair.generate().publicKey.toBase58();
@@ -26,11 +26,11 @@ const principal = { cardMemberId: memberId, connectionId: '2c187121-f6f1-49a3-ae
 const now = Date.parse('2026-09-24T03:00:00Z');
 const origin = 'http://127.0.0.1:3049';
 
-function setup(path = ':memory:', operation: string = PAID_RESOURCE_PURCHASE_OPERATION) {
+function setup(path = ':memory:', operation: string = PAID_RESOURCE_PURCHASE_OPERATION, singleLimit = '200000') {
   const ledger = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now,
     timeZone: () => 'Asia/Shanghai', defaultCardMemberId: memberId });
   ledger.setDailyLimit('1000000');
-  ledger.createSpendGrant({ totalLimit: '400000', singleLimit: '200000', expiresAt: now + 60 * 60 * 1000 }, principal, {
+  ledger.createSpendGrant({ totalLimit: '400000', singleLimit, expiresAt: now + 60 * 60 * 1000 }, principal, {
     resourceId: PAID_RESOURCE_SCOPE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation,
     network: config.network, assetId: config.mint, assetDecimals: 6, payTo: config.merchant, paymentScheme: 'exact',
   }, now);
@@ -40,11 +40,13 @@ function setup(path = ':memory:', operation: string = PAID_RESOURCE_PURCHASE_OPE
   const paidApi = createPaidMarketApi(config, facilitator, store);
   const fetcher = vi.fn<typeof fetch>(async input => {
     const url = new URL(String(input));
-    return paidApi({ asset: url.searchParams.get('asset'), resource: url.pathname.endsWith('/market-analysis') ? 'analysis' : 'snapshot' });
+    const resource = url.pathname.endsWith('/market-analysis') ? 'analysis'
+      : url.pathname.endsWith('/token-risk-report') ? 'risk' : 'snapshot';
+    return paidApi({ asset: url.searchParams.get('asset'), resource });
   });
   return { ledger, store, facilitator, fetcher };
 }
-const request = (requestId: string, resourceId: 'market-snapshot' | 'market-analysis') => ({ requestId, resourceId, reason: 'Need SOL data' });
+const request = (requestId: string, resourceId: PaidResourceId) => ({ requestId, resourceId, reason: 'Need SOL data' });
 
 it('quotes both real 402 resources, then evaluates the same resource and amount under one Grant', async () => {
   const f = setup();
@@ -53,6 +55,7 @@ it('quotes both real 402 resources, then evaluates the same resource and amount 
     expect(listed.resources).toMatchObject([
       { resourceId: 'market-snapshot', resourceUrl: '/api/paid/sol-market-snapshot?asset=SOL', amount: '200000', display: '0.20 test USDC' },
       { resourceId: 'market-analysis', resourceUrl: '/api/paid/market-analysis?asset=SOL', amount: '20000000', display: '20.00 test USDC' },
+      { resourceId: 'token-risk-report', resourceUrl: '/api/paid/token-risk-report?asset=SOL', amount: '50000', display: '0.05 test USDC' },
     ]);
     const pay = vi.fn();
     const snapshot = await requestPaidResourcePurchase(request('snapshot-policy', 'market-snapshot'),
@@ -72,6 +75,70 @@ it('quotes both real 402 resources, then evaluates the same resource and amount 
       { resourceId: 'market-snapshot', status: 'APPROVED' },
     ]));
     expect(pay).not.toHaveBeenCalled();
+    expect(f.facilitator.verify).not.toHaveBeenCalled();
+    expect(f.facilitator.settle).not.toHaveBeenCalled();
+  } finally { f.ledger.close(); f.store.close(); }
+});
+
+it('registers token risk, approves its fresh 0.05 quote, and replays the persisted resource path', async () => {
+  const directory = mkdtempSync(join(tmpdir(), '2049-token-risk-purchase-'));
+  const path = join(directory, 'ledger.sqlite');
+  const f = setup(path);
+  try {
+    expect(PaidResourceIdSchema.parse('token-risk-report')).toBe('token-risk-report');
+    expect(paidResource('token-risk-report').path).toBe('/api/paid/token-risk-report?asset=SOL');
+    const first = await requestPaidResourcePurchase(request('risk-report-approved', 'token-risk-report'),
+      { config, ledger: f.ledger, origin, principal, fetcher: f.fetcher, now: () => now, execute: false });
+    expect(first).toMatchObject({ resourceId: 'token-risk-report', amount: '50000', display: '0.05 test USDC',
+      status: 'APPROVED', decision: { reason: 'AUTHORITY_BUDGET_AND_GRANT_PASSED' },
+      quote: { resourceUrl: '/api/paid/token-risk-report?asset=SOL', network: config.network,
+        assetId: config.mint, payTo: config.merchant, amount: '50000' } });
+    expect(f.ledger.get('risk-report-approved')?.intent).toMatchObject({ resourceId: 'token-risk-report',
+      resourcePath: '/api/paid/token-risk-report?asset=SOL',
+      authority: { operation: PAID_RESOURCE_PURCHASE_OPERATION } });
+    f.ledger.close();
+    const reopened = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+    try {
+      const saved = reopened.get('risk-report-approved')!;
+      expect(paymentEndpointForIntent(origin, saved.intent)).toBe(`${origin}/api/paid/token-risk-report?asset=SOL`);
+      const replay = await requestPaidResourcePurchase(request('risk-report-approved', 'token-risk-report'),
+        { config, ledger: reopened, origin, principal, fetcher: f.fetcher, now: () => now, execute: false });
+      expect(replay).toMatchObject({ reused: true, status: 'APPROVED', amount: '50000' });
+      expect(f.fetcher).toHaveBeenCalledOnce();
+      await expect(requestPaidResourcePurchase(request('risk-report-approved', 'market-snapshot'),
+        { config, ledger: reopened, origin, principal, fetcher: f.fetcher, now: () => now, execute: false })).rejects.toThrow('REQUEST_ID_CONFLICT');
+    } finally { reopened.close(); }
+    expect(f.facilitator.verify).not.toHaveBeenCalled();
+    expect(f.facilitator.settle).not.toHaveBeenCalled();
+  } finally { f.store.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+it('denies token risk under the existing per-transaction Grant limit below 0.05', async () => {
+  const f = setup(':memory:', PAID_RESOURCE_PURCHASE_OPERATION, '49999');
+  try {
+    const result = await requestPaidResourcePurchase(request('risk-report-denied', 'token-risk-report'),
+      { config, ledger: f.ledger, origin, principal, fetcher: f.fetcher, now: () => now, execute: false });
+    expect(result).toMatchObject({ amount: '50000', status: 'DENIED',
+      decision: { reason: 'SPEND_GRANT_SINGLE_LIMIT_EXCEEDED' } });
+    expect(f.facilitator.verify).not.toHaveBeenCalled();
+    expect(f.facilitator.settle).not.toHaveBeenCalled();
+  } finally { f.ledger.close(); f.store.close(); }
+});
+
+it('evaluates a changed fresh 402 amount rather than a token-risk price in purchase policy', async () => {
+  const f = setup(':memory:', PAID_RESOURCE_PURCHASE_OPERATION, '55000');
+  const repriced = vi.fn<typeof fetch>(async input => {
+    const response = await f.fetcher(input);
+    const required = JSON.parse(Buffer.from(response.headers.get('PAYMENT-REQUIRED')!, 'base64').toString('utf8'));
+    required.accepts[0].amount = '60000';
+    return new Response(null, { status: 402, headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(required) } });
+  });
+  try {
+    const result = await requestPaidResourcePurchase(request('risk-report-repriced', 'token-risk-report'),
+      { config, ledger: f.ledger, origin, principal, fetcher: repriced, now: () => now, execute: false });
+    expect(result).toMatchObject({ amount: '60000', status: 'DENIED',
+      decision: { reason: 'SPEND_GRANT_SINGLE_LIMIT_EXCEEDED' } });
+    expect(f.ledger.get('risk-report-repriced')?.quote.amount).toBe('60000');
     expect(f.facilitator.verify).not.toHaveBeenCalled();
     expect(f.facilitator.settle).not.toHaveBeenCalled();
   } finally { f.ledger.close(); f.store.close(); }

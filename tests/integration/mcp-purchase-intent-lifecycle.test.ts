@@ -17,6 +17,7 @@ import { SettlementStore } from '../../src/modules/paid-market-api/settlement-st
 import { DEVNET_NETWORK, DEVNET_USDC_MINT, type PaymentConfig } from '../../src/modules/payment/payment-config';
 import { executeApprovedPayment, recoverApprovedPayment } from '../../src/modules/purchases/approved-payment';
 import { loadBuyerSigner } from '../../src/modules/payment/wallet';
+import type { PaidResourceId } from '../../src/modules/resources/paid-resources';
 
 vi.mock('@/modules/app/app-runtime', () => ({
   appRuntime: () => (globalThis as typeof globalThis & { __app2049?: { runtime?: AppRuntime } }).__app2049?.runtime,
@@ -51,7 +52,9 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
   const paidApi = createPaidMarketApi(config, facilitator, store);
   const quote = vi.fn<typeof fetch>(async input => {
     const url = new URL(String(input));
-    return paidApi({ asset: url.searchParams.get('asset'), resource: url.pathname.endsWith('/market-analysis') ? 'analysis' : 'snapshot' });
+    const resource = url.pathname.endsWith('/market-analysis') ? 'analysis'
+      : url.pathname.endsWith('/token-risk-report') ? 'risk' : 'snapshot';
+    return paidApi({ asset: url.searchParams.get('asset'), resource });
   });
   let now = fixedNow;
   const app = new AppRuntime(directory, { initializeWallet: async () => ({ address: buyer, reused: true }), now: () => now,
@@ -103,7 +106,7 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
       clients.push({ client, transport });
       return client;
     }
-    async function call(client: Client, requestId: string, resourceId: 'market-snapshot' | 'market-analysis' = 'market-snapshot') {
+    async function call(client: Client, requestId: string, resourceId: PaidResourceId = 'market-snapshot') {
       const response = await client.callTool({ name: 'request_purchase', arguments: { requestId, resourceId, reason: 'Check policy without payment' } });
       expect(response.isError).not.toBe(true);
       if (!Array.isArray(response.content)) throw new Error('Missing MCP content');
@@ -124,6 +127,7 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
     expect(listed.resources).toMatchObject([
       { resourceId: 'market-snapshot', resourceUrl: '/api/paid/sol-market-snapshot?asset=SOL', amount: '200000' },
       { resourceId: 'market-analysis', resourceUrl: '/api/paid/market-analysis?asset=SOL', amount: '20000000' },
+      { resourceId: 'token-risk-report', resourceUrl: '/api/paid/token-risk-report?asset=SOL', amount: '50000' },
     ]);
     const withoutGrant = await call(initialClient, 'intent-no-grant');
     expect(withoutGrant).toMatchObject({ resourceId: listed.resources[0].resourceId, amount: listed.resources[0].amount });
@@ -134,6 +138,10 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
     expect(withoutGrant).not.toHaveProperty('resource');
     expect(app.ledger.get('intent-no-grant')?.ownerCardMemberId).toBe(first.cardMemberId);
     expect(app.ledger.events('intent-no-grant').map(event => event.type)).toEqual(['authority.DENIED']);
+    expect(await call(initialClient, 'intent-risk-no-grant', 'token-risk-report')).toMatchObject({
+      resourceId: 'token-risk-report', amount: '50000', status: 'DENIED',
+      decision: { reason: 'SPEND_GRANT_REQUIRED' },
+    });
     const quotesBeforeReplay = quote.mock.calls.length;
     expect(await call(initialClient, 'intent-no-grant')).toMatchObject({ reused: true,
       decision: { decision: 'DENIED', reason: 'SPEND_GRANT_REQUIRED' } });

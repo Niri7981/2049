@@ -9,12 +9,14 @@ vi.mock('../../src/modules/paid-market-api/paid-market-api', () => ({
 
 import { GET as getSnapshot } from '../../src/app/api/paid/sol-market-snapshot/route';
 import { GET as getAnalysis } from '../../src/app/api/paid/market-analysis/route';
+import { GET as getRisk } from '../../src/app/api/paid/token-risk-report/route';
 
 beforeEach(() => paidResponse.mockClear());
 
 it.each([
   ['sol-market-snapshot', 'snapshot', getSnapshot],
   ['market-analysis', 'analysis', getAnalysis],
+  ['token-risk-report', 'risk', getRisk],
 ] as const)('binds the %s route to its own paid resource', async (path, resource, get) => {
   const request = new Request(`http://127.0.0.1:3049/api/paid/${path}?asset=SOL`, {
     headers: { 'PAYMENT-SIGNATURE': 'signed-fixture', 'PAYMENT-RECOVERY': '1' },

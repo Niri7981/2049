@@ -10,6 +10,7 @@ import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { loadPaymentConfig, type PaymentConfig } from "../payment/payment-config";
 import { MarketSnapshotInputSchema, MarketSnapshotOutputSchema } from "../resources/resource-schema";
 import { MarketOfferIdSchema, marketOffer } from "../resources/market-offers";
+import { demoTokenRiskReport } from "../resources/token-risk-report";
 import { SettlementStore, type StoredSettlement } from "./settlement-store";
 import { z } from "zod";
 
@@ -26,19 +27,23 @@ export const MARKET_OFFER_RESOURCE_URLS = Object.freeze({
 export const PAID_MARKET_RESOURCE_URLS = Object.freeze({
   snapshot: "/api/paid/sol-market-snapshot?asset=SOL",
   analysis: "/api/paid/market-analysis?asset=SOL",
+  risk: "/api/paid/token-risk-report?asset=SOL",
 });
 
 const PaidMarketInputSchema = z.union([
   MarketSnapshotInputSchema.extend({ offer: MarketOfferIdSchema.optional() }).strict(),
-  MarketSnapshotInputSchema.extend({ resource: z.enum(['snapshot', 'analysis']) }).strict(),
+  MarketSnapshotInputSchema.extend({ resource: z.enum(['snapshot', 'analysis', 'risk']) }).strict(),
 ]);
 type PaidMarketInput = z.infer<typeof PaidMarketInputSchema>;
 
 function terms(input: PaidMarketInput) {
   if ('resource' in input) {
-    return input.resource === 'snapshot'
-      ? { amount: '200000', resource: PAID_MARKET_RESOURCE_URLS.snapshot, description: 'SOL Market Snapshot (demo fixture)', body: paidSnapshotBody }
-      : { amount: '20000000', resource: PAID_MARKET_RESOURCE_URLS.analysis, description: 'SOL Market Analysis (demo fixture)', body: paidAnalysisBody };
+    if (input.resource === 'snapshot') return { amount: '200000', resource: PAID_MARKET_RESOURCE_URLS.snapshot,
+      description: 'SOL Market Snapshot (demo fixture)', body: paidSnapshotBody };
+    if (input.resource === 'analysis') return { amount: '20000000', resource: PAID_MARKET_RESOURCE_URLS.analysis,
+      description: 'SOL Market Analysis (demo fixture)', body: paidAnalysisBody };
+    return { amount: '50000', resource: PAID_MARKET_RESOURCE_URLS.risk,
+      description: 'SOL Token Risk Report (demo fixture)', body: tokenRiskReportBody };
   }
   if (!input.offer) return { amount: PAYMENT_AMOUNT, resource: MARKET_RESOURCE_URL, description: "Premium SOL market snapshot (demo fixture)", body: snapshotBody };
   const offer = marketOffer(input.offer);
@@ -63,6 +68,7 @@ const paidAnalysisBody = JSON.stringify({
   indicators: { change_24h_pct: demoSnapshot.change_24h_pct, volatility_7d_pct: demoSnapshot.volatility_7d_pct, rsi_14d: demoSnapshot.rsi_14d },
   source_label: 'Demo analysis fixture', is_demo_analysis: true,
 });
+const tokenRiskReportBody = JSON.stringify(demoTokenRiskReport);
 
 function jsonError(status: number, error: string, extra?: Record<string, unknown>) {
   return Response.json({ error, ...extra }, { status, headers: { "cache-control": "no-store" } });

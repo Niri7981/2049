@@ -31,6 +31,9 @@ const payloads = {
   'market-analysis': { resource_id: 'sol-market-analysis', asset: 'SOL', as_of: '2026-09-05T08:00:00Z',
     assessment: 'Demo analysis', indicators: { change_24h_pct: 2.4, volatility_7d_pct: 5.8, rsi_14d: 57 },
     source_label: 'Demo analysis fixture', is_demo_analysis: true },
+  'token-risk-report': { asset: 'SOL', riskLevel: 'medium', riskScore: 42,
+    signals: [{ name: 'Liquidity concentration', status: 'watch', detail: 'Deterministic demo signal.' }],
+    summary: 'Demo risk report.', generatedAt: '2026-09-24T03:00:00.000Z', is_demo_report: true },
 };
 
 async function fixture(id: PaidResourceId, path = ':memory:') {
@@ -48,7 +51,7 @@ async function fixture(id: PaidResourceId, path = ':memory:') {
   }, now);
   const descriptor = paidResource(id);
   const endpoint = `http://127.0.0.1:3049${descriptor.path}`;
-  const amount = id === 'market-snapshot' ? '200000' : '20000000';
+  const amount = id === 'market-snapshot' ? '200000' : id === 'market-analysis' ? '20000000' : '50000';
   const quote = { scheme: 'exact' as const, network: config.network, asset: config.mint, amount, payTo: config.merchant,
     maxTimeoutSeconds: 300, extra: { feePayer, memo: 'day4:ABCDEFGHIJKLMNOPQRSTUV' } };
   const authority = ledger.spendAuthority(principal, PAID_RESOURCE_PURCHASE_OPERATION, now);
@@ -79,7 +82,7 @@ function paidResponse(id: PaidResourceId, config: Awaited<ReturnType<typeof fixt
 
 afterEach(() => vi.unstubAllGlobals());
 
-it.each(['market-snapshot', 'market-analysis'] as const)('pays for %s using its own requirements and stores its distinct delivery', async id => {
+it.each(['market-snapshot', 'market-analysis', 'token-risk-report'] as const)('pays for %s using its own requirements and stores its distinct delivery', async id => {
   const f = await fixture(id);
   vi.stubGlobal('fetch', vi.fn(async () => paidResponse(id, f.config, f.amount)));
   try {
@@ -92,7 +95,7 @@ it.each(['market-snapshot', 'market-analysis'] as const)('pays for %s using its 
   } finally { f.ledger.close(); }
 });
 
-it.each(['market-snapshot', 'market-analysis'] as const)('rejects %s requirements at the other resource URL', async id => {
+it.each(['market-snapshot', 'market-analysis', 'token-risk-report'] as const)('rejects %s requirements at the other resource URL', async id => {
   const f = await fixture(id);
   try {
     const other = id === 'market-snapshot' ? 'market-analysis' : 'market-snapshot';
@@ -100,6 +103,26 @@ it.each(['market-snapshot', 'market-analysis'] as const)('rejects %s requirement
     expect(() => checkPaymentBinding(f.record, f.config, wrong)).toThrow();
     await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, wrong)).rejects.toThrow();
     expect(loadBuyerSigner).not.toHaveBeenCalled();
+  } finally { f.ledger.close(); }
+});
+
+it('rejects malformed token risk delivery, then recovers with the original payment payload', async () => {
+  const f = await fixture('token-risk-report');
+  const valid = paidResponse('token-risk-report', f.config, f.amount);
+  const malformed = new Response(JSON.stringify({ ...payloads['token-risk-report'], riskScore: 'unknown' }),
+    { status: 200, headers: valid.headers });
+  const fetcher = vi.fn().mockResolvedValueOnce(malformed).mockResolvedValueOnce(valid);
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, f.endpoint)).rejects.toThrow();
+    expect(f.ledger.get('new-token-risk-report')).toMatchObject({ status: 'PAID', deliveryStatus: 'PENDING' });
+    expect(f.ledger.get('new-token-risk-report')?.data).toBeUndefined();
+    await recoverApprovedPayment(f.ledger, 'new-token-risk-report', f.config, f.endpoint);
+    expect(f.ledger.get('new-token-risk-report')).toMatchObject({ status: 'PAID', deliveryStatus: 'COMPLETE',
+      data: payloads['token-risk-report'] });
+    expect(loadBuyerSigner).toHaveBeenCalledOnce();
+    expect(prepareSolanaPayment).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[1][1].headers['PAYMENT-SIGNATURE']).toBe(fetcher.mock.calls[0][1].headers['PAYMENT-SIGNATURE']);
   } finally { f.ledger.close(); }
 });
 

@@ -113,6 +113,9 @@ it('uses the official MCP handshake and exposes a request-only purchase tool wit
     expect(requestPurchase).toHaveBeenCalledWith({ requestId: 'request-1', resourceId: 'market-snapshot', reason: 'Need SOL data' });
     const analysis = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'request-2', resourceId: 'market-analysis', reason: 'Need SOL analysis' } });
     expect(analysis.isError).not.toBe(true);
+    const risk = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'request-risk', resourceId: 'token-risk-report', reason: 'Need SOL risk report' } });
+    expect(risk.isError).not.toBe(true);
+    expect(requestPurchase).toHaveBeenCalledWith({ requestId: 'request-risk', resourceId: 'token-risk-report', reason: 'Need SOL risk report' });
     const rejected = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'request-3', resourceId: 'unknown-resource', reason: 'Need data' } });
     expect(rejected.isError).toBe(true);
     expect(JSON.stringify(rejected)).not.toContain('UNKNOWN_PAID_RESOURCE');

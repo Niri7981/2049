@@ -56,7 +56,7 @@ function setup(path = ":memory:", facilitator = mockFacilitator()) {
 
 function encode(value: unknown) { return Buffer.from(JSON.stringify(value)).toString("base64"); }
 
-async function paymentFor(handler: ReturnType<typeof createPaidMarketApi>, input: { asset: 'SOL'; resource?: 'snapshot' | 'analysis' } = { asset: 'SOL' }) {
+async function paymentFor(handler: ReturnType<typeof createPaidMarketApi>, input: { asset: 'SOL'; resource?: 'snapshot' | 'analysis' | 'risk' } = { asset: 'SOL' }) {
   const response = await handler(input);
   expect(response.status).toBe(402);
   const quote = JSON.parse(Buffer.from(response.headers.get(PAYMENT_REQUIRED_HEADER)!, "base64").toString()) as PaymentRequired;
@@ -110,6 +110,7 @@ describe("x402 paid market API", () => {
   it.each([
     ['snapshot', '200000', '/api/paid/sol-market-snapshot?asset=SOL'],
     ['analysis', '20000000', '/api/paid/market-analysis?asset=SOL'],
+    ['risk', '50000', '/api/paid/token-risk-report?asset=SOL'],
   ] as const)('quotes the distinct %s resource through x402', async (resource, amount, url) => {
     const { handler, store, facilitator } = setup();
     const response = await handler({ asset: 'SOL', resource });
@@ -129,23 +130,33 @@ describe("x402 paid market API", () => {
     const { handler, facilitator } = setup();
     const snapshot = await paymentFor(handler, { asset: 'SOL', resource: 'snapshot' });
     const analysis = await paymentFor(handler, { asset: 'SOL', resource: 'analysis' });
+    const risk = await paymentFor(handler, { asset: 'SOL', resource: 'risk' });
     expect((await handler({ asset: 'SOL', resource: 'analysis' }, snapshot.header)).status).toBe(402);
+    expect((await handler({ asset: 'SOL', resource: 'risk' }, analysis.header)).status).toBe(402);
     expect(facilitator.verify).not.toHaveBeenCalled();
 
     const snapshotResponse = await handler({ asset: 'SOL', resource: 'snapshot' }, snapshot.header);
     const analysisResponse = await handler({ asset: 'SOL', resource: 'analysis' }, analysis.header);
+    const riskResponse = await handler({ asset: 'SOL', resource: 'risk' }, risk.header);
     expect(snapshotResponse.status).toBe(200);
     expect(analysisResponse.status).toBe(200);
+    expect(riskResponse.status).toBe(200);
     expect(snapshotResponse.headers.get(PAYMENT_RESPONSE_HEADER)).not.toBeNull();
     expect(analysisResponse.headers.get(PAYMENT_RESPONSE_HEADER)).not.toBeNull();
+    expect(riskResponse.headers.get(PAYMENT_RESPONSE_HEADER)).not.toBeNull();
     const snapshotBody = await snapshotResponse.json();
     const analysisBody = await analysisResponse.json();
+    const riskBody = await riskResponse.json();
     expect(snapshotBody).toMatchObject({ resource_id: 'sol-market-snapshot', spot_price_usd: 140, is_demo_snapshot: true });
     expect(snapshotBody).not.toHaveProperty('assessment');
     expect(analysisBody).toMatchObject({ resource_id: 'sol-market-analysis', assessment: expect.any(String), is_demo_analysis: true });
     expect(analysisBody).not.toHaveProperty('spot_price_usd');
-    expect(facilitator.verify).toHaveBeenCalledTimes(2);
-    expect(facilitator.settle).toHaveBeenCalledTimes(2);
+    expect(riskBody).toMatchObject({ asset: 'SOL', riskLevel: 'medium', riskScore: 42,
+      signals: expect.any(Array), is_demo_report: true });
+    expect(riskBody).not.toHaveProperty('spot_price_usd');
+    expect(riskBody).not.toHaveProperty('assessment');
+    expect(facilitator.verify).toHaveBeenCalledTimes(3);
+    expect(facilitator.settle).toHaveBeenCalledTimes(3);
   });
 
   it("verifies and settles before returning data and PAYMENT-RESPONSE", async () => {
