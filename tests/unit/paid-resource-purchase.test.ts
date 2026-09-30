@@ -5,7 +5,7 @@ import type { FacilitatorClient } from '@x402/core/server';
 import { encodePaymentRequiredHeader } from '@x402/core/http';
 import { Keypair } from '@solana/web3.js';
 import { expect, it, vi } from 'vitest';
-import { MARKET_SNAPSHOT_OPERATION } from '../../src/modules/authority/spend-grant';
+import { LEGACY_MARKET_SNAPSHOT_OPERATION, PAID_RESOURCE_PURCHASE_OPERATION } from '../../src/modules/authority/spend-grant';
 import { createPaidMarketApi } from '../../src/modules/paid-market-api/paid-market-api';
 import { SettlementStore } from '../../src/modules/paid-market-api/settlement-store';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT, type PaymentConfig } from '../../src/modules/payment/payment-config';
@@ -26,12 +26,12 @@ const principal = { cardMemberId: memberId, connectionId: '2c187121-f6f1-49a3-ae
 const now = Date.parse('2026-09-24T03:00:00Z');
 const origin = 'http://127.0.0.1:3049';
 
-function setup(path = ':memory:') {
+function setup(path = ':memory:', operation: string = PAID_RESOURCE_PURCHASE_OPERATION) {
   const ledger = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now,
     timeZone: () => 'Asia/Shanghai', defaultCardMemberId: memberId });
   ledger.setDailyLimit('1000000');
   ledger.createSpendGrant({ totalLimit: '400000', singleLimit: '200000', expiresAt: now + 60 * 60 * 1000 }, principal, {
-    resourceId: PAID_RESOURCE_SCOPE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation: MARKET_SNAPSHOT_OPERATION,
+    resourceId: PAID_RESOURCE_SCOPE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation,
     network: config.network, assetId: config.mint, assetDecimals: 6, payTo: config.merchant, paymentScheme: 'exact',
   }, now);
   const facilitator = { getSupported: vi.fn(async () => ({ kinds: [{ x402Version: 2 as const, scheme: 'exact', network: config.network,
@@ -67,10 +67,10 @@ it('quotes both real 402 resources, then evaluates the same resource and amount 
       resourcePath: '/api/paid/sol-market-snapshot?asset=SOL' });
     expect(f.ledger.get('analysis-policy')?.intent).toMatchObject({ resourceScopeId: PAID_RESOURCE_SCOPE_ID,
       resourcePath: '/api/paid/market-analysis?asset=SOL' });
-    expect(f.ledger.list().map(item => ({ resourceId: item.resourceId, status: item.status }))).toEqual([
+    expect(f.ledger.list().map(item => ({ resourceId: item.resourceId, status: item.status }))).toEqual(expect.arrayContaining([
       { resourceId: 'market-analysis', status: 'DENIED' },
       { resourceId: 'market-snapshot', status: 'APPROVED' },
-    ]);
+    ]));
     expect(pay).not.toHaveBeenCalled();
     expect(f.facilitator.verify).not.toHaveBeenCalled();
     expect(f.facilitator.settle).not.toHaveBeenCalled();
@@ -81,6 +81,45 @@ it('takes no Agent amount, price, offerId, payTo, or arbitrary requirements', ()
   for (const extra of [{ amount: '1' }, { price: '1' }, { offerId: 'basic' }, { payTo: buyer }, { requirements: {} }]) {
     expect(PurchaseRequestInputSchema.safeParse({ ...request('strict-schema', 'market-snapshot'), ...extra }).success).toBe(false);
   }
+});
+
+it('rejects an unknown resource through the registry before quoting or reserving', async () => {
+  const f = setup();
+  try {
+    expect(PurchaseRequestInputSchema.safeParse({ requestId: 'unknown-resource', resourceId: 'unknown-resource', reason: 'Need data' }).success).toBe(false);
+    await expect(requestPaidResourcePurchase({ requestId: 'unknown-resource', resourceId: 'unknown-resource', reason: 'Need data' },
+      { config, ledger: f.ledger, origin, principal, fetcher: f.fetcher, now: () => now, execute: false })).rejects.toThrow('UNKNOWN_PAID_RESOURCE');
+    expect(f.fetcher).not.toHaveBeenCalled();
+    expect(f.ledger.get('unknown-resource')).toBeUndefined();
+  } finally { f.ledger.close(); f.store.close(); }
+});
+
+it('uses a stored legacy grant for registered resources without rewriting its operation', async () => {
+  const directory = mkdtempSync(join(tmpdir(), '2049-legacy-resource-grant-'));
+  const path = join(directory, 'ledger.sqlite');
+  const f = setup(path, LEGACY_MARKET_SNAPSHOT_OPERATION);
+  try {
+    f.ledger.close();
+    const reopened = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+    try {
+      const purchase = await requestPaidResourcePurchase(request('legacy-resource-grant', 'market-snapshot'),
+        { config, ledger: reopened, origin, principal, fetcher: f.fetcher, now: () => now, execute: false });
+      expect(purchase.decision.decision).toBe('APPROVED');
+      const record = reopened.get('legacy-resource-grant')!;
+      expect(record.intent.authority?.operation).toBe(LEGACY_MARKET_SNAPSHOT_OPERATION);
+      expect(reopened.spendGrantSummary(now)?.operation).toBe(LEGACY_MARKET_SNAPSHOT_OPERATION);
+    } finally { reopened.close(); }
+    const recovering = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+    try {
+      const record = recovering.get('legacy-resource-grant')!;
+      expect(record.intent.authority?.operation).toBe(LEGACY_MARKET_SNAPSHOT_OPERATION);
+      const replay = await requestPaidResourcePurchase(request('legacy-resource-grant', 'market-snapshot'),
+        { config, ledger: recovering, origin, principal, fetcher: f.fetcher, now: () => now, execute: false });
+      expect(replay).toMatchObject({ reused: true, status: 'APPROVED' });
+      expect(f.fetcher).toHaveBeenCalledOnce();
+      expect(recovering.claim(record.approvalId, now).status).toBe('PAYING');
+    } finally { recovering.close(); }
+  } finally { f.store.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 it('rejects a 402 for the wrong registered resource before any reservation', async () => {

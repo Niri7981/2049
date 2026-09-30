@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { generateKeyPairSigner } from '@solana/kit';
 import { afterEach, expect, it, vi } from 'vitest';
-import { MARKET_SNAPSHOT_OPERATION } from '../../src/modules/authority/spend-grant';
+import { LEGACY_MARKET_SNAPSHOT_OPERATION as MARKET_SNAPSHOT_OPERATION } from '../../src/modules/authority/spend-grant';
 import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
 import { runPaymentPreflight } from '../../src/modules/payment/payment-preflight';
 import { inspectOriginalTransaction } from '../../src/modules/payment/reconcile-transaction';

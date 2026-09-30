@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { generateKeyPairSigner } from '@solana/kit';
 import { afterEach, expect, it, vi } from 'vitest';
 import { SpendIntentSchema } from '../../src/modules/authority/spend-intent';
-import { MARKET_SNAPSHOT_OPERATION } from '../../src/modules/authority/spend-grant';
+import { PAID_RESOURCE_PURCHASE_OPERATION } from '../../src/modules/authority/spend-grant';
 import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
 import { runPaymentPreflight } from '../../src/modules/payment/payment-preflight';
 import { inspectOriginalTransaction } from '../../src/modules/payment/reconcile-transaction';
@@ -43,7 +43,7 @@ async function fixture(id: PaidResourceId, path = ':memory:') {
     timeZone: () => 'Asia/Shanghai', defaultCardMemberId: memberId });
   ledger.setDailyLimit('50000000');
   ledger.createSpendGrant({ totalLimit: '50000000', singleLimit: '20000000', expiresAt: now + 60 * 60 * 1000 }, principal, {
-    resourceId: PAID_RESOURCE_SCOPE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation: MARKET_SNAPSHOT_OPERATION,
+    resourceId: PAID_RESOURCE_SCOPE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation: PAID_RESOURCE_PURCHASE_OPERATION,
     network: config.network, assetId: config.mint, assetDecimals: 6, payTo: config.merchant, paymentScheme: 'exact',
   }, now);
   const descriptor = paidResource(id);
@@ -51,7 +51,7 @@ async function fixture(id: PaidResourceId, path = ':memory:') {
   const amount = id === 'market-snapshot' ? '200000' : '20000000';
   const quote = { scheme: 'exact' as const, network: config.network, asset: config.mint, amount, payTo: config.merchant,
     maxTimeoutSeconds: 300, extra: { feePayer, memo: 'day4:ABCDEFGHIJKLMNOPQRSTUV' } };
-  const authority = ledger.spendAuthority(principal, MARKET_SNAPSHOT_OPERATION, now);
+  const authority = ledger.spendAuthority(principal, PAID_RESOURCE_PURCHASE_OPERATION, now);
   const intent = SpendIntentSchema.parse({ id: crypto.randomUUID(), idempotencyKey: `new-${id}`, requestHash: hash(id),
     resourceId: id, resourceScopeId: PAID_RESOURCE_SCOPE_ID, resourcePath: descriptor.path,
     providerId: descriptor.providerId, amount: Number(amount), currency: 'USDC', assetDecimals: 6,

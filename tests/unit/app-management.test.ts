@@ -14,7 +14,7 @@ import { hash } from '../../src/modules/purchases/spending-policy';
 import { paymentBinding, paymentEndpoint, recoverApprovedPayment } from '../../src/modules/purchases/approved-payment';
 import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
 import { demoSnapshot } from '../../src/modules/paid-market-api/paid-market-api';
-import { MARKET_SNAPSHOT_OPERATION } from '../../src/modules/authority/spend-grant';
+import { PAID_RESOURCE_PURCHASE_OPERATION } from '../../src/modules/authority/spend-grant';
 import { legacyDemoTasksAllowed } from '../../src/modules/app/product-mode';
 import { readConnection } from '../../src/modules/mcp/connection';
 
@@ -36,7 +36,7 @@ function authorize(app: AppRuntime, now = Date.now(), totalLimit = '1000000') {
   const grant = app.createSpendGrant({ totalLimit, singleLimit: totalLimit, expiresAt: now + 24 * 60 * 60 * 1000 });
   const principal = app.agentConnection.principal('request_purchase');
   if (!principal) throw new Error('test connection was not authorized');
-  return { grant, principal, authority: app.ledger.spendAuthority(principal, MARKET_SNAPSHOT_OPERATION, now) };
+  return { grant, principal, authority: app.ledger.spendAuthority(principal, PAID_RESOURCE_PURCHASE_OPERATION, now) };
 }
 
 describe('authenticated local management boundary', () => {
@@ -110,6 +110,7 @@ describe('managed budget and Devnet test records', () => {
       const intentCredential = readConnection(app.directory);
       expect(intentCredential.capabilities).toEqual(['read', 'request_purchase']);
       const grant = app.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 8 * 60 * 60 * 1000 });
+      expect(grant.operation).toBe(PAID_RESOURCE_PURCHASE_OPERATION);
       const authorized = readConnection(app.directory);
       expect(authorized).toMatchObject({ connectionId: intentCredential.connectionId, generation: intentCredential.generation + 1, capabilities: ['read', 'request_purchase'] });
       expect(authorized.token).not.toBe(intentCredential.token);

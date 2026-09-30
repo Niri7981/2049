@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 export type AgentRead = (operation: 'status' | 'quote') => Promise<unknown>;
-export type AgentPurchaseRequest = (input: { requestId: string; resourceId: 'market-snapshot' | 'market-analysis'; reason: string }) => Promise<unknown>;
+export type AgentPurchaseRequest = (input: { requestId: string; resourceId: string; reason: string }) => Promise<unknown>;
 
 /** Official MCP SDK owns negotiation, schemas and transport; 2049 only maps tools. */
 export function createAgentServer(read: AgentRead, requestPurchase: AgentPurchaseRequest = async () => { throw new Error('PURCHASE_REQUEST_UNAVAILABLE'); }) {
@@ -10,7 +10,7 @@ export function createAgentServer(read: AgentRead, requestPurchase: AgentPurchas
   const annotations = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   for (const [name, operation, description] of [
     ['get_spending_status', 'status', 'Read the 2049 wallet address and shared spending budget. Does not pay.'],
-    ['get_market_quote', 'quote', 'Read current x402 quotes for the two registered SOL demo resources. Does not authorize or pay.'],
+    ['get_market_quote', 'quote', 'Read current x402 quotes for registered SOL demo resources. Does not authorize or pay.'],
   ] as const) {
     server.registerTool(name, { description, inputSchema: {}, annotations }, async () => {
       try { return { content: [{ type: 'text' as const, text: JSON.stringify(await read(operation)) }] }; }
@@ -21,7 +21,7 @@ export function createAgentServer(read: AgentRead, requestPurchase: AgentPurchas
     description: 'Request a registered SOL paid resource. The local 2049 backend obtains a fresh x402 quote, applies SpendGrant and budget policy, and may execute an approved Devnet purchase. The Agent cannot provide payment terms or signing data.',
     inputSchema: {
       requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).describe('Stable idempotency key for this purchase request'),
-      resourceId: z.enum(['market-snapshot', 'market-analysis']).describe('Registered paid resource; the Agent cannot provide an amount'),
+      resourceId: z.string().min(1).max(200).describe('Registered paid resource; the Agent cannot provide an amount'),
       reason: z.string().trim().min(1).max(240).describe('Short user-facing reason for requesting this data'),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },

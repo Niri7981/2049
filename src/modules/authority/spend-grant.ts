@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 const identifier = z.string().min(1).max(200);
 const minorUnits = z.string().regex(/^(?:0|[1-9]\d*)$/).refine(value => Number.isSafeInteger(Number(value)));
-export const MARKET_SNAPSHOT_OPERATION = 'market.snapshot.read';
+export const PAID_RESOURCE_PURCHASE_OPERATION = 'paid.resource.purchase';
+/** Stored in grants and in-flight purchases created before generic paid resources. */
+export const LEGACY_MARKET_SNAPSHOT_OPERATION = 'market.snapshot.read';
 
 export const SpendPrincipalSchema = z.object({
   cardMemberId: z.string().uuid(),

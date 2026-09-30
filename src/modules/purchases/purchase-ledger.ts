@@ -8,7 +8,7 @@ import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
 import { CardMemberSchema, type CardMember } from '../authority/card-member';
 import { DEFAULT_SPENDING_POLICY, evaluateSpendAuthority, parseStoredAuthorityDecision, type AuthorityDecision, type SpendingControls } from '../authority/authority-policy';
 import { parseStoredSpendIntent, type SpendIntent } from '../authority/spend-intent';
-import { MARKET_SNAPSHOT_OPERATION, SpendGrantInputSchema, SpendGrantSchema, SpendGrantScopeSchema, SpendPrincipalSchema, parseGrantAmount, type SpendAuthorityBinding, type SpendGrant, type SpendGrantInput, type SpendGrantScope, type SpendPrincipal } from '../authority/spend-grant';
+import { LEGACY_MARKET_SNAPSHOT_OPERATION, PAID_RESOURCE_PURCHASE_OPERATION, SpendGrantInputSchema, SpendGrantSchema, SpendGrantScopeSchema, SpendPrincipalSchema, parseGrantAmount, type SpendAuthorityBinding, type SpendGrant, type SpendGrantInput, type SpendGrantScope, type SpendPrincipal } from '../authority/spend-grant';
 import { PAID_RESOURCE_SCOPE_ID, PaidResourceIdSchema, paidResource } from '../resources/paid-resources';
 import { PREMIUM_SOL_MARKET_SNAPSHOT_ID } from '../resources/static-resource-registry';
 import { hash, nextSpendingDayBoundary, spendingDay } from './spending-policy';
@@ -313,11 +313,13 @@ export class PurchaseLedger {
   spendAuthority(principal: SpendPrincipal, operation: string, now = this.now()): SpendAuthorityBinding {
     const parsed = SpendPrincipalSchema.parse(principal); const grant = this.activeSpendGrant(now, parsed.cardMemberId);
     this.assertCardMemberActive(parsed.cardMemberId);
-    if (!grant || grant.cardMemberId !== parsed.cardMemberId || grant.operation !== operation) {
+    if (!grant || grant.cardMemberId !== parsed.cardMemberId ||
+      (grant.operation !== operation && !(operation === PAID_RESOURCE_PURCHASE_OPERATION &&
+        grant.operation === LEGACY_MARKET_SNAPSHOT_OPERATION && grant.resourceId === PAID_RESOURCE_SCOPE_ID))) {
       throw new Error('当前 Agent 连接没有可用的消费授权。');
     }
     return { grantId: grant.id, grantVersion: grant.version, cardMemberId: parsed.cardMemberId,
-      connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation };
+      connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation: grant.operation };
   }
   /** Identifies the latest matching grant so policy can persist an inactive-grant denial.
    * This binding is only an input to reserve(); claim/sign still require an ACTIVE grant. */
@@ -327,11 +329,15 @@ export class PurchaseLedger {
     this.assertCardMemberActive(parsed.cardMemberId);
     return this.atomic(() => {
       this.expireGrants(now);
-      const row = this.db.prepare('SELECT * FROM spend_grants WHERE card_member_id=? AND operation=? ORDER BY version DESC LIMIT 1').get(parsed.cardMemberId, operation);
+      // Historical grants for the registered resource scope retain their stored operation.
+      const row = operation === PAID_RESOURCE_PURCHASE_OPERATION
+        ? this.db.prepare('SELECT * FROM spend_grants WHERE card_member_id=? AND (operation=? OR (operation=? AND resource_id=?)) ORDER BY version DESC LIMIT 1')
+          .get(parsed.cardMemberId, operation, LEGACY_MARKET_SNAPSHOT_OPERATION, PAID_RESOURCE_SCOPE_ID)
+        : this.db.prepare('SELECT * FROM spend_grants WHERE card_member_id=? AND operation=? ORDER BY version DESC LIMIT 1').get(parsed.cardMemberId, operation);
       if (!row) return undefined;
       const grant = this.parseGrantRow(row);
       return { grantId: grant.id, grantVersion: grant.version, cardMemberId: parsed.cardMemberId,
-        connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation };
+        connectionId: parsed.connectionId, connectionGeneration: parsed.connectionGeneration, operation: grant.operation };
     });
   }
   spendGrantSummary(now = this.now(), mode?: PurchaseExecutionMode, memberId?: string): SpendGrantSummary | null {
@@ -660,7 +666,7 @@ export class PurchaseLedger {
     if (grant.status === 'EXPIRED' || grant.expiresAt <= now) return this.denied('SPEND_GRANT_EXPIRED', committed, controls);
     if (grant.status !== 'ACTIVE') return this.denied('SPEND_GRANT_INACTIVE', committed, controls);
     if (grant.version !== binding.grantVersion || grant.cardMemberId !== binding.cardMemberId) return this.denied('SPEND_GRANT_PRINCIPAL_MISMATCH', committed, controls);
-    if (grant.operation !== binding.operation || grant.operation !== MARKET_SNAPSHOT_OPERATION || !this.grantCoversResource(grant, intent) || grant.providerId !== intent.providerId || grant.network !== intent.network || grant.assetId !== intent.assetId || grant.assetDecimals !== intent.assetDecimals || grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme) {
+    if (grant.operation !== binding.operation || !this.grantOperationCoversIntent(grant, intent) || !this.grantCoversResource(grant, intent) || grant.providerId !== intent.providerId || grant.network !== intent.network || grant.assetId !== intent.assetId || grant.assetDecimals !== intent.assetDecimals || grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme) {
       return this.denied('SPEND_GRANT_SCOPE_MISMATCH', committed, controls);
     }
     if (intent.amount > grant.singleLimit) return this.denied('SPEND_GRANT_SINGLE_LIMIT_EXCEEDED', committed, controls);
@@ -682,13 +688,19 @@ export class PurchaseLedger {
       throw new Error('Spend grant principal changed');
     }
     const intent = record.intent;
-    if (grant.operation !== MARKET_SNAPSHOT_OPERATION || !this.grantCoversResource(grant, intent) || grant.providerId !== intent.providerId ||
+    if (!this.grantOperationCoversIntent(grant, intent) || !this.grantCoversResource(grant, intent) || grant.providerId !== intent.providerId ||
       grant.network !== intent.network || grant.assetId !== intent.assetId || grant.assetDecimals !== intent.assetDecimals ||
       grant.payTo !== intent.payTo || grant.paymentScheme !== intent.paymentScheme || intent.amount > grant.singleLimit) {
       throw new Error('Spend grant scope or single limit changed');
     }
     const committed = this.grantCommitted(grant.id, record.executionMode);
     if (!Number.isSafeInteger(committed) || committed < 0 || committed > grant.totalLimit) throw new Error('Spend grant no longer covers reserved payments');
+  }
+  private grantOperationCoversIntent(grant: SpendGrant, intent: SpendIntent) {
+    if (grant.operation === PAID_RESOURCE_PURCHASE_OPERATION) return true;
+    // Existing grants and in-flight purchases keep their original stored binding.
+    return grant.operation === LEGACY_MARKET_SNAPSHOT_OPERATION &&
+      (!intent.resourceScopeId || (grant.resourceId === PAID_RESOURCE_SCOPE_ID && intent.resourceScopeId === PAID_RESOURCE_SCOPE_ID));
   }
   private grantCoversResource(grant: SpendGrant, intent: SpendIntent) {
     // The App's historical 0.01 test purchase retains its former grant access;

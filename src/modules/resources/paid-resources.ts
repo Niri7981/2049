@@ -3,8 +3,6 @@ import { PAID_MARKET_RESOURCE_URLS } from '../paid-market-api/paid-market-api';
 import { DEMO_MARKET_DATA_PROVIDER_ID } from './static-resource-registry';
 
 export const PAID_RESOURCE_SCOPE_ID = 'demo-sol-market-resources';
-export const PaidResourceIdSchema = z.enum(['market-snapshot', 'market-analysis']);
-export type PaidResourceId = z.infer<typeof PaidResourceIdSchema>;
 
 const common = { asset: z.literal('SOL'), as_of: z.string().datetime({ offset: true }),
   source_label: z.string().min(1).max(120) };
@@ -21,6 +19,12 @@ export const PAID_RESOURCES = Object.freeze({
   'market-analysis': Object.freeze({ id: 'market-analysis', name: 'SOL Market Analysis',
     path: PAID_MARKET_RESOURCE_URLS.analysis, providerId: DEMO_MARKET_DATA_PROVIDER_ID, output: analysis }),
 });
+
+export type PaidResourceId = keyof typeof PAID_RESOURCES;
+export const PaidResourceIdSchema = z.custom<PaidResourceId>(
+  value => typeof value === 'string' && Object.hasOwn(PAID_RESOURCES, value),
+  { message: 'UNKNOWN_PAID_RESOURCE' },
+);
 
 export function paidResource(id: PaidResourceId) { return PAID_RESOURCES[id]; }
 

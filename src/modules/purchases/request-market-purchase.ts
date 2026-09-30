@@ -3,7 +3,7 @@ import type { PaymentRequirements } from '@x402/core/types';
 import { z } from 'zod';
 import { address } from '@solana/kit';
 import { executeApprovedPayment, paymentBinding, paymentEndpoint, recoverApprovedPayment } from './approved-payment';
-import { SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
+import { LEGACY_MARKET_SNAPSHOT_OPERATION, SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT, type PaymentConfig } from '../payment/payment-config';
 import { readPaymentRequiredHeader } from '../payment/x402-client';
 import { MarketOfferIdSchema, marketOffer, marketOfferResource } from '../resources/market-offers';
@@ -111,7 +111,7 @@ export async function requestMarketPurchase(raw: unknown, options: {
   } finally { await response.body?.cancel(); }
 
   const now = clock();
-  const authority = options.ledger.spendAuthorityForDecision(principal, 'market.snapshot.read', now);
+  const authority = options.ledger.spendAuthorityForDecision(principal, LEGACY_MARKET_SNAPSHOT_OPERATION, now);
   const resource = marketOfferResource({ endpoint: 'https://purchase.local.invalid/api/paid/market-snapshot', asset_id: config.mint,
     network: config.network, allowed_pay_to: config.merchant }, input.offerId);
   const intent = createMarketSnapshotSpendIntent({ idempotencyKey: input.requestId, request: { asset: 'SOL' }, requestHash, resource, quote,

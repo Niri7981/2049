@@ -7,7 +7,7 @@ import type { FacilitatorClient } from '@x402/core/server';
 import { encodePaymentRequiredHeader } from '@x402/core/http';
 import { Keypair } from '@solana/web3.js';
 import { afterEach, expect, it, vi } from 'vitest';
-import { MARKET_SNAPSHOT_OPERATION } from '../../src/modules/authority/spend-grant';
+import { LEGACY_MARKET_SNAPSHOT_OPERATION as MARKET_SNAPSHOT_OPERATION } from '../../src/modules/authority/spend-grant';
 import { createPaidMarketApi } from '../../src/modules/paid-market-api/paid-market-api';
 import { SettlementStore } from '../../src/modules/paid-market-api/settlement-store';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT, type PaymentConfig } from '../../src/modules/payment/payment-config';

@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { AgentConnection, connectionFile, readConnection } from '../../src/modules/mcp/connection';
 import { createAgentServer } from '../../src/modules/mcp/server';
+import { PurchaseRequestInputSchema } from '../../src/modules/purchases/request-paid-resource-purchase';
 import { requireManagementRequest } from '../../src/modules/app/management-auth';
 
 const dirs: string[] = [];
@@ -88,7 +89,10 @@ it('rejects every credential after its CardMember is revoked', () => {
 
 it('uses the official MCP handshake and exposes a request-only purchase tool with sanitized failures', async () => {
   const read = vi.fn().mockResolvedValue({ amount: '10000', paymentEnabled: false });
-  const requestPurchase = vi.fn().mockResolvedValue({ status: 'APPROVED', paymentStatus: 'NOT_STARTED' });
+  const requestPurchase = vi.fn(async (input: unknown) => {
+    PurchaseRequestInputSchema.parse(input);
+    return { status: 'APPROVED', paymentStatus: 'NOT_STARTED' };
+  });
   const server = createAgentServer(read, requestPurchase);
   const client = new Client({ name: 'test', version: '1' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -96,6 +100,9 @@ it('uses the official MCP handshake and exposes a request-only purchase tool wit
     await server.connect(serverTransport); await client.connect(clientTransport);
     const tools = await client.listTools();
     expect(tools.tools.map(tool => tool.name)).toEqual(['get_spending_status', 'get_market_quote', 'request_purchase']);
+    const purchaseResourceSchema = tools.tools.find(tool => tool.name === 'request_purchase')?.inputSchema.properties?.resourceId;
+    expect(purchaseResourceSchema).toMatchObject({ type: 'string' });
+    expect(purchaseResourceSchema).not.toHaveProperty('enum');
     const results = await Promise.all(Array.from({ length: 3 }, () => client.callTool({ name: 'get_market_quote', arguments: {} })));
     expect(results.every(result => !result.isError)).toBe(true);
     expect(read.mock.calls).toEqual([['quote'], ['quote'], ['quote']]);
@@ -104,6 +111,12 @@ it('uses the official MCP handshake and exposes a request-only purchase tool wit
     const requested = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'request-1', resourceId: 'market-snapshot', reason: 'Need SOL data' } });
     expect(requested.isError).not.toBe(true);
     expect(requestPurchase).toHaveBeenCalledWith({ requestId: 'request-1', resourceId: 'market-snapshot', reason: 'Need SOL data' });
+    const analysis = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'request-2', resourceId: 'market-analysis', reason: 'Need SOL analysis' } });
+    expect(analysis.isError).not.toBe(true);
+    const rejected = await client.callTool({ name: 'request_purchase', arguments: { requestId: 'request-3', resourceId: 'unknown-resource', reason: 'Need data' } });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).not.toContain('UNKNOWN_PAID_RESOURCE');
+    expect(requestPurchase).toHaveBeenLastCalledWith({ requestId: 'request-3', resourceId: 'unknown-resource', reason: 'Need data' });
     read.mockRejectedValueOnce(new Error('secret-token-and-rpc-url'));
     const failed = await client.callTool({ name: 'get_spending_status', arguments: {} });
     expect(failed.isError).toBe(true); expect(JSON.stringify(failed)).not.toContain('secret-token');

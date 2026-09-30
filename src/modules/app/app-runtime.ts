@@ -7,7 +7,7 @@ import { paymentEndpointForIntent, recoverApprovedPayment } from '../purchases/a
 import { purchaseMarketSnapshot } from '../purchases/purchase-market-snapshot';
 import { hash } from '../purchases/spending-policy';
 import { AgentConnection } from '../mcp/connection';
-import { MARKET_SNAPSHOT_OPERATION, SpendGrantInputSchema, type SpendPrincipal } from '../authority/spend-grant';
+import { PAID_RESOURCE_PURCHASE_OPERATION, SpendGrantInputSchema, type SpendPrincipal } from '../authority/spend-grant';
 import { DEMO_MARKET_DATA_PROVIDER_ID } from '../resources/static-resource-registry';
 import { PAID_RESOURCE_SCOPE_ID } from '../resources/paid-resources';
 import { DEVNET_NETWORK } from '../payment/payment-config';
@@ -196,7 +196,7 @@ export class AppRuntime {
       return this.ledger.createSpendGrant(input, principal, {
         resourceId: PAID_RESOURCE_SCOPE_ID,
         providerId: DEMO_MARKET_DATA_PROVIDER_ID,
-        operation: MARKET_SNAPSHOT_OPERATION,
+        operation: PAID_RESOURCE_PURCHASE_OPERATION,
         network: DEVNET_NETWORK,
         assetId: DEVNET_USDC_MINT,
         assetDecimals: 6,
@@ -217,7 +217,7 @@ export class AppRuntime {
   private authority(principal?: SpendPrincipal) {
     const current = principal ?? this.agentConnection.principal('request_purchase');
     if (!current) throw new Error('当前 Agent 连接没有消费权限。');
-    return this.ledger.spendAuthority(current, MARKET_SNAPSHOT_OPERATION, this.dependencies.now?.() ?? Date.now());
+    return this.ledger.spendAuthority(current, PAID_RESOURCE_PURCHASE_OPERATION, this.dependencies.now?.() ?? Date.now());
   }
   requestPurchase(input: unknown, origin: string, principal: SpendPrincipal): Promise<PurchaseRequestResult> {
     if (!this.accepting) return Promise.reject(new Error('服务正在退出，不能创建购买请求。'));

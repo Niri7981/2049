@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import type { PaymentRequirements } from '@x402/core/types';
-import { MARKET_SNAPSHOT_OPERATION, type SpendAuthorityBinding } from '../../src/modules/authority/spend-grant';
+import { LEGACY_MARKET_SNAPSHOT_OPERATION as MARKET_SNAPSHOT_OPERATION, type SpendAuthorityBinding } from '../../src/modules/authority/spend-grant';
 import { SpendIntentSchema } from '../../src/modules/authority/spend-intent';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT } from '../../src/modules/payment/payment-config';
 import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';

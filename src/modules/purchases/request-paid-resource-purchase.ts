@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { SpendIntentSchema } from '../authority/spend-intent';
-import { MARKET_SNAPSHOT_OPERATION, SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
+import { PAID_RESOURCE_PURCHASE_OPERATION, SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
 import { type PaymentConfig } from '../payment/payment-config';
 import { PAID_RESOURCE_SCOPE_ID, PaidResourceIdSchema, paidResource, parsePaidResourceDelivery } from '../resources/paid-resources';
 import { executeApprovedPayment, paymentBinding, paymentEndpointForIntent, recoverApprovedPayment } from './approved-payment';
@@ -77,7 +77,7 @@ export async function requestPaidResourcePurchase(raw: unknown, options: {
   const { endpoint, quote } = await fetchPaidResourceQuote(input.resourceId, options.origin, options.config, options.fetcher);
   const descriptor = paidResource(input.resourceId);
   const now = clock();
-  const authority = options.ledger.spendAuthorityForDecision(principal, MARKET_SNAPSHOT_OPERATION, now);
+  const authority = options.ledger.spendAuthorityForDecision(principal, PAID_RESOURCE_PURCHASE_OPERATION, now);
   const intent = SpendIntentSchema.parse({ id: randomUUID(), idempotencyKey: input.requestId, requestHash,
     resourceId: descriptor.id, resourceScopeId: PAID_RESOURCE_SCOPE_ID, resourcePath: descriptor.path,
     providerId: descriptor.providerId, reason: input.reason, amount: Number(quote.amount), currency: 'USDC', assetDecimals: 6,
