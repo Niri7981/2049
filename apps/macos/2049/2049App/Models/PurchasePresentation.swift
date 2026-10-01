@@ -78,13 +78,16 @@ struct ActivityPurchasePresentation {
     init(_ purchase: AppOverview.Purchase) {
         switch purchase.resourceId ?? purchase.offerId {
         case "market-analysis":
-            title = "SOL Market Analysis"
+            title = "Market Analysis"
             symbol = "chart.bar.xaxis"
         case "market-snapshot", "sol-market-snapshot", "premium-sol-market-snapshot", "basic", "premium":
-            title = "SOL Market Snapshot"
+            title = "Market Snapshot"
             symbol = "chart.line.uptrend.xyaxis"
+        case "token-risk-report":
+            title = "Token Risk Report"
+            symbol = "doc.text"
         default:
-            title = "Resource request"
+            title = purchase.resourceId ?? purchase.offerId ?? "Purchase"
             symbol = "doc.text"
         }
 
@@ -93,6 +96,8 @@ struct ActivityPurchasePresentation {
         switch purchase.status {
         case "PAID" where simulated:
             status = "Simulated"
+        case "PAID" where purchase.executionMode == .unknown:
+            status = "Payment unverified"
         case "PAID" where purchase.deliveryStatus == "COMPLETE":
             status = "Delivered"
         case "PAID":
@@ -127,6 +132,7 @@ struct ActivityPurchasePresentation {
             "No payment made · Simulated"
         } else {
             switch purchase.status {
+            case "PAID" where purchase.executionMode == .unknown: "Unverified"
             case "PAID": "Paid"
             case "PAYING": "In progress"
             case "PAYMENT_UNKNOWN": "Outcome unknown"

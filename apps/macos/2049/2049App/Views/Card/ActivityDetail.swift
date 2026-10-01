@@ -9,126 +9,98 @@ struct ActivityDetail: View {
     let onRefresh: () async -> Void
     let onSelect: (String) -> Void
 
-    private struct DayGroup: Identifiable {
-        let day: Date
-        let purchases: [AppOverview.Purchase]
+    private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
+    private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
 
-        var id: Date { day }
-
-        var title: String {
-            if Calendar.current.isDateInToday(day) { return "Today" }
-            if Calendar.current.isDateInYesterday(day) { return "Yesterday" }
-            return day.formatted(.dateTime.month(.abbreviated).day().year())
-        }
-    }
-
-    private var groups: [DayGroup] {
-        let calendar = Calendar.current
-        let byDay = Dictionary(grouping: purchases) { purchase in
-            calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(purchase.createdAt) / 1_000))
-        }
-        return byDay.keys.sorted(by: >).map { day in
-            DayGroup(day: day, purchases: byDay[day, default: []].sorted { $0.createdAt > $1.createdAt })
-        }
+    private var ledger: ActivityLedgerPresentation {
+        ActivityLedgerPresentation(purchases, agentName: agentName)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Button("Authority", systemImage: "chevron.left", action: onBack)
-                    .buttonStyle(.plain)
-                Spacer()
-                Button("Refresh", systemImage: "arrow.clockwise") { Task { await onRefresh() } }
+            Text("LATEST ACTIVITY")
+                .font(.system(size: 10, weight: .medium))
+                .tracking(2.6)
+                .foregroundStyle(secondaryInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .trailing) {
+                    HStack(spacing: 12) {
+                        Button("Back to Authority", systemImage: "chevron.left", action: onBack)
+                            .help("Back to Authority")
+                        Button("Refresh activity", systemImage: "arrow.clockwise", action: refresh)
+                            .disabled(isRefreshing)
+                            .help("Refresh activity")
+                    }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.plain)
-                    .disabled(isRefreshing)
-            }
-            .padding(.bottom, 22)
+                    .font(.system(size: 12))
+                    .foregroundStyle(secondaryInk)
+                }
 
-            Text("Activity")
-                .font(.title2.weight(.semibold))
-                .padding(.bottom, 16)
+            Text("Agent activity")
+                .font(.system(size: 44, weight: .regular, design: .serif))
+                .tracking(-1.4)
+                .frame(height: 52, alignment: .leading)
+                .padding(.top, 8)
+                .accessibilityAddTraits(.isHeader)
+
+            Text("Purchases, decisions, and outcomes for \(agentName).")
+                .font(.system(size: 13))
+                .foregroundStyle(secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
 
             if isRefreshing {
-                ProgressView("Refreshing activity")
-                    .controlSize(.small)
-                    .padding(.bottom, 10)
+                Text("Refreshing activity…")
+                    .font(.system(size: 11))
+                    .foregroundStyle(secondaryInk)
+                    .accessibilityAddTraits(.updatesFrequently)
+                    .padding(.top, 8)
             }
             if let refreshError {
                 Text(refreshError)
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.red)
-                    .padding(.bottom, 10)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
             }
 
             if purchases.isEmpty {
-                ContentUnavailableView("No activity yet", systemImage: "clock", description: Text("Requests made by this Agent will appear here."))
+                ContentUnavailableView("No activity yet", systemImage: "clock",
+                    description: Text("Requests made by \(agentName) will appear here."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(groups) { group in
-                            Text(group.title)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.secondary)
-                                .padding(.top, 16)
-                                .padding(.bottom, 5)
-
-                            ForEach(group.purchases, id: \.purchaseId) { purchase in
-                                activityRow(purchase)
-                                Divider()
-                                    .padding(.leading, 42)
+                ScrollView(.vertical) {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        ForEach(ledger.days) { day in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(day.title)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(secondaryInk)
+                                    .accessibilityAddTraits(.isHeader)
+                                LazyVStack(spacing: 0) {
+                                    ForEach(day.rows) { row in
+                                        ActivityLedgerRow(row: row, onSelect: onSelect)
+                                        Rectangle().fill(rule).frame(height: 1)
+                                            .accessibilityHidden(true)
+                                    }
+                                }
                             }
                         }
                     }
                     .padding(.bottom, 12)
                 }
+                .scrollIndicators(.automatic)
+                .padding(.top, 22)
             }
         }
         .padding(.horizontal, 26)
-        .padding(.top, 24)
+        .padding(.top, 44)
         .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func activityRow(_ purchase: AppOverview.Purchase) -> some View {
-        let item = ActivityPurchasePresentation(purchase)
-        return Button {
-            onSelect(purchase.purchaseId)
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: item.symbol)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 32, height: 32)
-                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
-                    .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.title)
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(1)
-                    Text(item.status)
-                        .font(.subheadline)
-                        .lineLimit(1)
-                    Text("\(agentName) · \(item.time)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 4)
-
-                Text(item.amount)
-                    .font(.subheadline)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(item.title), \(item.status), requested amount \(item.amount), \(agentName), \(item.timestamp)")
+    private func refresh() {
+        Task { await onRefresh() }
     }
 }
