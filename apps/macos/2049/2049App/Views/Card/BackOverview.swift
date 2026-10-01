@@ -94,7 +94,8 @@ struct BackOverview: View {
                     )
                 case .connection:
                     AgentConnectionDetail(
-                        connection: overview.connection,
+                        presentation: ConnectionPresentation(connection: overview.connection,
+                            service: overview.service, agentName: agentName),
                         isSaving: writeState.isSaving || isRefreshing,
                         writeMessage: writeState.message,
                         writeFailed: writeState.isFailure,
