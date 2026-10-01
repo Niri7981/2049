@@ -46,6 +46,7 @@
 		A00000000000000000000064 /* ConnectionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000063 /* ConnectionPresentation.swift */; };
 		A00000000000000000000066 /* ActivityLedgerPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000065 /* ActivityLedgerPresentation.swift */; };
 		A00000000000000000000068 /* ActivityLedgerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000067 /* ActivityLedgerRow.swift */; };
+		A0000000000000000000006A /* PurchaseDetailPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000069 /* PurchaseDetailPresentation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -89,6 +90,7 @@
 		A00000000000000000000063 /* ConnectionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionPresentation.swift; sourceTree = "<group>"; };
 		A00000000000000000000065 /* ActivityLedgerPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityLedgerPresentation.swift; sourceTree = "<group>"; };
 		A00000000000000000000067 /* ActivityLedgerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityLedgerRow.swift; sourceTree = "<group>"; };
+		A00000000000000000000069 /* PurchaseDetailPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchaseDetailPresentation.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -156,6 +158,7 @@
 				A0000000000000000000005D /* CardSettingsPresentation.swift */,
 				A00000000000000000000063 /* ConnectionPresentation.swift */,
 				A00000000000000000000065 /* ActivityLedgerPresentation.swift */,
+				A00000000000000000000069 /* PurchaseDetailPresentation.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -299,6 +302,7 @@
 				A00000000000000000000054 /* ActivityDetail.swift in Sources */,
 				A00000000000000000000066 /* ActivityLedgerPresentation.swift in Sources */,
 				A00000000000000000000068 /* ActivityLedgerRow.swift in Sources */,
+				A0000000000000000000006A /* PurchaseDetailPresentation.swift in Sources */,
 				A00000000000000000000056 /* PurchaseDetail.swift in Sources */,
 				A00000000000000000000058 /* CardMemberSession.swift in Sources */,
 				A0000000000000000000005A /* MembersView.swift in Sources */,
