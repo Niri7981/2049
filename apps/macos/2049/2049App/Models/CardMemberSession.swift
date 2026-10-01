@@ -8,6 +8,8 @@ final class CardMemberSession {
     private(set) var selectedMemberID: UUID?
     private(set) var loadError: String?
     private(set) var isLoading = false
+    private(set) var connectingMemberID: UUID?
+    private(set) var connectionError: String?
 
     private let client: OverviewClient
     private var loadRevision = 0
@@ -55,6 +57,24 @@ final class CardMemberSession {
         members.append(CardMemberSummary(snapshot: snapshot))
         reconcileSelection()
         await refresh()
+    }
+
+    /// Enables only the requested member's access; it does not certify a live host connection.
+    func connect(_ id: UUID) async {
+        guard connectingMemberID == nil, !isLoading,
+              let member = activeMembers.first(where: { $0.member.id == id }),
+              !member.connection.enabled else { return }
+        connectingMemberID = id
+        connectionError = nil
+        defer { connectingMemberID = nil }
+        do {
+            try await client.setMemberConnection(id, enabled: true)
+            // Read the backend's resulting state; a 200 write response alone is not the roster snapshot.
+            await refresh()
+        } catch {
+            let explanation = (error as? OverviewLoadError)?.message ?? "Connection access could not be enabled"
+            connectionError = "\(member.member.label): \(explanation)"
+        }
     }
 
     func rename(_ id: UUID, label: String) async throws {

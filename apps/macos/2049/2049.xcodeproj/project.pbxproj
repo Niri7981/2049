@@ -47,6 +47,9 @@
 		A00000000000000000000066 /* ActivityLedgerPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000065 /* ActivityLedgerPresentation.swift */; };
 		A00000000000000000000068 /* ActivityLedgerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000067 /* ActivityLedgerRow.swift */; };
 		A0000000000000000000006A /* PurchaseDetailPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000069 /* PurchaseDetailPresentation.swift */; };
+		A0000000000000000000006C /* MembersRosterPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000006B /* MembersRosterPresentation.swift */; };
+		A0000000000000000000006E /* MembersRosterRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000006D /* MembersRosterRow.swift */; };
+		A00000000000000000000070 /* MembersRoster.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000006F /* MembersRoster.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -91,6 +94,9 @@
 		A00000000000000000000065 /* ActivityLedgerPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityLedgerPresentation.swift; sourceTree = "<group>"; };
 		A00000000000000000000067 /* ActivityLedgerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityLedgerRow.swift; sourceTree = "<group>"; };
 		A00000000000000000000069 /* PurchaseDetailPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchaseDetailPresentation.swift; sourceTree = "<group>"; };
+		A0000000000000000000006B /* MembersRosterPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembersRosterPresentation.swift; sourceTree = "<group>"; };
+		A0000000000000000000006D /* MembersRosterRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembersRosterRow.swift; sourceTree = "<group>"; };
+		A0000000000000000000006F /* MembersRoster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembersRoster.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -159,6 +165,7 @@
 				A00000000000000000000063 /* ConnectionPresentation.swift */,
 				A00000000000000000000065 /* ActivityLedgerPresentation.swift */,
 				A00000000000000000000069 /* PurchaseDetailPresentation.swift */,
+				A0000000000000000000006B /* MembersRosterPresentation.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -197,6 +204,8 @@
 				A00000000000000000000067 /* ActivityLedgerRow.swift */,
 				A00000000000000000000055 /* PurchaseDetail.swift */,
 				A00000000000000000000059 /* MembersView.swift */,
+				A0000000000000000000006F /* MembersRoster.swift */,
+				A0000000000000000000006D /* MembersRosterRow.swift */,
 				A00000000000000000000030 /* BackControls.swift */,
 				A00000000000000000000032 /* BackLatestPurchase.swift */,
 				A00000000000000000000034 /* BackNavigation.swift */,
@@ -306,6 +315,9 @@
 				A00000000000000000000056 /* PurchaseDetail.swift in Sources */,
 				A00000000000000000000058 /* CardMemberSession.swift in Sources */,
 				A0000000000000000000005A /* MembersView.swift in Sources */,
+				A00000000000000000000070 /* MembersRoster.swift in Sources */,
+				A0000000000000000000006E /* MembersRosterRow.swift in Sources */,
+				A0000000000000000000006C /* MembersRosterPresentation.swift in Sources */,
 				A0000000000000000000005C /* CardMemberSelection.swift in Sources */,
 				A0000000000000000000005E /* CardSettingsPresentation.swift in Sources */,
 				A00000000000000000000060 /* CardSettingsView.swift in Sources */,

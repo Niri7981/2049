@@ -44,91 +44,33 @@ struct MembersView: View {
     }
 
     private var listContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Members").font(.title2)
-                Spacer()
-                Button("Add agent", systemImage: "plus") {
-                    nameInput = ""
-                    message = nil
-                    editor = .create
-                }
-                .labelStyle(.iconOnly)
-                .disabled(isSaving)
-            }
-            Text("Agents share one daily budget.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            if session.isLoading && session.members.isEmpty {
-                ProgressView("Loading agents").controlSize(.small)
-            } else if session.members.isEmpty {
-                ContentUnavailableView(session.loadError == nil ? "No agents" : "Agents unavailable", systemImage: "person.2",
-                    description: Text(session.loadError == nil ? "Add an agent to use this card." : "Retry loading the agent list."))
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(session.members, id: \.member.id) { entry in
-                            if entry.member.status == .active {
-                                Button {
-                                    session.select(entry.member.id)
-                                    showingDetail = true
-                                    message = nil
-                                } label: {
-                                    memberRow(entry)
-                                }
-                                .buttonStyle(.plain)
-                            } else {
-                                memberRow(entry)
-                                    .opacity(0.55)
-                            }
-                            Divider()
-                        }
-                    }
-                }
-            }
-
-            if let error = session.loadError {
-                HStack {
-                    Text(error).foregroundStyle(.red)
-                    Button("Retry") { Task { await session.refresh(retry: true) } }
-                        .buttonStyle(.link)
-                }
-                .font(.subheadline)
-            } else if let message {
-                Text(message).font(.subheadline).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-        }
+        MembersRoster(
+            presentation: MembersRosterPresentation(session.members, connectingMemberID: session.connectingMemberID),
+            selectedMemberID: session.selectedMemberID,
+            isLoading: session.isLoading,
+            interactionsDisabled: isSaving || session.isLoading || session.connectingMemberID != nil,
+            error: session.loadError ?? session.connectionError,
+            onSelect: selectMember,
+            onConnect: { id in Task { await session.connect(id) } },
+            onAdd: {
+                nameInput = ""
+                message = nil
+                editor = .create
+            },
+            onRetry: session.loadError == nil ? nil : { retryMembers() }
+        )
+        .padding(.top, 20)
     }
 
-    private func memberRow(_ entry: CardMemberSummary) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(entry.member.label)
-                    .font(.body.weight(entry.member.id == session.selectedMemberID ? .semibold : .regular))
-                    .lineLimit(1)
-                Text(entry.member.status == .revoked
-                     ? "Revoked"
-                     : "\(entry.connection.enabled ? "Connected" : "Not connected") · \(entry.grant?.status == .active ? "Grant active" : "No active grant")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if entry.member.id == session.selectedMemberID {
-                Image(systemName: "checkmark")
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Current agent")
-            }
-            if entry.member.status == .active {
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
-            }
-        }
-        .frame(minHeight: 60)
-        .contentShape(Rectangle())
+    private func selectMember(_ id: UUID) {
+        guard session.activeMembers.contains(where: { $0.member.id == id }) else { return }
+        session.select(id)
+        showingDetail = true
+        message = nil
+    }
+
+    private func retryMembers() {
+        Task { await session.refresh(retry: true) }
     }
 
     private func detailContent(_ member: CardMemberSnapshot.Member) -> some View {
