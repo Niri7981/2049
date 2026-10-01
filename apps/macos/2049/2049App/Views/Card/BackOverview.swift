@@ -4,7 +4,7 @@ struct BackOverview: View {
     let overviewClient: OverviewClient
     let memberID: UUID
     let agentName: String
-    let isActive: Bool
+    let section: BackSection
     let onMemberChanged: () async -> Void
 
     @State private var state: LoadState = .loading
@@ -65,9 +65,19 @@ struct BackOverview: View {
         overview.map { AuthorityOverviewPresentation($0) }
     }
 
+    private var isActive: Bool {
+        section == .connection || section == .authority
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
-            if let overview, let selectedDetail {
+            if section == .connection {
+                if let overview {
+                    connectionPage(overview, onBack: nil)
+                } else {
+                    connectionLoadStatus
+                }
+            } else if let overview, let selectedDetail {
                 switch selectedDetail {
                 case .daily:
                     AuthoritySettingsDetail(
@@ -93,15 +103,7 @@ struct BackOverview: View {
                         onRevoke: { await write(.revokeGrant) }
                     )
                 case .connection:
-                    AgentConnectionDetail(
-                        presentation: ConnectionPresentation(connection: overview.connection,
-                            service: overview.service, agentName: agentName),
-                        isSaving: writeState.isSaving || isRefreshing,
-                        writeMessage: writeState.message,
-                        writeFailed: writeState.isFailure,
-                        onBack: { self.selectedDetail = nil },
-                        onSetEnabled: { enabled in await write(.connection(enabled)) }
-                    )
+                    connectionPage(overview, onBack: { self.selectedDetail = nil })
                 case .activity:
                     ActivityDetail(
                         purchases: overview.purchases,
@@ -132,11 +134,10 @@ struct BackOverview: View {
             }
         }
         .task { if isActive { await reload() } }
-        .onChange(of: isActive) { _, active in
-            if active {
+        .onChange(of: section) { _, _ in
+            selectedDetail = nil
+            if isActive {
                 Task { await reload(preservingContent: true) }
-            } else {
-                selectedDetail = nil
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
@@ -146,6 +147,44 @@ struct BackOverview: View {
             activityRefreshError = nil
             state = .failed(.serviceExited)
         }
+    }
+
+    private func connectionPage(_ overview: AppOverview, onBack: (() -> Void)?) -> AgentConnectionDetail {
+        AgentConnectionDetail(
+            presentation: ConnectionPresentation(connection: overview.connection,
+                service: overview.service, agentName: agentName),
+            isSaving: writeState.isSaving || isRefreshing,
+            writeMessage: writeState.message,
+            writeFailed: writeState.isFailure,
+            onBack: onBack,
+            onSetEnabled: { enabled in await write(.connection(enabled)) }
+        )
+    }
+
+    private var connectionLoadStatus: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("CONNECTION")
+                .font(.system(size: 10, weight: .medium))
+                .tracking(2.6)
+                .foregroundStyle(.secondary)
+            Text("Connection")
+                .font(.system(size: 56, weight: .regular, design: .serif))
+                .accessibilityAddTraits(.isHeader)
+            if case .failed(let error) = state {
+                Text(error.message)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("Retry") { Task { await reload(retry: true) } }
+                    .buttonStyle(.link)
+            } else {
+                Text("Loading connection…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 26)
+        .padding(.top, 44)
     }
 
     private var overviewContent: some View {

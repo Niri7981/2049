@@ -7,7 +7,7 @@ struct AgentCardBack: View {
 
     @State private var selectedSection: BackSection
 
-    init(onFlip: @escaping () -> Void, overviewClient: OverviewClient, memberSession: CardMemberSession, initialSection: BackSection = .authority) {
+    init(onFlip: @escaping () -> Void, overviewClient: OverviewClient, memberSession: CardMemberSession, initialSection: BackSection = .connection) {
         self.onFlip = onFlip
         self.overviewClient = overviewClient
         self.memberSession = memberSession
@@ -29,27 +29,32 @@ struct AgentCardBack: View {
             .padding(.top, 22)
 
             ZStack {
-                // Keep the selected Authority view alive across tab changes so its last
-                // confirmed snapshot is available immediately when returning from Members.
+                // Connection and Authority share the same selected-member snapshot and
+                // management writes. Keep it alive while visiting Members or Settings.
                 if let memberID = memberSession.selectedMemberID {
                     BackOverview(
                         overviewClient: overviewClient,
                         memberID: memberID,
                         agentName: memberSession.selectedMember?.label ?? "Agent",
-                        isActive: selectedSection == .authority,
+                        section: selectedSection,
                         onMemberChanged: { await memberSession.refresh() }
                     )
                     .id(memberID)
-                    .opacity(selectedSection == .authority ? 1 : 0)
-                    .allowsHitTesting(selectedSection == .authority)
-                    .accessibilityHidden(selectedSection != .authority)
-                } else if selectedSection == .authority {
-                    ContentUnavailableView(memberSession.loadError == nil ? "No active agent" : "Agents unavailable", systemImage: "person.crop.circle.badge.questionmark",
-                        description: Text(memberSession.loadError ?? "Add an agent in Members to continue."))
+                    .opacity(showsOverview ? 1 : 0)
+                    .allowsHitTesting(showsOverview)
+                    .accessibilityHidden(!showsOverview)
+                } else if showsOverview {
+                    ContentUnavailableView(
+                        selectedSection == .connection
+                            ? (memberSession.isLoading ? "Loading connection" : "Connection unavailable")
+                            : (memberSession.loadError == nil ? "No active agent" : "Agents unavailable"),
+                        systemImage: "person.crop.circle.badge.questionmark",
+                        description: Text(memberSession.loadError
+                            ?? (memberSession.isLoading ? "Waiting for the local service." : "Add an agent in Members to continue.")))
                 }
 
                 switch selectedSection {
-                case .authority:
+                case .connection, .authority:
                     EmptyView()
                 case .members:
                     MembersView(session: memberSession)
@@ -67,10 +72,20 @@ struct AgentCardBack: View {
         .foregroundStyle(Color(nsColor: .labelColor))
         .accessibilityElement(children: .contain)
     }
+
+    private var showsOverview: Bool {
+        selectedSection == .connection || selectedSection == .authority
+    }
+}
+
+#Preview("Back · Connection") {
+    AgentCardBack(onFlip: {}, overviewClient: OverviewClient(runtime: NativeServiceRuntime(allowsLaunch: false)), memberSession: CardMemberSession(client: OverviewClient(runtime: NativeServiceRuntime(allowsLaunch: false))))
+        .background(CardMaterial())
+        .environment(\.colorScheme, .light)
 }
 
 #Preview("Back · Authority") {
-    AgentCardBack(onFlip: {}, overviewClient: OverviewClient(runtime: NativeServiceRuntime(allowsLaunch: false)), memberSession: CardMemberSession(client: OverviewClient(runtime: NativeServiceRuntime(allowsLaunch: false))))
+    AgentCardBack(onFlip: {}, overviewClient: OverviewClient(runtime: NativeServiceRuntime(allowsLaunch: false)), memberSession: CardMemberSession(client: OverviewClient(runtime: NativeServiceRuntime(allowsLaunch: false))), initialSection: .authority)
         .background(CardMaterial())
         .environment(\.colorScheme, .light)
 }

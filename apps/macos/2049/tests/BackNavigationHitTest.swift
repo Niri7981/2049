@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 private final class SelectionBox {
-    var value: BackSection = .authority
+    var value: BackSection = .connection
 }
 
 /// Compile with BackSection.swift and BackNavigation.swift to test the real SwiftUI hit regions.
@@ -16,8 +16,9 @@ struct BackNavigationHitTest {
 
         let selection = SelectionBox()
         let binding = Binding(get: { selection.value }, set: { selection.value = $0 })
-        let host = NSHostingView(rootView: BackNavigation(selection: binding).frame(width: 420, height: 76))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 76),
+        // The 420 pt card reserves 20 pt on each side of the existing navigation.
+        let host = NSHostingView(rootView: BackNavigation(selection: binding).frame(width: 380, height: 76))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 76),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = host
         window.isMovableByWindowBackground = true
@@ -26,13 +27,15 @@ struct BackNavigationHitTest {
 
         // These points are inside each tab's visible area but away from its text and icon.
         let cases: [(source: BackSection, destination: BackSection, point: NSPoint)] = [
-            (.authority, .members, NSPoint(x: 160, y: 38)),
-            (.members, .settings, NSPoint(x: 300, y: 38)),
-            (.settings, .authority, NSPoint(x: 25, y: 38)),
+            (.authority, .connection, NSPoint(x: 25, y: 38)),
+            (.connection, .authority, NSPoint(x: 130, y: 38)),
+            (.authority, .members, NSPoint(x: 235, y: 38)),
+            (.members, .settings, NSPoint(x: 345, y: 38)),
+            (.settings, .connection, NSPoint(x: 25, y: 38)),
         ]
         for test in cases {
             selection.value = test.source
-            host.rootView = BackNavigation(selection: binding).frame(width: 420, height: 76)
+            host.rootView = BackNavigation(selection: binding).frame(width: 380, height: 76)
             host.layoutSubtreeIfNeeded()
             for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                 let event = NSEvent.mouseEvent(with: type, location: test.point,
