@@ -1,7 +1,9 @@
 import Foundation
 
 // The isolated CLI test compiles the transport without starting the app service.
-enum ServiceRuntimeError: Error { case unavailable }
+enum ServiceRuntimeError: Error {
+    case unavailable, configuration, requestTimedOut, responseTooLarge, authenticationFailed
+}
 
 private let defaultID = "00000000-0000-4000-8000-000000000001"
 private let researchID = "00000000-0000-4000-8000-000000000002"
@@ -88,13 +90,29 @@ check(selectedBuyer.grant == nil && !selectedBuyer.connection.enabled && selecte
 
 let settings = CardSettingsPresentation(shared)
 check(settings.serviceStatus == "Running", "Settings reads backend service status")
-check(settings.executionMode == "Simulated" && settings.network == "Solana Devnet", "Settings reads backend mode and network")
 check(settings.walletAddress == "PublicWalletAddress", "Settings reads the public wallet address")
+check(settings.shortWalletAddress == "PublicWa…ress", "Settings shortens the public address without changing the copy value")
+check(settings.dataDirectory == nil, "Settings does not invent a storage path")
 var livePayload = overviewPayload
 livePayload["service"] = ["status": "stopping", "recoveryStatus": "pending", "testEnvironment": true,
                           "purchaseMode": "live_devnet", "network": "Solana Devnet"]
 let liveSettings = CardSettingsPresentation(try decode(AppOverview.self, livePayload))
-check(liveSettings.serviceStatus == "Stopping" && liveSettings.executionMode == "Live · Devnet", "Settings reflects changed runtime state")
+check(liveSettings.serviceStatus == "Stopping", "Settings reflects changed service state")
+
+let health: [String: Any] = ["ready": true, "service": "2049", "pid": 123,
+    "dataDirectory": "/tmp/2049-settings-fixture/resolved"]
+let healthData = try JSONSerialization.data(withJSONObject: health)
+let directory = CardSettingsPresentation.dataDirectory(from: healthData)
+check(directory?.path == "/tmp/2049-settings-fixture/resolved", "Settings uses the backend-resolved storage path")
+for change: [String: Any] in [["ready": false], ["service": "other"], ["dataDirectory": "relative/path"],
+                              ["dataDirectory": NSNull()], ["dataDirectory": "/tmp/a\u{0}b"]] {
+    let invalid = health.merging(change) { _, new in new }
+    let invalidData = try JSONSerialization.data(withJSONObject: invalid)
+    check(CardSettingsPresentation.dataDirectory(from: invalidData) == nil,
+        "Invalid health metadata cannot enable Open data folder")
+}
+check(CardSettingsPresentation.dataDirectory(from: Data(repeating: 32, count: 4097)) == nil, "Oversized health response is rejected")
+check(CardSettingsPresentation.repositoryURL.absoluteString == "https://github.com/Niri7981/2049", "Settings links to the actual project")
 
 let memberUUID = id(researchID)
 let memberPath = "/api/app/members/\(researchID.lowercased())"

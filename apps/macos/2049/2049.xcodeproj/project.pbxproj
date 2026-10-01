@@ -50,6 +50,9 @@
 		A0000000000000000000006C /* MembersRosterPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000006B /* MembersRosterPresentation.swift */; };
 		A0000000000000000000006E /* MembersRosterRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000006D /* MembersRosterRow.swift */; };
 		A00000000000000000000070 /* MembersRoster.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000006F /* MembersRoster.swift */; };
+		A00000000000000000000072 /* CardSettingsBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000071 /* CardSettingsBody.swift */; };
+		A00000000000000000000074 /* SettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000073 /* SettingsSection.swift */; };
+		A00000000000000000000076 /* SettingsRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000075 /* SettingsRow.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -97,6 +100,9 @@
 		A0000000000000000000006B /* MembersRosterPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembersRosterPresentation.swift; sourceTree = "<group>"; };
 		A0000000000000000000006D /* MembersRosterRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembersRosterRow.swift; sourceTree = "<group>"; };
 		A0000000000000000000006F /* MembersRoster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MembersRoster.swift; sourceTree = "<group>"; };
+		A00000000000000000000071 /* CardSettingsBody.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardSettingsBody.swift; sourceTree = "<group>"; };
+		A00000000000000000000073 /* SettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSection.swift; sourceTree = "<group>"; };
+		A00000000000000000000075 /* SettingsRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRow.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -210,6 +216,9 @@
 				A00000000000000000000032 /* BackLatestPurchase.swift */,
 				A00000000000000000000034 /* BackNavigation.swift */,
 				A0000000000000000000005F /* CardSettingsView.swift */,
+				A00000000000000000000071 /* CardSettingsBody.swift */,
+				A00000000000000000000073 /* SettingsSection.swift */,
+				A00000000000000000000075 /* SettingsRow.swift */,
 				A00000000000000000000038 /* AgentsMenu.swift */,
 				A0000000000000000000003A /* BackFlipButton.swift */,
 			);
@@ -321,6 +330,9 @@
 				A0000000000000000000005C /* CardMemberSelection.swift in Sources */,
 				A0000000000000000000005E /* CardSettingsPresentation.swift in Sources */,
 				A00000000000000000000060 /* CardSettingsView.swift in Sources */,
+				A00000000000000000000072 /* CardSettingsBody.swift in Sources */,
+				A00000000000000000000074 /* SettingsSection.swift in Sources */,
+				A00000000000000000000076 /* SettingsRow.swift in Sources */,
 				A00000000000000000000031 /* BackControls.swift in Sources */,
 				A00000000000000000000033 /* BackLatestPurchase.swift in Sources */,
 				A00000000000000000000035 /* BackNavigation.swift in Sources */,
