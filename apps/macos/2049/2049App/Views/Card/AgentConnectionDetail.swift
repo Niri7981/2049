@@ -80,6 +80,9 @@ struct AgentConnectionDetail: View {
             }
             .buttonStyle(.plain)
             .disabled(isSaving)
+            .popover(isPresented: $showingRevokeConfirmation, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                disconnectConfirmation
+            }
             .accessibilityHint(presentation.canDisconnect
                 ? "Revokes connection access and the active Spend Grant after confirmation."
                 : "Enables connection access. Reconnect the external MCP host to use it.")
@@ -98,11 +101,35 @@ struct AgentConnectionDetail: View {
         .padding(.top, onBack == nil ? 44 : 18)
         .padding(.bottom, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .confirmationDialog("Disconnect this Agent?", isPresented: $showingRevokeConfirmation) {
-            Button("Disconnect", role: .destructive) { Task { await onSetEnabled(false) } }
-        } message: {
+    }
+
+    private var disconnectConfirmation: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Disconnect this Agent?")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
             Text("This also revokes the active Spend Grant. The external MCP session will need to reconnect.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button("Cancel") { showingRevokeConfirmation = false }
+                    .keyboardShortcut(.cancelAction)
+                Button("Disconnect", role: .destructive, action: confirmDisconnect)
+                    .disabled(isSaving || !presentation.canDisconnect)
+            }
+            .buttonStyle(.bordered)
+            .padding(.top, 4)
         }
+        .frame(width: 264, alignment: .leading)
+        .padding(18)
+    }
+
+    private func confirmDisconnect() {
+        showingRevokeConfirmation = false
+        guard !isSaving, presentation.canDisconnect else { return }
+        Task { await onSetEnabled(false) }
     }
 
     private var connectionBridge: some View {
