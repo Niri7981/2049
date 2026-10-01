@@ -15,7 +15,12 @@ struct BackOverview: View {
     @State private var isRefreshing = false
 
     private enum Detail {
-        case daily, grant, connection, activity, purchase(String)
+        case daily, grant, connection, activity
+        case purchase(String, from: PurchaseOrigin)
+    }
+
+    private enum PurchaseOrigin: Equatable {
+        case authority, activity
     }
 
     private enum LoadState {
@@ -112,11 +117,13 @@ struct BackOverview: View {
                         refreshError: activityRefreshError,
                         onBack: { self.selectedDetail = nil },
                         onRefresh: { await refreshActivity() },
-                        onSelect: { self.selectedDetail = .purchase($0) }
+                        onSelect: { self.selectedDetail = .purchase($0, from: .activity) }
                     )
-                case .purchase(let id):
+                case .purchase(let id, let origin):
                     if let purchase = overview.purchases.first(where: { $0.purchaseId == id }) {
-                        PurchaseDetail(purchase: purchase, agentName: agentName, onBack: { self.selectedDetail = .activity })
+                        PurchaseDetail(purchase: purchase, agentName: agentName,
+                            backTitle: origin == .activity ? "Activity" : "Authority",
+                            onBack: { self.selectedDetail = origin == .activity ? .activity : nil })
                     } else {
                         ActivityDetail(
                             purchases: overview.purchases,
@@ -125,7 +132,7 @@ struct BackOverview: View {
                             refreshError: activityRefreshError,
                             onBack: { self.selectedDetail = nil },
                             onRefresh: { await refreshActivity() },
-                            onSelect: { self.selectedDetail = .purchase($0) }
+                            onSelect: { self.selectedDetail = .purchase($0, from: .activity) }
                         )
                     }
                 }
@@ -205,16 +212,15 @@ struct BackOverview: View {
             .padding(.top, 9)
 
             BackLatestPurchase(
-                title: presentation?.latest?.title ?? (presentation == nil ? "—" : "No activity yet"),
-                detail: presentation?.latest?.detail ?? "",
-                amount: presentation?.latest?.amount ?? "—",
-                connectionEnabled: overview?.connection.enabled,
-                onConnection: { open(.connection) },
+                latest: presentation?.latest,
+                agentName: agentName,
+                isLoading: presentation == nil,
                 activityAvailable: overview != nil && !writeState.isSaving && !isRefreshing,
                 onActivity: {
                     open(.activity)
                     Task { await refreshActivity() }
-                }
+                },
+                onPurchase: { id in open(.purchase(id, from: .authority)) }
             )
             .padding(.top, 16)
 

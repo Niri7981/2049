@@ -13,9 +13,20 @@ struct AuthorityOverviewPresentation {
     let latest: Latest?
 
     struct Latest {
+        let purchaseId: String
         let title: String
-        let detail: String
+        let purpose: String?
+        let symbol: String
+        let payment: String
+        let recency: String
         let amount: String
+        let decision: String
+        let decisionTone: DecisionTone
+        let paymentConfirmed: Bool
+
+        enum DecisionTone {
+            case approved, denied, neutral
+        }
     }
 
     init(_ overview: AppOverview, now: Date = .now) {
@@ -49,7 +60,47 @@ struct AuthorityOverviewPresentation {
             let formatted = PurchasePresentation(purchase)
             let date = Date(timeIntervalSince1970: TimeInterval(purchase.createdAt) / 1_000)
             let elapsed = RelativeDateTimeFormatter().localizedString(for: date, relativeTo: now)
-            latest = Latest(title: formatted.title, detail: "\(formatted.status) · \(elapsed)", amount: formatted.amount)
+            let title: String
+            let symbol: String
+            switch purchase.resourceId ?? purchase.offerId {
+            case "market-analysis":
+                title = "Market Analysis"
+                symbol = "chart.bar.xaxis"
+            case "market-snapshot", "sol-market-snapshot", "premium-sol-market-snapshot", "basic", "premium":
+                title = "Market Snapshot"
+                symbol = "chart.line.uptrend.xyaxis"
+            case "token-risk-report":
+                title = "Token Risk Report"
+                symbol = "doc.text"
+            default:
+                title = purchase.resourceId ?? formatted.title
+                symbol = "doc.text"
+            }
+
+            let payment = switch purchase.status {
+            case "APPROVED", "DENIED": "Not paid"
+            case "REQUIRES_APPROVAL": "Awaiting approval"
+            default: formatted.status
+            }
+            let decision = switch purchase.status {
+            case "APPROVED", "PAYING", "PAYMENT_UNKNOWN", "PAID", "FAILED", "EXPIRED": "APPROVED"
+            case "DENIED": "DENIED"
+            case "REQUIRES_APPROVAL": "NEEDS APPROVAL"
+            default: "UNAVAILABLE"
+            }
+            // Policy approval survives payment failure, but unresolved and simulated
+            // payments must never inherit a paid/success appearance.
+            let paymentConfirmed = purchase.status == "PAID" && purchase.executionMode == .liveDevnet
+            let tone: Latest.DecisionTone = switch purchase.status {
+            case "DENIED": .denied
+            case "APPROVED": .approved
+            case "PAID" where paymentConfirmed: .approved
+            default: .neutral
+            }
+            let purpose = purchase.reason?.trimmingCharacters(in: .whitespacesAndNewlines)
+            latest = Latest(purchaseId: purchase.purchaseId, title: title, purpose: purpose?.isEmpty == false ? purpose : nil,
+                symbol: symbol, payment: payment, recency: elapsed, amount: formatted.amount,
+                decision: decision, decisionTone: tone, paymentConfirmed: paymentConfirmed)
         } else {
             latest = nil
         }

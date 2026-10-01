@@ -3,6 +3,7 @@ import SwiftUI
 struct PurchaseDetail: View {
     let purchase: AppOverview.Purchase
     let agentName: String
+    let backTitle: String
     let onBack: () -> Void
 
     private var item: ActivityPurchasePresentation { ActivityPurchasePresentation(purchase) }
@@ -10,7 +11,7 @@ struct PurchaseDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Button("Activity", systemImage: "chevron.left", action: onBack)
+                Button(backTitle, systemImage: "chevron.left", action: onBack)
                     .buttonStyle(.plain)
 
                 VStack(alignment: .leading, spacing: 5) {
