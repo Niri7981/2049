@@ -7,6 +7,9 @@ import { paymentEndpointForIntent, recoverApprovedPayment } from '../purchases/a
 import { purchaseMarketSnapshot } from '../purchases/purchase-market-snapshot';
 import { hash } from '../purchases/spending-policy';
 import { AgentConnection } from '../mcp/connection';
+import { CodexIntegration, type CodexIntegrationOptions } from '../mcp/codex-integration';
+import { type McpSessionEvent } from '../mcp/session';
+import { ManagementApiError } from './management-auth';
 import { PAID_RESOURCE_PURCHASE_OPERATION, SpendGrantInputSchema, type SpendPrincipal } from '../authority/spend-grant';
 import { DEMO_MARKET_DATA_PROVIDER_ID } from '../resources/static-resource-registry';
 import { PAID_RESOURCE_SCOPE_ID } from '../resources/paid-resources';
@@ -37,6 +40,8 @@ export class AppRuntime {
   readonly ledger: PurchaseLedger;
   readonly agentConnection: AgentConnection;
   private readonly memberConnections = new Map<string, AgentConnection>();
+  private readonly codexIntegration: CodexIntegration;
+  private providerWrite: Promise<unknown> = Promise.resolve();
   private readonly owner: ReturnType<typeof acquireDataDirectoryOwnership>;
   private accepting = true;
   private active = new Set<Promise<unknown>>();
@@ -44,7 +49,7 @@ export class AppRuntime {
   private recoveryStatus: 'idle' | 'running' | 'complete' | 'pending' = 'idle';
   private wallet?: Promise<{ address: string; reused: boolean }>;
   private walletAddress?: string;
-  constructor(readonly directory = dataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number; fetcher?: typeof fetch } = {}) {
+  constructor(readonly directory = dataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number; fetcher?: typeof fetch; codex?: CodexIntegrationOptions } = {}) {
     this.owner = acquireDataDirectoryOwnership(directory);
     let ledger: PurchaseLedger | undefined;
     try {
@@ -52,9 +57,11 @@ export class AppRuntime {
       this.ledger = ledger;
       const defaultMemberId = this.ledger.defaultCardMember().id;
       for (const member of this.ledger.cardMembers()) {
-        this.memberConnections.set(member.id, new AgentConnection(directory, member.id, id => this.ledger.isCardMemberActive(id), member.id !== defaultMemberId));
+        this.memberConnections.set(member.id, new AgentConnection(directory, member.id, id => this.ledger.isCardMemberActive(id), member.id !== defaultMemberId, dependencies.now));
       }
       this.agentConnection = this.memberConnections.get(defaultMemberId)!;
+      this.codexIntegration = new CodexIntegration(directory, defaultMemberId, dependencies.codex);
+      this.agentConnection.setIntegration(this.codexIntegration.configured, this.codexIntegration.serverName);
       // Connection tokens intentionally do not survive a backend restart. The
       // stable CardMember keeps ownership, but the previous spend delegation is revoked.
       this.ledger.revokeActiveSpendGrant(dependencies.now?.() ?? Date.now(), 'grant.REVOKED_BACKEND_RESTART');
@@ -67,6 +74,7 @@ export class AppRuntime {
   close() {
     if (this.active.size) throw new Error('Cannot close the backend while operations are active');
     this.accepting = false;
+    for (const connection of this.memberConnections.values()) connection.setEnabled(false, '');
     this.ledger.close();
     this.owner.release();
   }
@@ -176,11 +184,39 @@ export class AppRuntime {
   }
   setPaused(value: boolean) { return this.ledger.setPaused(value); }
   setAgentConnection(enabled: boolean, origin: string, memberId = this.ledger.defaultCardMember().id) {
+    if (!this.accepting) throw new Error('SERVICE_STOPPING');
     this.ledger.assertCardMemberActive(memberId);
     this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED_CONNECTION_CHANGED', memberId);
     const connection = this.connectionFor(memberId);
     connection.setEnabled(enabled, origin);
     return connection.status();
+  }
+  /** Default member is the existing Codex identity; labels never select providers. */
+  setMemberConnection(enabled: boolean, origin: string, memberId: string) {
+    if (memberId !== this.ledger.defaultCardMember().id) return Promise.resolve(this.setAgentConnection(enabled, origin, memberId));
+    const operation = this.providerWrite.catch(() => {}).then(async () => {
+      if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, '2049 正在退出。');
+      this.ledger.assertCardMemberActive(memberId);
+      if (enabled) {
+        await this.codexIntegration.connect();
+        this.agentConnection.setIntegration(true, this.codexIntegration.serverName);
+        // Quit may begin while Codex writes its configuration. Never re-enable after that boundary.
+        if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, '2049 正在退出。');
+        if (!this.agentConnection.status().enabled) this.setAgentConnection(true, origin, memberId);
+      } else {
+        // Revoke first even if configuration removal subsequently fails or conflicts.
+        this.setAgentConnection(false, origin, memberId);
+        await this.codexIntegration.disconnect();
+        this.agentConnection.setIntegration(false, this.codexIntegration.serverName);
+      }
+      return this.agentConnection.status();
+    });
+    this.providerWrite = operation;
+    return this.track(operation);
+  }
+  observeMcpSession(request: Request, event: McpSessionEvent) {
+    const principal = this.authenticateAgent(request);
+    this.connectionFor(principal.cardMemberId).observeSession(event);
   }
   createSpendGrant(raw: unknown, memberId = this.ledger.defaultCardMember().id) {
     const input = SpendGrantInputSchema.parse(raw);

@@ -83,6 +83,22 @@ struct AppOverview: Decodable {
         let enabled: Bool
         let lastSeen: Int64?
         let access: Access
+        var integration: Integration? = nil
+
+        var hasLiveMCPSession: Bool {
+            enabled && integration?.configured == true && integration?.connected == true
+                && integration?.state == "connected" && integration?.lastHandshake != nil
+                && integration?.lastHeartbeat != nil
+        }
+
+        struct Integration: Decodable {
+            let provider: String
+            let configured: Bool
+            let connected: Bool
+            let state: String
+            let lastHandshake: Int64?
+            let lastHeartbeat: Int64?
+        }
 
         enum Access: String, Decodable {
             case purchaseIntent = "purchase_intent"

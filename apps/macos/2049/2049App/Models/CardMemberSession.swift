@@ -31,10 +31,10 @@ final class CardMemberSession {
         selectedMemberID = id
     }
 
-    func refresh(retry: Bool = false) async {
+    func refresh(retry: Bool = false, background: Bool = false) async {
         loadRevision += 1
         let revision = loadRevision
-        isLoading = true
+        if !background { isLoading = true }
         defer { if revision == loadRevision { isLoading = false } }
         do {
             let loaded = try await client.loadMembers(retry: retry)
@@ -59,11 +59,12 @@ final class CardMemberSession {
         await refresh()
     }
 
-    /// Enables only the requested member's access; it does not certify a live host connection.
+    /// The backend configures Codex for its stable default identity; custom members retain generic access.
     func connect(_ id: UUID) async {
         guard connectingMemberID == nil, !isLoading,
               let member = activeMembers.first(where: { $0.member.id == id }),
-              !member.connection.enabled else { return }
+              (!member.connection.enabled || (member.member.isDefault && member.connection.integration != nil
+                  && member.connection.integration?.connected != true)) else { return }
         connectingMemberID = id
         connectionError = nil
         defer { connectingMemberID = nil }

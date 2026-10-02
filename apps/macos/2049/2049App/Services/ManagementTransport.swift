@@ -231,6 +231,7 @@ struct ServiceConfiguration: Sendable {
         let defaultTimeout: TimeInterval = switch endpoint {
         case .health: 2
         case .prepareQuit, .shutdown: 15
+        case .setMemberConnection: 15
         default: 12
         }
         let timeout = timeout ?? defaultTimeout

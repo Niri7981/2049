@@ -35,7 +35,7 @@ struct MembersRosterRow: View {
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .disabled(interactionsDisabled || row.action != .connect || row.memberID == nil)
+            .disabled(interactionsDisabled || (row.action != .connect && row.action != .reconnect) || row.memberID == nil)
             .help(row.explanation)
             .accessibilityLabel("\(row.action.title) · \(row.name)")
             .accessibilityHint(row.explanation)
@@ -81,13 +81,13 @@ struct MembersRosterRow: View {
     private var actionFill: Color {
         switch row.action {
         case .connect: .clear
-        case .connecting, .connected, .enabled: Color(red: 0.76, green: 0.85, blue: 0.98).opacity(0.32)
+        case .connecting, .connected, .reconnect, .enabled: Color(red: 0.76, green: 0.85, blue: 0.98).opacity(0.32)
         case .unavailable: secondaryInk.opacity(0.08)
         }
     }
 
     private func connect() {
-        guard !interactionsDisabled, row.action == .connect, let id = row.memberID else { return }
+        guard !interactionsDisabled, row.action == .connect || row.action == .reconnect, let id = row.memberID else { return }
         onConnect(id)
     }
 }

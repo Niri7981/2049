@@ -12,6 +12,7 @@ struct ConnectionPresentation {
     let state: State
     let network: String
     let backendAvailable: Bool
+    private var codexConfigured = false
 
     init(agentName: String, state: State, network: String, backendAvailable: Bool) {
         self.agentName = agentName
@@ -21,11 +22,15 @@ struct ConnectionPresentation {
     }
 
     init(connection: AppOverview.Connection, service: AppOverview.Service, agentName: String) {
-        // The API reports credentials and authenticated requests, not a live MCP
-        // session or handshake. Neither enabled nor lastSeen certifies Connected.
+        let integration = connection.integration
+        let verified = connection.hasLiveMCPSession && service.status == .running
         self.init(
             agentName: agentName,
-            state: connection.enabled
+            state: verified
+                ? .connected(lastHandshake: integration?.lastHandshake.map {
+                    Date(timeIntervalSince1970: TimeInterval($0) / 1_000)
+                })
+                : connection.enabled
                 ? .reconnectRequired(lastRequest: connection.lastSeen.map {
                     Date(timeIntervalSince1970: TimeInterval($0) / 1_000)
                 })
@@ -33,6 +38,7 @@ struct ConnectionPresentation {
             network: service.network,
             backendAvailable: service.status == .running
         )
+        codexConfigured = integration?.provider == "codex" && integration?.configured == true
     }
 
     var isConnected: Bool {
@@ -56,8 +62,10 @@ struct ConnectionPresentation {
     var description: String {
         switch state {
         case .connected: "\(agentName) is ready to use 2049."
-        case .notConnected: "\(agentName) is not connected to 2049.\nConnect to enable agent purchases."
-        case .reconnectRequired: "Access is enabled for \(agentName).\nReconnect the MCP host to use 2049."
+        case .notConnected: "\(agentName) is not connected to 2049.\nConnect to set up MCP access."
+        case .reconnectRequired: codexConfigured
+            ? "Codex MCP is configured. Start a new Codex chat\nor reload MCP to verify the connection."
+            : "Access is enabled for \(agentName).\nReconnect the MCP host to use 2049."
         }
     }
 

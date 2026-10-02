@@ -38,6 +38,13 @@ struct MembersRosterPresentationTest {
         precondition(empty.rows.last?.name == "Custom Agent")
         precondition(Set(roster.rows.map(\.id)).count == roster.rows.count)
         precondition(MembersRosterPresentation.ActionState.connected.title == "Connected")
+        let integratedJSON = #"{"member":{"id":"11111111-1111-4111-8111-111111111111","label":"Codex","status":"ACTIVE","isDefault":true,"createdAt":1,"updatedAt":1},"connection":{"enabled":true,"lastSeen":null,"access":"purchase_intent","integration":{"provider":"codex","configured":true,"connected":true,"state":"connected","lastHandshake":1800000001000,"lastHeartbeat":1800000011000}}}"#
+        let integrated = try JSONDecoder().decode(CardMemberSummary.self, from: Data(integratedJSON.utf8))
+        precondition(MembersRosterPresentation([integrated]).rows[0].action == .connected)
+        let staleJSON = integratedJSON.replacingOccurrences(of: #""connected":true"#, with: #""connected":false"#)
+            .replacingOccurrences(of: #""state":"connected""#, with: #""state":"reconnect_required""#)
+        let stale = try JSONDecoder().decode(CardMemberSummary.self, from: Data(staleJSON.utf8))
+        precondition(MembersRosterPresentation([stale]).rows[0].action == .reconnect)
         print("Members roster: real identities, curated order, unsupported providers, revoked members, and honest access states passed")
     }
 }

@@ -141,6 +141,13 @@ struct BackOverview: View {
             }
         }
         .task { if isActive { await reload() } }
+        .task(id: section) {
+            guard section == .connection else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                await refreshConnection()
+            }
+        }
         .onChange(of: section) { _, _ in
             selectedDetail = nil
             if isActive {
@@ -384,6 +391,21 @@ struct BackOverview: View {
     }
 
     @MainActor
+    private func refreshConnection() async {
+        guard section == .connection, !writeState.isSaving, !isRefreshing, let current = overview else { return }
+        do {
+            let member = try await overviewClient.loadMember(memberID)
+            guard !Task.isCancelled, section == .connection, !writeState.isSaving, !isRefreshing else { return }
+            state = .loaded(AppOverview(shared: current, member: member))
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled, section == .connection, !writeState.isSaving, !isRefreshing else { return }
+            state = .failed((error as? OverviewLoadError) ?? .invalidResponse)
+        }
+    }
+
+    @MainActor
     private func reload(retry: Bool = false, preservingContent: Bool = false) async {
         guard !isRefreshing, !writeState.isSaving else { return }
         isRefreshing = true
@@ -423,7 +445,7 @@ struct BackOverview: View {
                 success = "Grant revoked. Reconnect the MCP host."
             case .connection(let enabled):
                 try await overviewClient.setMemberConnection(memberID, enabled: enabled)
-                success = enabled ? "Connection enabled. Reconnect the MCP host." : "Connection revoked. Active grant revoked."
+                success = enabled ? "MCP access ready. Start a new host chat or reload MCP." : "Connection revoked. Active grant revoked."
             }
         } catch {
             let failure = (error as? OverviewLoadError)?.message ?? "Setting change failed"

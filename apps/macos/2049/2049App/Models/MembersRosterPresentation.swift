@@ -3,13 +3,14 @@ import Foundation
 /// A curated integration roster alongside real backend members; names never prove provider support.
 struct MembersRosterPresentation {
     enum ActionState {
-        case connect, connecting, connected, enabled, unavailable
+        case connect, connecting, connected, reconnect, enabled, unavailable
 
         var title: String {
             switch self {
             case .connect: "Connect"
             case .connecting: "Connecting…"
             case .connected: "Connected"
+            case .reconnect: "Reconnect"
             case .enabled: "Enabled"
             case .unavailable: "Unavailable"
             }
@@ -59,12 +60,15 @@ struct MembersRosterPresentation {
         let active = entry.member.status == .active
         let state: ActionState = if !active { .unavailable }
             else if entry.member.id == connecting { .connecting }
+            else if entry.connection.hasLiveMCPSession { .connected }
+            else if entry.member.isDefault && entry.connection.enabled && entry.connection.integration != nil { .reconnect }
             else if entry.connection.enabled { .enabled }
             else { .connect }
         // Access enablement and historical authenticated requests are not live connectivity.
         let explanation = switch state {
-        case .connect: "Enable connection access. Reconnect the MCP host to use 2049."
-        case .connecting: "Saving connection access."
+        case .connect: entry.member.isDefault ? "Configure Codex MCP access for this member." : "Enable connection access. Reconnect the MCP host to use 2049."
+        case .connecting: "Setting up connection access."
+        case .reconnect: "Start a new Codex chat or reload MCP. This action checks configuration without replacing a valid credential or grant."
         case .enabled: "Access is enabled. Reconnect the MCP host to use 2049."
         case .unavailable: "This member has been revoked."
         case .connected: "The host connection has been verified."

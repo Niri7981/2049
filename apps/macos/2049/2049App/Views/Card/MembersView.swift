@@ -40,7 +40,13 @@ struct MembersView: View {
             revokeTargetID = nil
             message = nil
         }
-        .task { await session.refresh() }
+        .task {
+            await session.refresh()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                if !isSaving && !session.isLoading && session.connectingMemberID == nil { await session.refresh(background: true) }
+            }
+        }
     }
 
     private var listContent: some View {
@@ -85,7 +91,8 @@ struct MembersView: View {
                 .foregroundStyle(.secondary)
             Divider()
             if let entry = session.members.first(where: { $0.member.id == member.id }) {
-                fact("Connection", entry.connection.enabled ? "Enabled" : "Not connected")
+                fact("Connection", entry.connection.hasLiveMCPSession
+                    ? "Connected" : entry.connection.enabled ? "Reconnect required" : "Not connected")
                 fact("Spend Grant", grantStatus(entry.grant))
             }
             Divider()

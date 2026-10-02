@@ -18,6 +18,7 @@ enum OverviewLoadError: Error {
     case memberNotFound
     case memberInactive
     case defaultMemberRequired
+    case codexNotInstalled, codexConfigConflict, codexConfigFailed, codexBridgeUnavailable
 
     var message: String {
         switch self {
@@ -38,6 +39,10 @@ enum OverviewLoadError: Error {
         case .memberNotFound: "This agent is no longer available"
         case .memberInactive: "This agent has been revoked"
         case .defaultMemberRequired: "The default agent cannot be revoked"
+        case .codexNotInstalled: "Install Codex Desktop or CLI to connect"
+        case .codexConfigConflict: "This Codex MCP entry was changed outside 2049. Check it in Codex before reconnecting."
+        case .codexConfigFailed: "Codex MCP configuration could not be confirmed. Check Codex settings and retry."
+        case .codexBridgeUnavailable: "The 2049 MCP launcher is unavailable. Reinstall 2049."
         }
     }
 }
@@ -157,6 +162,10 @@ struct OverviewClient {
             if code == "DATA_DIRECTORY_IN_USE" { throw OverviewLoadError.dataDirectoryInUse }
             if code == "CARD_MEMBER_NOT_FOUND" { throw OverviewLoadError.memberNotFound }
             if code == "CARD_MEMBER_NOT_ACTIVE" { throw OverviewLoadError.memberInactive }
+            if code == "CODEX_NOT_INSTALLED" { throw OverviewLoadError.codexNotInstalled }
+            if code == "CODEX_CONFIG_CONFLICT" { throw OverviewLoadError.codexConfigConflict }
+            if code == "CODEX_CONFIG_FAILED" { throw OverviewLoadError.codexConfigFailed }
+            if code == "CODEX_BRIDGE_UNAVAILABLE" { throw OverviewLoadError.codexBridgeUnavailable }
         }
         throw OverviewLoadError.writeRejected
     }

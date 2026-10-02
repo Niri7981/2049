@@ -85,7 +85,7 @@ struct AgentConnectionDetail: View {
             }
             .accessibilityHint(presentation.canDisconnect
                 ? "Revokes connection access and the active Spend Grant after confirmation."
-                : "Enables connection access. Reconnect the external MCP host to use it.")
+                : "Sets up MCP access. Connected requires a verified host handshake.")
             .padding(.top, 12)
 
             if isSaving || writeMessage != nil {

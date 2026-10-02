@@ -34,6 +34,17 @@ struct ConnectionPresentationTest {
         let unavailable = ConnectionPresentation(agentName: "Codex", state: .notConnected,
             network: "", backendAvailable: false)
         precondition(unavailable.network == "—")
+        let liveJSON = #"{"enabled":true,"lastSeen":null,"access":"purchase_intent","integration":{"provider":"codex","configured":true,"connected":true,"state":"connected","lastHandshake":1800000001000,"lastHeartbeat":1800000011000}}"#
+        let live = try JSONDecoder().decode(AppOverview.Connection.self, from: Data(liveJSON.utf8))
+        let verified = ConnectionPresentation(connection: live, service: service, agentName: "Research")
+        precondition(verified.isConnected && verified.activityDate == handshake)
+        let stopped = ConnectionPresentation(connection: live, service: stopping, agentName: "Research")
+        precondition(!stopped.isConnected, "A stopped backend cannot certify liveness")
+        let staleJSON = liveJSON.replacingOccurrences(of: #""connected":true"#, with: #""connected":false"#)
+            .replacingOccurrences(of: #""state":"connected""#, with: #""state":"reconnect_required""#)
+        let stale = try JSONDecoder().decode(AppOverview.Connection.self, from: Data(staleJSON.utf8))
+        let waiting = ConnectionPresentation(connection: stale, service: service, agentName: "Research")
+        precondition(!waiting.isConnected && waiting.description.contains("new Codex chat"))
         print("Native Connection presentation tests passed")
     }
 }

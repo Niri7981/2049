@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { requireLocalRequest } from '../http/local-request';
 import { SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
+import { McpSessions, type McpSessionEvent } from './session';
 
 const CapabilitySchema = z.enum(['read', 'request_purchase']);
 const agentCapabilities: Array<z.infer<typeof CapabilitySchema>> = ['read', 'request_purchase'];
@@ -27,8 +28,11 @@ export const connectionFile = (directory: string, memberId?: string) => memberId
 export class AgentConnection {
   private descriptor?: z.infer<typeof ConnectionSchema>;
   private lastSeen: number | null = null;
+  private sessions: McpSessions;
+  private integration?: { provider: 'codex'; configured: boolean; serverName: string };
   constructor(private directory: string, private cardMemberId: string, private isCardMemberActive: (id: string) => boolean,
-    private memberFile = false) {
+    private memberFile = false, now: () => number = Date.now) {
+    this.sessions = new McpSessions(now);
     // A new backend must not accept credentials left by an earlier process.
     this.removeFile();
   }
@@ -46,9 +50,10 @@ export class AgentConnection {
     renameSync(temporary, this.file());
     this.descriptor = parsed;
     this.lastSeen = null;
+    this.sessions.clear();
   }
   setEnabled(enabled: boolean, origin: string) {
-    if (!enabled) { this.descriptor = undefined; this.lastSeen = null; this.removeFile(); return; }
+    if (!enabled) { this.descriptor = undefined; this.lastSeen = null; this.sessions.clear(); this.removeFile(); return; }
     if (!this.isCardMemberActive(this.cardMemberId)) throw new Error('CARD_MEMBER_REVOKED');
     const token = randomBytes(32).toString('base64url');
     this.write({ origin, token, cardMemberId: this.cardMemberId, connectionId: randomUUID(), generation: 1, capabilities: [...agentCapabilities] });
@@ -81,11 +86,32 @@ export class AgentConnection {
   status() {
     const enabled = Boolean(this.descriptor && this.isCardMemberActive(this.descriptor.cardMemberId));
     const capabilities = enabled ? this.descriptor?.capabilities ?? [] : [];
-    return { enabled, lastSeen: this.lastSeen, access: capabilities.includes('request_purchase') ? 'purchase_intent' as const : 'read_only' as const, capabilities };
+    const liveness = this.sessions.status();
+    return { enabled, lastSeen: this.lastSeen, access: capabilities.includes('request_purchase') ? 'purchase_intent' as const : 'read_only' as const, capabilities,
+      ...(this.integration ? { integration: { ...this.integration, ...liveness,
+        state: !enabled ? 'disconnected' as const : liveness.connected ? 'connected' as const : 'reconnect_required' as const } } : {}) };
+  }
+  setIntegration(configured: boolean, serverName: string) {
+    this.integration = { provider: 'codex', configured, serverName };
+    if (!configured) this.sessions.clear();
+  }
+  observeSession(event: McpSessionEvent) {
+    if (!this.descriptor || !this.integration?.configured || this.integration.provider !== event.provider
+      || !this.isCardMemberActive(this.cardMemberId)) throw new Error('MCP_INTEGRATION_UNAVAILABLE');
+    this.sessions.observe(event);
   }
 }
 
 export function readConnection(directory: string, memberId?: string) {
   if (memberId) z.string().uuid().parse(memberId);
-  return ConnectionSchema.parse(JSON.parse(readFileSync(connectionFile(directory, memberId), 'utf8')));
+  let raw: string;
+  try { raw = readFileSync(connectionFile(directory, memberId), 'utf8'); }
+  catch (error) {
+    if (!memberId || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    // The original default-member file remains compatible with existing generic hosts.
+    raw = readFileSync(connectionFile(directory), 'utf8');
+  }
+  const connection = ConnectionSchema.parse(JSON.parse(raw));
+  if (memberId && connection.cardMemberId !== memberId) throw new Error('MCP_MEMBER_MISMATCH');
+  return connection;
 }
