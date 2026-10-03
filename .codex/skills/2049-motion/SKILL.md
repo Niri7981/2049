@@ -1,139 +1,116 @@
 ---
 name: 2049-motion
-description: Product-specific motion system for 2049 Agent Card interactions. Use when designing, implementing, or reviewing press feedback, hover, card flips, focused-detail navigation, Agent switching, or other 2049 transitions. Defines how 2049 interactions should feel; delegate generic animation APIs and SwiftUI techniques to relevant external skills.
+description: Product-specific motion rules for the 2049 native macOS app. Use when designing, implementing, or reviewing Connection Bridge, Payments, Authority Line, purchase-state feedback, Agent switching, or detail transitions. Owns timing, continuity, physics, and interruptibility; use 2049-ui for visual language and product semantics.
 ---
 
 # 2049 Motion
 
-This skill defines how 2049 interactions should feel. Apply it to 2049 UI motion by default; it is the canonical home for product-specific motion rules. Pair it with `$2049-ui` for the product surface and information architecture. For generic SwiftUI implementation techniques use `$swiftui-pro` and `$swiftui-ui-patterns`.
+**Motion connects input to result. Motion is never decoration.**
 
-Use `$apple-motion-feel` for Apple-native spring, gesture,
-momentum, and interruption behavior.
+This guide owns transition mechanics, timing, physics, and interruptibility. [2049 UI](../2049-ui/SKILL.md) owns visual hierarchy, components, product semantics, and material boundaries. The narrow vertical window is the card; preserve it while content changes.
 
-## Responsibility and priority
+## Scope and references
 
-`$2049-motion` is the source of truth for how motion should feel in 2049.
+- Follow current user direction and project rules. [plan.md](../../../plan.md) defines shared-budget/backend semantics; [Liquid Glass design notes](../../../docs/design/apple-liquid-glass-guidelines.md) defines material intent. These motion choices are 2049 rules, not Apple timings.
+- Preserve native macOS interaction, focus, accessibility, and presentation. Use `$swiftui-pro`, `$swiftui-ui-patterns`, and `$swiftui-liquid-glass` for implementation; verify APIs against the actual macOS deployment target.
+- Borrow continuity, interruption, transform origin, follow-through, and restrained physics from [Rauno's Craft work](https://rauno.me/craft), including [Exclusion Tabs](https://rauno.me/craft/exclusion-tabs) for shared indicators and [Wheel Input](https://rauno.me/craft/wheel-input) for inertial settling. Phantom informs tactile response and continuity only. Copy neither reference's visual identity.
+- `$apple-motion-feel` and `$ui-animation` are optional references only when available and relevant, never required dependencies or authority over project rules.
 
-When multiple skills are used:
+## Core mechanics
 
-1. The user's current explicit request
-2. `$2049-ui` product constraints
-3. `$2049-motion` interaction character
-4. Native macOS behavior and accessibility
-5. `$apple-motion-feel`, `$ui-animation`, and SwiftUI implementation skills
+1. **Acknowledge input immediately.** Pointer-down or equivalent keyboard input gets local feedback. On release, recovery and the resulting transition begin together; never finish a press animation before starting the action.
+2. **Keep the object continuous.** Preserve the card shell, top Agent selector, and compact bottom navigation. Prefer a persistent indicator or anchored surface over unrelated replacements.
+3. **Originate from the trigger.** A selected row/control leads into detail. Keep follow-through small and make the source/destination relationship clear.
+4. **Prefer transform and opacity.** Use small translation, compression, or opacity changes without reflowing the ledger. Morph geometry only for a shared surface or expansion; keep text legible.
+5. **Use springs for continuity.** Press recovery, shared indicators, or anchored expansion may settle with little or no rebound. Ordinary labels need no spring; financial values never bounce or overshoot.
+6. **Interrupt and retarget.** Respond from the current presentation state; preserve continuous velocity. Back or changed selection reverses presentation immediately. This never undoes committed backend actions or bypasses restrictions on conflicting writes.
+7. **Exit faster where appropriate.** Clear temporary surfaces promptly; enter slightly more slowly for readability. Respect native presentation and add no artificial delay.
+8. **Choreograph by cause.** Trigger → surface → primary content → secondary content → settle is a useful ordering, not a mandate. Keep stagger small and frequent actions quiet.
 
-External motion skills may help implement or analyze motion, but they must not override 2049's product-specific motion character.
+## Canonical interactions
 
-## Reference handling
+### Press, hover, and navigation
 
-When the user provides a motion reference, extract interaction mechanics, not visual identity. Treat the reference as evidence for interaction behavior, not authority over 2049's product identity.
+Use local tint, highlight, chevron response, or small compression. Never scale/glow the window. Keep keyboard focus clear without hover; Activity row feedback stays flat and blur-free.
 
-Analyze:
+Bottom navigation changes content inside the card; a shared indicator may move continuously. Do not animate the window away or replay entrances on refresh. Popovers/sheets retain native anchoring, focus, and dismissal.
 
-- persistent objects
-- trigger location
-- movement direction
-- geometry changes
-- timing order
-- spring / easing character
-- interruptibility
-- velocity behavior
-- settle behavior
+### Connection Bridge
 
-Do not copy branding, layout, colors, iconography, or decorative styling.
+The bridge is `Agent node ─────────── 2049 node`. Use one quiet sequence per connection transition; polling or reopening does not replay a handshake:
 
-## Motion references
+- **Connect:** left Agent node acknowledges input → line grows toward the right → one small blue pulse crosses → right 2049 node activates → settle.
+- **Disconnect:** reverse the direction and activation sequence with a shorter exit than the connecting entrance.
+- Input feedback may precede a response; final node state and `Connected` require a verified connection fact. Enabled access, saved credentials, animation completion, or historical last-seen alone cannot prove current connection.
+- Keep pending, failed, unknown, and confirmed results explicit. Stop/retarget when the authoritative result changes; never finish success after failure/disconnect or delay known results for choreography.
+- Do not use looping pulses, spinners, giant glowing rings, oversized checkmarks, or sci-fi effects. The bridge is feedback, not a connectivity test.
 
-Rauno Freiberg's [Craft work](https://rauno.me/craft) is a reference for interaction mechanics and spatial continuity, not visual styling. Borrow the interaction principle, not the visual design. For broader principles about interruption, momentum, spatial consistency, and motion frequency, see [Invisible Details of Interaction Design](https://rauno.me/craft/interaction-design).
+### Payments
 
-When studying a Rauno Craft reference, pay particular attention to persistent object identity, trigger-origin motion, shared surfaces, geometry morphing, spring character, interruption and retargeting, velocity behavior, choreography, and settling.
+Keep the native switch response. Distinguish requested, saving, confirmed enabled/paused, and failed states; thumb motion cannot confirm pause. No bounce or polling replay. Pause blocks new payments; submitted payments may continue reconciliation or delivery recovery.
 
-Examples:
+### Authority Line and budget changes
 
-- [**Exclusion Tabs**](https://rauno.me/craft/exclusion-tabs) → a shared selection surface.
-- **Spatial Tooltip** → a shared, anchored floating surface.
-- [**Wheel Input**](https://rauno.me/craft/wheel-input) → continuous inertial selection with spring settling.
+Move the thin Authority Line continuously toward a confirmed backend target. No chart-like sweep, count-up, overshoot, or flourish. Financial labels stay exact; interpolation is presentation only.
 
-If `$ui-animation` is available, use it to analyze or reconstruct the supplied reference. Rauno references must not override `$2049-ui` product identity or Apple-native presentation.
+The daily budget is shared across Agents/CardMembers. Agent switching changes scoped identity/grant content, never resets/refills that budget line. Keep Reserved, Paid, and Remaining distinct; reservation is not payment success. Unknown payment reservations remain until backend facts resolve them.
 
-## Motion character
+### Purchase lifecycle feedback
 
-2049 motion should feel fast, physical, responsive, continuous, and controlled. Motion connects an input to its result; it is never decoration or a substitute for clear state.
+Subtly acknowledge newly observed facts without inventing intermediate steps. Policy, reservation, payment, delivery, and grant/connection revocation are separate:
 
-Phantom is a reference for tactile response and navigation continuity only. Do not copy its layout, navigation bar, colors, icons, or other visual identity.
+| Fact | Motion constraint |
+| --- | --- |
+| Approved | Acknowledge the policy result; do not imply money moved. |
+| Reserved | Reinforce the budget reservation without a paid/success effect. |
+| Paid | Acknowledge confirmed payment; do not imply delivery is complete. |
+| Complete | Express confirmed delivery in its own context. |
+| Revoked | Quietly withdraw the relevant grant/connection emphasis; do not imply a refund or reversal of a submitted payment. |
+| Denied | Keep the reason readable; no shake, dramatic red surface, or punishment motion. |
 
-## One motion system
-
-Use these principles together as 2049 Craft Motion:
-
-1. **Acknowledge contact immediately.** On pointer-down or equivalent input, provide subtle compression, material response, a small positional change, or a highlight. Do not wait for navigation to finish before the control responds.
-2. **Connect the input to the state change.** On release, the control's recovery and the destination transition begin as one continuous response. The destination should feel selected by the input, not like a later page change.
-3. **Preserve object identity.** Prefer one surface, card, indicator, or control moving, resizing, or morphing into its next state. Avoid replacing it with an unrelated object that simply fades in.
-4. **Originate from the trigger.** A selected row, button, icon, or control should visually lead into the resulting state when the relationship is clear. Avoid defaulting to generic center-screen transitions.
-5. **Preserve spatial continuity.** Make it clear where the new state came from and how to return. Continuity matters more than spectacle.
-6. **Settle with restraint.** Use a short, interruptible spring character for release and settling, with little or no visible rebound. Avoid bounce-heavy, game-like motion and large scale changes.
-7. **Retarget without a reset.** If the user changes direction or selects another state mid-transition, respond immediately from the current presentation state. Preserve velocity where the interaction is continuous; never make the user wait for an animation to finish.
-8. **Choreograph by cause.** Use this order when multiple elements need to respond: trigger → container/surface → primary content → secondary content → settle. Keep any stagger small and only use it when it clarifies hierarchy.
-9. **Keep frequent interactions quiet.** Hover, row press, back, and toggle are fast and restrained. Rare transformations, such as a card flip, can have more visible choreography.
-10. **Respect Reduce Motion.** Preserve the state hierarchy and causal relationship using a lower-amplitude, non-3D alternative where needed.
-
-## Interaction guidance
-
-### Press and release
-
-The press-in begins immediately; the selected state/content transition begins with release and the control's recovery. Use small compression only when it helps communicate contact. A highlight, opacity shift, subtle material change, or tiny positional response may be clearer than scaling. Never sequence a completed press animation before navigation starts.
-
-### Hover
-
-Hover is fast and subtle: a soft row tint, slight material lift, a chevron response, or restrained control emphasis. Keep cursor response attached to the hovered item. Avoid large scaling, bounce, neon glow, and cursor trails.
-
-### Card front/back flip
-
-The front and back are two states of the same physical Agent Card. Keep the card shell and size consistent; use a restrained Y-axis flip and briefly reveal only a thin edge near the midpoint. Keep perspective subtle. The transition should be interruptible where practical and should not make the card appear thick or permanently angled.
-
-### Overview → focused detail → back
-
-Keep the card shell fixed while its content moves into a focused detail state. Let the selected row or control establish the transition's origin and preserve the source/destination relationship. Provide immediate reversal to the overview. Avoid separate large pages, modal proliferation, arbitrary delays, or unrelated fade swaps.
+These labels are not an inevitable state chain. Keep pending, unknown, failed, and simulated results truthful. Never replay success on refresh/restart/duplicate snapshots or delay showing failure.
 
 ### Agent switching
 
-Switch the Agent in place while preserving the card shell and window. Prefer a quick, subtle content crossfade or matched transition. Do not make the entire card disappear, reload the app, or use a lengthy cinematic transition. Keep each Agent's identity apparent throughout the change.
+Switch in place with a quick crossfade or matched transition. Preserve the window, selector, navigation, and shared-budget context. Make new identity clear; previous Agent content must not appear current while loading. Retarget immediately on another selection.
 
-### Controls and status
+### Activity and focused detail
 
-Apply the same immediate, connected response to Authority rows, Activity and Purchase rows, Connection, back controls, execution-mode selection, and Payments. Motion may reinforce a state change, but the actual status must remain clear without relying on animation. Do not shake or dramatize denied states.
+Preserve record identity, source position, scroll context, and route back. Expand/transition within the card from the row/control where meaningful. Reverse on Back without arbitrary center-screen motion, large pages, or modal proliferation. Restore context without replaying the ledger entrance.
+
+### Optional legacy card flip
+
+A front/back flip is optional legacy behavior, not default navigation or a decorative credit card. If retained, preserve window/card size with restrained Y-axis rotation, subtle perspective, and a thin midpoint edge. Keep it interruptible; no permanent angle, idle tilt, or thick depth.
 
 ## Starting motion ranges
 
-These are product-specific starting points, not fixed constants. Judge the rendered feel and keep the response appropriate to the control.
+These are debugging starting points, not laws or delays to enforce. Judge rendered behavior, interaction frequency, and native controls before tuning.
 
 | Interaction | Starting character |
 | --- | --- |
-| Press feedback | Begins on contact; press-in generally settles over about 60–90 ms. If compression helps, keep it around 0.98–0.985 scale; less may be enough. |
-| Hover | About 100–160 ms perceived response; favor tint, opacity, or 1–2 pt movement over scale. |
-| Shared indicator or tooltip | About 150–230 ms; light and interruptible. |
-| Focused-detail navigation | About 220–300 ms; spatially connected and reversible. |
-| Card flip / major card transformation | About 450–520 ms; controlled, with a restrained sense of physicality. |
-| Choreography stagger | About 20–35 ms, only when it improves clarity. |
+| Press | Immediate contact feedback; about 60–90 ms to settle. If useful, compression around 0.98–0.985 scale; less may suffice. |
+| Hover | About 100–160 ms; prefer tint/opacity or 1–2 pt movement over scale. |
+| Shared indicator / anchored tooltip | About 150–230 ms; light and interruptible. |
+| Detail entrance | About 220–300 ms; connected to the trigger, with a faster exit where appropriate. |
+| Optional card flip | About 450–520 ms; controlled and thin. |
+| Small choreography stagger | About 20–35 ms, only when it clarifies hierarchy. |
 
-Ranges may be shortened for reduced-motion settings or high-frequency controls. Avoid layering delays to reach a target duration.
+Do not stretch a fast backend result to fit these ranges or stack delays to reach them. A Connection Bridge's duration never acts as a request timeout or success condition.
 
 ## Reduce Motion
 
-When Reduce Motion is enabled, replace the 3D flip and large spatial/morphing motion with a low-amplitude content transition. Preserve the same card identity, current selection, state hierarchy, and clear back path. Do not remove the interaction's acknowledgement or leave state changes ambiguous.
+Retain immediate feedback, explicit state, selection, and Back. Replace 3D flips, traveling pulses, large transforms, and spring rebound with direct changes or short low-amplitude opacity transitions. The static bridge must still communicate reported connection state. All interactions remain understandable without animation.
 
-## Motion QA
+## Motion review checklist
 
-Review each changed interaction against these questions:
+- What user input or newly observed state caused this motion?
+- What result or relationship does it explain?
+- Can it be interrupted or retargeted without waiting or resetting visibly?
+- Can it reverse naturally where meaningful, without implying a backend undo?
+- Is the exit faster than the entrance where appropriate?
+- Are the same card, selector, navigation, and source/detail context preserved?
+- Are shared budget, Reserved, Paid, delivery, and connection facts still distinct?
+- Is the result understandable with Reduce Motion and with animation disabled?
+- Are frequent actions quiet and all decorative motion removed?
 
-- Does the control acknowledge contact before the destination change completes?
-- Do input, surface, and content feel like one causally connected response?
-- Does the transition preserve the identity of the card or selected object?
-- Does a focused detail appear related to its source, and can it be reversed immediately?
-- Can a new input interrupt or retarget the transition without waiting or an obvious velocity reset?
-- Are hover and frequent actions quiet, while larger choreography is reserved for meaningful transformations?
-- Does the card stay thin and spatially continuous through a flip?
-- Does Agent switching preserve the card shell and keep the Agent identity clear?
-- Is the interaction understandable with Reduce Motion?
-
-Motion QA is a product-design and code-review checklist. Do not automatically launch the app or use Computer Use to inspect every change. Use CLI validation when available; final UI and motion acceptance is performed manually by the user. Computer Use is reserved for explicit user requests or GUI-only issues that cannot reasonably be diagnosed otherwise.
+For implementation, run the relevant project checks. Do not automatically launch the app or use Computer Use after every change; reserve that for explicit requests or GUI-only issues. A build does not establish visual or motion acceptance; final acceptance is manual.
