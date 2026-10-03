@@ -70,7 +70,8 @@ struct MembersRosterRow: View {
             switch row.icon {
             case .brand(let brand):
                 Image(brand.rawValue)
-                    .renderingMode(.template)
+                    // Cursor's official grayscale faces must remain distinct.
+                    .renderingMode(brand == .cursor ? .original : .template)
                     .resizable()
                     .scaledToFit()
                     .frame(width: brand.opticalSize, height: brand.opticalSize)

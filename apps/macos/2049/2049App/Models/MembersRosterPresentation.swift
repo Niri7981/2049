@@ -37,6 +37,8 @@ struct MembersRosterPresentation {
         case claude = "ProviderClaude"
         case gemini = "ProviderGemini"
         case grok = "ProviderGrok"
+        case cursor = "ProviderCursor"
+        case github = "ProviderGitHub"
 
         // Account for the official assets' clear space and different silhouettes.
         var opticalSize: CGFloat {
@@ -45,6 +47,8 @@ struct MembersRosterPresentation {
             case .claude: 28
             case .gemini: 32
             case .grok: 28
+            case .cursor: 32
+            case .github: 30
             }
         }
     }
@@ -90,8 +94,8 @@ struct MembersRosterPresentation {
             Self.comingSoon("claude", name: "Claude Code", provider: "Anthropic", icon: .brand(.claude)),
             Self.comingSoon("gemini", name: "Gemini CLI", provider: "Google", icon: .brand(.gemini)),
             Self.comingSoon("grok", name: "Grok", provider: "xAI", icon: .brand(.grok)),
-            Self.comingSoon("cursor", name: "Cursor Agent", provider: "Cursor", icon: .symbol("cursorarrow")),
-            Self.comingSoon("copilot", name: "GitHub Copilot", provider: "GitHub", icon: .monogram("GH")),
+            Self.comingSoon("cursor", name: "Cursor Agent", provider: "Cursor", icon: .brand(.cursor)),
+            Self.comingSoon("copilot", name: "GitHub Copilot", provider: "GitHub", icon: .brand(.github)),
             Self.comingSoon("windsurf", name: "Windsurf", provider: "Windsurf", icon: .monogram("W")),
         ]
         entries += members.filter { !$0.member.isDefault }.map {
