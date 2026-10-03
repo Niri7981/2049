@@ -32,7 +32,24 @@ struct MembersRosterPresentation {
         }
     }
 
-    enum Icon { case monogram(String), symbol(String) }
+    enum Brand: String {
+        case openAI = "ProviderOpenAI"
+        case claude = "ProviderClaude"
+        case gemini = "ProviderGemini"
+        case grok = "ProviderGrok"
+
+        // Account for the official assets' clear space and different silhouettes.
+        var opticalSize: CGFloat {
+            switch self {
+            case .openAI: 44
+            case .claude: 28
+            case .gemini: 32
+            case .grok: 28
+            }
+        }
+    }
+
+    enum Icon { case brand(Brand), monogram(String), symbol(String) }
     enum Group: String, CaseIterable { case setUp = "SET UP", available = "AVAILABLE", custom = "CUSTOM" }
 
     struct Row: Identifiable {
@@ -66,13 +83,13 @@ struct MembersRosterPresentation {
             entries.append(Self.member(codex, connecting: connectingMemberID, issue: connectionIssueMemberID))
         } else {
             entries.append(Row(id: "integration-codex", memberID: nil, name: "Codex", provider: "OpenAI",
-                icon: .symbol("command"), group: .available, status: hasLoadError ? .connectionIssue : .loading,
+                icon: .brand(.openAI), group: .available, status: hasLoadError ? .connectionIssue : .loading,
                 action: nil, canSelect: false, explanation: "2049 hasn't loaded this agent's connection status yet."))
         }
         entries += [
-            Self.comingSoon("claude", name: "Claude Code", provider: "Anthropic", icon: .monogram("AI")),
-            Self.comingSoon("gemini", name: "Gemini CLI", provider: "Google", icon: .monogram("G")),
-            Self.comingSoon("grok", name: "Grok", provider: "xAI", icon: .monogram("xAI")),
+            Self.comingSoon("claude", name: "Claude Code", provider: "Anthropic", icon: .brand(.claude)),
+            Self.comingSoon("gemini", name: "Gemini CLI", provider: "Google", icon: .brand(.gemini)),
+            Self.comingSoon("grok", name: "Grok", provider: "xAI", icon: .brand(.grok)),
             Self.comingSoon("cursor", name: "Cursor Agent", provider: "Cursor", icon: .symbol("cursorarrow")),
             Self.comingSoon("copilot", name: "GitHub Copilot", provider: "GitHub", icon: .monogram("GH")),
             Self.comingSoon("windsurf", name: "Windsurf", provider: "Windsurf", icon: .monogram("W")),
@@ -113,7 +130,7 @@ struct MembersRosterPresentation {
         case .loading: "Loading connection status."
         }
         return Row(id: entry.member.id.uuidString, memberID: entry.member.id, name: entry.member.label,
-            provider: official ? "OpenAI" : "Custom agent", icon: .symbol(official ? "command" : "person"),
+            provider: official ? "OpenAI" : "Custom agent", icon: official ? .brand(.openAI) : .symbol("person"),
             group: group, status: status, action: action, canSelect: active, explanation: explanation)
     }
 

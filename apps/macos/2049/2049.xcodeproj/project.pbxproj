@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B84900000000000000000001 /* ProviderIcons.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000002 /* ProviderIcons.xcassets */; };
 		A0000000000000000000000B /* TwentyFortyNineApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000008 /* TwentyFortyNineApp.swift */; };
 		A0000000000000000000001A /* CardWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000016 /* CardWindow.swift */; };
 		A0000000000000000000001B /* AgentIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000017 /* AgentIdentity.swift */; };
@@ -71,6 +72,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B84900000000000000000002 /* ProviderIcons.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = ProviderIcons.xcassets; sourceTree = "<group>"; };
 		A00000000000000000000008 /* TwentyFortyNineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwentyFortyNineApp.swift; sourceTree = "<group>"; };
 		A0000000000000000000000A /* 2049.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = 2049.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000000000000000000016 /* CardWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardWindow.swift; sourceTree = "<group>"; };
@@ -162,6 +164,7 @@
 				A00000000000000000000042 /* Services */,
 				A00000000000000000000006 /* Views */,
 				A0000000000000000000001F /* Materials */,
+				B84900000000000000000002 /* ProviderIcons.xcassets */,
 			);
 			path = 2049App;
 			sourceTree = "<group>";
@@ -334,6 +337,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B84900000000000000000001 /* ProviderIcons.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

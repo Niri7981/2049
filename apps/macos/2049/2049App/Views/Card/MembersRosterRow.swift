@@ -68,6 +68,12 @@ struct MembersRosterRow: View {
     private var providerIcon: some View {
         Group {
             switch row.icon {
+            case .brand(let brand):
+                Image(brand.rawValue)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: brand.opticalSize, height: brand.opticalSize)
             case .monogram(let text):
                 Text(text).font(.system(size: text.count > 2 ? 18 : 23, weight: .semibold))
             case .symbol(let name):
