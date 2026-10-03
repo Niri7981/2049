@@ -76,7 +76,8 @@ async function fixture(mode, port = 0) {
       return;
     }
     response.writeHead(mode === 'status' ? 201 : 200, { 'content-type': 'application/json',
-      ...(['fake', 'fake-owner'].includes(mode) ? {} : { 'x-2049-response-proof': mac(reply).toString('hex') }) });
+      ...(['fake', 'fake-owner', 'credential-cache', 'credential-denied', 'credential-invalid'].includes(mode)
+        ? {} : { 'x-2049-response-proof': mac(reply).toString('hex') }) });
     response.end(mode === 'tamper' ? Buffer.from('{"ready":false}') : bytes);
   });
   await new Promise((resolveListen, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolveListen); });
@@ -164,7 +165,8 @@ try {
     .map(name => `apps/macos/2049/2049App/Services/${name}.swift`);
   await child('swiftc', ['-swift-version', '6', '-parse-as-library', ...sources,
     'tests/native/ManagementTransportSecurity.swift', '-o', executable]).done;
-  for (const mode of ['normal', 'fake', 'tamper', 'status', 'nonce', 'stall', 'drip', 'oversized', 'content-length']) await fixture(mode);
+  for (const mode of ['credential-cache', 'credential-denied', 'credential-invalid',
+    'normal', 'fake', 'tamper', 'status', 'nonce', 'stall', 'drip', 'oversized', 'content-length']) await fixture(mode);
   // Bind the reported product port only when free; never stop a pre-existing listener.
   await fixture('fake-owner', 3049);
 

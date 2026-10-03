@@ -26,10 +26,12 @@ actor NativeServiceRuntime {
     private let launch: BackendLaunchConfiguration
     private let allowsLaunch: Bool
     private let managementTokenOverride: String?
+    private let managementTokenLoader: (@Sendable () throws -> String)?
     private let logger = Logger(subsystem: "com.twentyfortynine.macos", category: "backend-lifecycle")
     private var process: BackendChildProcess?
     private var ownedConfiguration: ServiceConfiguration?
     private var readyConfiguration: ServiceConfiguration?
+    private var loadedManagementToken: String?
     private var startup: Task<ServiceConfiguration, Error>?
     private var lastFailure: ServiceRuntimeError?
     private var isShuttingDown = false
@@ -38,11 +40,13 @@ actor NativeServiceRuntime {
         allowsLaunch: Bool = true,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundleURL: URL = Bundle.main.bundleURL,
-        managementTokenOverride: String? = nil
+        managementTokenOverride: String? = nil,
+        managementTokenLoader: (@Sendable () throws -> String)? = nil
     ) {
         self.allowsLaunch = allowsLaunch
         self.launch = BackendLaunchConfiguration(environment: environment, bundleURL: bundleURL)
         self.managementTokenOverride = managementTokenOverride
+        self.managementTokenLoader = managementTokenLoader
     }
 
     func ready(retry: Bool = false) async throws -> ServiceConfiguration {
@@ -74,10 +78,10 @@ actor NativeServiceRuntime {
     }
 
     private func start() async throws -> ServiceConfiguration {
+        // Previews and diagnostic fixtures must supply their own identity instead
+        // of requesting access to the installation's Keychain item.
+        guard allowsLaunch || managementTokenOverride != nil else { throw ServiceRuntimeError.unavailable }
         let port = try launch.servicePort()
-        let token = try managementTokenOverride ?? launch.managementToken()
-        guard launch.validToken(token) else { throw ServiceRuntimeError.configuration }
-        let configuration = ServiceConfiguration(baseURL: URL(string: "http://127.0.0.1:\(port)")!, managementToken: token)
         // Validate the current runtime before asking an old backend to stop.
         let root = try launch.repositoryRoot()
         let node = try launch.nodeExecutable()
@@ -86,6 +90,8 @@ actor NativeServiceRuntime {
               FileManager.default.fileExists(atPath: root.appending(path: ".next/BUILD_ID").path) else {
             throw ServiceRuntimeError.configuration
         }
+        let token = try managementToken()
+        let configuration = ServiceConfiguration(baseURL: URL(string: "http://127.0.0.1:\(port)")!, managementToken: token)
 
         if !Self.portAvailable(port) {
             guard let (data, response) = try? await configuration.request(.health, timeout: 2),
@@ -140,6 +146,16 @@ actor NativeServiceRuntime {
         }
         await stopUnreadyChild(child)
         throw ServiceRuntimeError.notReady
+    }
+
+    private func managementToken() throws -> String {
+        if let loadedManagementToken { return loadedManagementToken }
+        let token = try managementTokenOverride ?? managementTokenLoader?() ?? launch.managementToken()
+        guard launch.validToken(token) else { throw ServiceRuntimeError.configuration }
+        // Backend retries/restarts reuse the same installation identity. Cache
+        // only validated success; denied Keychain access remains retryable.
+        loadedManagementToken = token
+        return token
     }
 
     private func stopAuthenticatedBackend(_ configuration: ServiceConfiguration, pid: Int32, port: Int) async throws {

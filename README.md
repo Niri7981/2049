@@ -166,6 +166,8 @@ This is a local installation: the App still needs the repository at its original
 
 `NativeServiceRuntime` still owns startup and shutdown of the local service on `127.0.0.1:3049`. On first launch or after an ad-hoc build update, macOS may request access to the existing Keychain item; respond in the system prompt before backend startup can continue. Closing the window leaves the App and service running; reopening the icon restores the window, and normal quit waits for safe backend shutdown. The first launch creates a dedicated product wallet whose private key remains in macOS Keychain. Existing environment overrides and repository build discovery remain available for development.
 
+A successfully loaded management credential is reused only inside the current App process, including backend startup retries and readiness checks. Previews and diagnostic fixtures must explicitly supply their test identity. Wallet initialization caches public metadata; payment execution still reloads and verifies the signer. Relaunching the same installed build preserves its signing identity, while a new ad-hoc build changes its designated requirement. Persistent authorization across builds requires a valid Apple Development or Developer ID Application signing identity. Allow-once decisions, Keychain locking and item access policies still apply. See the [Keychain access and signing audit](docs/architecture/keychain-access.md).
+
 In the App:
 
 1. Set a shared daily limit.

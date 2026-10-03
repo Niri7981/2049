@@ -61,6 +61,38 @@ describe('authenticated local management boundary', () => {
 });
 
 describe('managed budget and Devnet test records', () => {
+  it('shares one wallet initialization across concurrent overview and readiness requests', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'app2049-wallet-cache-')); dirs.push(dir);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const initializeWallet = vi.fn(async () => { await pending; return { address, reused: true }; });
+    const app = new AppRuntime(dir, { initializeWallet });
+    try {
+      await Promise.all([app.start(origin), app.start(origin)]);
+      expect(initializeWallet).not.toHaveBeenCalled(); // Health with no recovery has no Keychain work.
+      const first = app.overview(); const second = app.overview(); const wallet = app.initializeWallet();
+      expect(initializeWallet).toHaveBeenCalledTimes(1);
+      release();
+      expect((await first).wallet).toEqual({ address, reused: true });
+      expect((await second).wallet).toEqual(await wallet);
+      await app.overview(); await app.initializeWallet(); await app.start(origin);
+      expect(initializeWallet).toHaveBeenCalledTimes(1);
+    } finally { release(); app.close(); }
+  });
+
+  it('retries a denied wallet read without creating a replacement wallet', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'app2049-wallet-denied-')); dirs.push(dir);
+    const initializeWallet = vi.fn<() => Promise<{ address: string; reused: boolean }>>()
+      .mockRejectedValueOnce(new Error('Keychain access denied')).mockResolvedValue({ address, reused: true });
+    const app = new AppRuntime(dir, { initializeWallet });
+    try {
+      await expect(app.overview()).rejects.toThrow('Keychain access denied');
+      expect((await app.overview()).wallet).toEqual({ address, reused: true });
+      await app.overview();
+      expect(initializeWallet).toHaveBeenCalledTimes(2);
+    } finally { app.close(); }
+  });
+
   it('returns local Authority data while balance RPC stalls or fails', async () => {
     const app = runtime();
     let release!: () => void;
