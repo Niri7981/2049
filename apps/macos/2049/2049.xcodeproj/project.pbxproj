@@ -57,6 +57,9 @@
 		A0000000000000000000007A /* DailyAuthorityContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000079 /* DailyAuthorityContent.swift */; };
 		A0000000000000000000083 /* YoshClothShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000082 /* YoshClothShape.swift */; };
 		A0000000000000000000085 /* YoshEyeShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000084 /* YoshEyeShape.swift */; };
+		A0000000000000000000087 /* YoshSpiritView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000086 /* YoshSpiritView.swift */; };
+		A0000000000000000000089 /* YoshIdleGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000088 /* YoshIdleGesture.swift */; };
+		A0000000000000000000091 /* YoshSpiritDrawing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000090 /* YoshSpiritDrawing.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -111,6 +114,9 @@
 		A00000000000000000000079 /* DailyAuthorityContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyAuthorityContent.swift; sourceTree = "<group>"; };
 		A0000000000000000000082 /* YoshClothShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshClothShape.swift; sourceTree = "<group>"; };
 		A0000000000000000000084 /* YoshEyeShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshEyeShape.swift; sourceTree = "<group>"; };
+		A0000000000000000000086 /* YoshSpiritView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshSpiritView.swift; sourceTree = "<group>"; };
+		A0000000000000000000088 /* YoshIdleGesture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshIdleGesture.swift; sourceTree = "<group>"; };
+		A0000000000000000000090 /* YoshSpiritDrawing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshSpiritDrawing.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -209,6 +215,9 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000018 /* AgentCardFront.swift */,
+				A0000000000000000000086 /* YoshSpiritView.swift */,
+				A0000000000000000000088 /* YoshIdleGesture.swift */,
+				A0000000000000000000090 /* YoshSpiritDrawing.swift */,
 				A0000000000000000000084 /* YoshEyeShape.swift */,
 				A0000000000000000000082 /* YoshClothShape.swift */,
 				A00000000000000000000026 /* AgentCardBack.swift */,
@@ -315,6 +324,9 @@
 				A0000000000000000000001A /* CardWindow.swift in Sources */,
 				A0000000000000000000001B /* AgentIdentity.swift in Sources */,
 				A0000000000000000000001C /* AgentCardFront.swift in Sources */,
+				A0000000000000000000087 /* YoshSpiritView.swift in Sources */,
+				A0000000000000000000089 /* YoshIdleGesture.swift in Sources */,
+				A0000000000000000000091 /* YoshSpiritDrawing.swift in Sources */,
 				A0000000000000000000085 /* YoshEyeShape.swift in Sources */,
 				A0000000000000000000083 /* YoshClothShape.swift in Sources */,
 				A0000000000000000000001D /* CardMaterial.swift in Sources */,
