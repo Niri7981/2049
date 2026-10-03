@@ -55,6 +55,8 @@
 		A00000000000000000000076 /* SettingsRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000075 /* SettingsRow.swift */; };
 		A00000000000000000000078 /* DailyAuthorityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000077 /* DailyAuthorityPresentation.swift */; };
 		A0000000000000000000007A /* DailyAuthorityContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000079 /* DailyAuthorityContent.swift */; };
+		A0000000000000000000083 /* YoshClothShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000082 /* YoshClothShape.swift */; };
+		A0000000000000000000085 /* YoshEyeShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000084 /* YoshEyeShape.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -107,6 +109,8 @@
 		A00000000000000000000075 /* SettingsRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRow.swift; sourceTree = "<group>"; };
 		A00000000000000000000077 /* DailyAuthorityPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyAuthorityPresentation.swift; sourceTree = "<group>"; };
 		A00000000000000000000079 /* DailyAuthorityContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyAuthorityContent.swift; sourceTree = "<group>"; };
+		A0000000000000000000082 /* YoshClothShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshClothShape.swift; sourceTree = "<group>"; };
+		A0000000000000000000084 /* YoshEyeShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshEyeShape.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -205,6 +209,8 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000018 /* AgentCardFront.swift */,
+				A0000000000000000000084 /* YoshEyeShape.swift */,
+				A0000000000000000000082 /* YoshClothShape.swift */,
 				A00000000000000000000026 /* AgentCardBack.swift */,
 				A0000000000000000000002C /* BackSection.swift */,
 				A0000000000000000000002E /* BackOverview.swift */,
@@ -309,6 +315,8 @@
 				A0000000000000000000001A /* CardWindow.swift in Sources */,
 				A0000000000000000000001B /* AgentIdentity.swift in Sources */,
 				A0000000000000000000001C /* AgentCardFront.swift in Sources */,
+				A0000000000000000000085 /* YoshEyeShape.swift in Sources */,
+				A0000000000000000000083 /* YoshClothShape.swift in Sources */,
 				A0000000000000000000001D /* CardMaterial.swift in Sources */,
 				A00000000000000000000023 /* AgentCardNSWindow.swift in Sources */,
 				A00000000000000000000024 /* CardApplicationDelegate.swift in Sources */,
