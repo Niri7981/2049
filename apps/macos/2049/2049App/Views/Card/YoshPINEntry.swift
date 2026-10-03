@@ -1,19 +1,25 @@
 import SwiftUI
 
-/// Presentation only: this PIN never leaves the front view or unlocks backend authority.
+/// Native secure editing presentation. Verification belongs to the dedicated App Lock model.
 struct YoshPINEntry: View {
+    enum Style { case front, compact }
+
     @Binding var pin: String
     var isFocused: FocusState<Bool>.Binding
     var digitCount = 4
+    var prompt = "Enter your password"
+    var style: Style = .front
 
     @Environment(\.colorSchemeContrast) private var contrast
 
+    private var inputHeight: CGFloat { style == .compact ? 40 : 54 }
+
     var body: some View {
-        VStack(spacing: 15) {
-            Text("Enter your password")
-                .font(.system(size: 16, weight: .regular))
-                .tracking(1.5)
-                .foregroundStyle(Color(nsColor: .labelColor).opacity(0.72))
+        VStack(spacing: style == .compact ? 8 : 15) {
+            Text(prompt)
+                .font(.system(size: style == .compact ? 13 : 16, weight: .regular))
+                .tracking(style == .compact ? 0 : 1.5)
+                .foregroundStyle(Color(nsColor: .labelColor).opacity(style == .compact ? 0.90 : 0.72))
                 .accessibilityHidden(true)
 
             ZStack {
@@ -22,7 +28,7 @@ struct YoshPINEntry: View {
                 Button(action: focusInput) {
                     Capsule()
                         .fill(.black.opacity(0.075))
-                        .frame(width: 276, height: 54)
+                        .frame(width: 276, height: inputHeight)
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -43,15 +49,15 @@ struct YoshPINEntry: View {
                     }
                     .onSubmit { isFocused.wrappedValue = false }
                     .onExitCommand { isFocused.wrappedValue = false }
-                    .accessibilityLabel("Enter your password")
+                    .accessibilityLabel(prompt)
                     .accessibilityHint("\(digitCount)-digit PIN")
                     .accessibilityIdentifier("YoshPINInput")
 
-                HStack(spacing: digitCount == 6 ? 24 : 32) {
+                HStack(spacing: style == .compact ? (digitCount == 6 ? 18 : 24) : (digitCount == 6 ? 24 : 32)) {
                     ForEach(0..<digitCount, id: \.self) { index in
                         Circle()
                             .fill(Color(nsColor: .labelColor).opacity(index < pin.count ? 0.84 : 0.38))
-                            .frame(width: 16, height: 16)
+                            .frame(width: style == .compact ? 12 : 16, height: style == .compact ? 12 : 16)
                     }
                 }
                 .accessibilityHidden(true)
@@ -62,10 +68,10 @@ struct YoshPINEntry: View {
                         Color(nsColor: .labelColor).opacity(isFocused.wrappedValue ? 0.40 : 0.10),
                         lineWidth: contrast == .increased ? 2 : 1
                     )
-                    .frame(width: 276, height: 54)
+                    .frame(width: 276, height: inputHeight)
                     .allowsHitTesting(false)
             }
-            .frame(width: 276, height: 54)
+            .frame(width: 276, height: inputHeight)
         }
     }
 

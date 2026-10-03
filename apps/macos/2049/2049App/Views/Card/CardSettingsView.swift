@@ -4,6 +4,8 @@ import SwiftUI
 struct CardSettingsView: View {
     let overviewClient: OverviewClient
 
+    @Environment(YoshAppLock.self) private var appLock: YoshAppLock?
+
     @State private var state: LoadState = .loading
     @State private var actionError: String?
     @State private var loadRevision = 0
@@ -36,7 +38,7 @@ struct CardSettingsView: View {
     var body: some View {
         CardSettingsBody(information: information, appVersion: appVersion, isLoading: isLoading, error: error,
             onCopyWallet: copyWallet, onOpenDataFolder: openDataFolder, onOpenRepository: openRepository,
-            onReload: { Task { await reload(retry: true) } })
+            onReload: { Task { await reload(retry: true) } }, appLock: appLock)
             .task { await reload() }
             .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
                 loadRevision += 1

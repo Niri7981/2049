@@ -62,6 +62,12 @@
 		A0000000000000000000087 /* YoshSpiritView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000086 /* YoshSpiritView.swift */; };
 		A0000000000000000000089 /* YoshIdleGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000088 /* YoshIdleGesture.swift */; };
 		A0000000000000000000091 /* YoshSpiritDrawing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000090 /* YoshSpiritDrawing.swift */; };
+		A00000000000000000000101 /* YoshAppLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000100 /* YoshAppLock.swift */; };
+		A00000000000000000000103 /* YoshAppLockCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000102 /* YoshAppLockCredential.swift */; };
+		A00000000000000000000105 /* YoshAppLockStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000104 /* YoshAppLockStore.swift */; };
+		A00000000000000000000107 /* YoshLockEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000106 /* YoshLockEntry.swift */; };
+		A00000000000000000000109 /* YoshAppLockSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000108 /* YoshAppLockSettings.swift */; };
+		A0000000000000000000010B /* YoshPINChangeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000010A /* YoshPINChangeEditor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -121,6 +127,12 @@
 		A0000000000000000000086 /* YoshSpiritView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshSpiritView.swift; sourceTree = "<group>"; };
 		A0000000000000000000088 /* YoshIdleGesture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshIdleGesture.swift; sourceTree = "<group>"; };
 		A0000000000000000000090 /* YoshSpiritDrawing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshSpiritDrawing.swift; sourceTree = "<group>"; };
+		A00000000000000000000100 /* YoshAppLock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshAppLock.swift; sourceTree = "<group>"; };
+		A00000000000000000000102 /* YoshAppLockCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshAppLockCredential.swift; sourceTree = "<group>"; };
+		A00000000000000000000104 /* YoshAppLockStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshAppLockStore.swift; sourceTree = "<group>"; };
+		A00000000000000000000106 /* YoshLockEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshLockEntry.swift; sourceTree = "<group>"; };
+		A00000000000000000000108 /* YoshAppLockSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshAppLockSettings.swift; sourceTree = "<group>"; };
+		A0000000000000000000010A /* YoshPINChangeEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshPINChangeEditor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -180,6 +192,7 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000017 /* AgentIdentity.swift */,
+				A00000000000000000000100 /* YoshAppLock.swift */,
 				A0000000000000000000003C /* AppOverview.swift */,
 				A0000000000000000000003E /* AuthorityOverviewPresentation.swift */,
 				A00000000000000000000051 /* PurchasePresentation.swift */,
@@ -207,6 +220,8 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000040 /* OverviewClient.swift */,
+				A00000000000000000000104 /* YoshAppLockStore.swift */,
+				A00000000000000000000102 /* YoshAppLockCredential.swift */,
 				A00000000000000000000043 /* NativeServiceRuntime.swift */,
 				A00000000000000000000045 /* ManagementTransport.swift */,
 				A00000000000000000000047 /* BackendLaunchConfiguration.swift */,
@@ -225,6 +240,9 @@
 				A0000000000000000000084 /* YoshEyeShape.swift */,
 				A0000000000000000000082 /* YoshClothShape.swift */,
 				A0000000000000000000080 /* YoshPINEntry.swift */,
+				A0000000000000000000010A /* YoshPINChangeEditor.swift */,
+				A00000000000000000000108 /* YoshAppLockSettings.swift */,
+				A00000000000000000000106 /* YoshLockEntry.swift */,
 				A00000000000000000000026 /* AgentCardBack.swift */,
 				A0000000000000000000007B /* CardPageHeader.swift */,
 				A0000000000000000000002C /* BackSection.swift */,
@@ -336,6 +354,12 @@
 				A0000000000000000000085 /* YoshEyeShape.swift in Sources */,
 				A0000000000000000000083 /* YoshClothShape.swift in Sources */,
 				A0000000000000000000081 /* YoshPINEntry.swift in Sources */,
+				A0000000000000000000010B /* YoshPINChangeEditor.swift in Sources */,
+				A00000000000000000000109 /* YoshAppLockSettings.swift in Sources */,
+				A00000000000000000000107 /* YoshLockEntry.swift in Sources */,
+				A00000000000000000000105 /* YoshAppLockStore.swift in Sources */,
+				A00000000000000000000103 /* YoshAppLockCredential.swift in Sources */,
+				A00000000000000000000101 /* YoshAppLock.swift in Sources */,
 				A0000000000000000000001D /* CardMaterial.swift in Sources */,
 				A00000000000000000000023 /* AgentCardNSWindow.swift in Sources */,
 				A00000000000000000000024 /* CardApplicationDelegate.swift in Sources */,

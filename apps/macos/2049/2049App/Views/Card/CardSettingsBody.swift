@@ -9,6 +9,7 @@ struct CardSettingsBody: View {
     let onOpenDataFolder: (URL) -> Void
     let onOpenRepository: () -> Void
     let onReload: () -> Void
+    var appLock: YoshAppLock? = nil
 
     private var unavailableValue: String { isLoading ? "Checking…" : "Unavailable" }
     private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
@@ -35,6 +36,10 @@ struct CardSettingsBody: View {
                             .help("2049 follows the macOS Reduce Motion accessibility setting.")
                     }
                     SettingsSection(title: "SECURITY", symbol: "lock") {
+                        if let appLock {
+                            YoshAppLockSettings(appLock: appLock)
+                            separator
+                        }
                         walletRow
                         separator
                         SettingsRow(title: "Private key", value: "Stored in macOS Keychain")

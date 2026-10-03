@@ -3,15 +3,17 @@ import SwiftUI
 struct CardWindow: View {
     let overviewClient: OverviewClient
     @State private var memberSession: CardMemberSession
+    @State private var appLock: YoshAppLock
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingBack = false
     @State private var isFlipping = false
     @State private var flipGeneration = 0
 
-    init(overviewClient: OverviewClient) {
+    init(overviewClient: OverviewClient, appLock: YoshAppLock? = nil) {
         self.overviewClient = overviewClient
         _memberSession = State(initialValue: CardMemberSession(client: overviewClient))
+        _appLock = State(initialValue: appLock ?? YoshAppLock())
     }
 
     var body: some View {
@@ -21,7 +23,7 @@ struct CardWindow: View {
                     CardMaterial()
                         .gesture(WindowDragGesture())
                         .allowsWindowActivationEvents()
-                    if showingBack {
+                    if showingBack && appLock.isUnlocked {
                         AgentCardBack(onFlip: flip, overviewClient: overviewClient, memberSession: memberSession)
                             .transition(.opacity)
                     } else {
@@ -39,11 +41,17 @@ struct CardWindow: View {
                     frontFace
                         .modifier(FlipFaceVisibility(angle: showingBack ? 180 : 0, isBack: false))
                         .allowsHitTesting(!showingBack)
+                        .accessibilityHidden(showingBack)
 
-                    AgentCardBack(onFlip: flip, overviewClient: overviewClient, memberSession: memberSession)
-                        .modifier(CardFaceRotation(angle: 180, perspective: 0, active: isFlipping))
-                        .modifier(FlipFaceVisibility(angle: showingBack ? 180 : 0, isBack: true))
-                        .allowsHitTesting(showingBack)
+                    // Opacity and hit testing alone are insufficient: locked sessions must
+                    // not construct account surfaces or expose them to accessibility.
+                    if appLock.isUnlocked {
+                        AgentCardBack(onFlip: flip, overviewClient: overviewClient, memberSession: memberSession)
+                            .modifier(CardFaceRotation(angle: 180, perspective: 0, active: isFlipping))
+                            .modifier(FlipFaceVisibility(angle: showingBack ? 180 : 0, isBack: true))
+                            .allowsHitTesting(showingBack)
+                            .accessibilityHidden(!showingBack)
+                    }
                 }
                 .frame(width: CardMetrics.cardSize.width, height: CardMetrics.cardSize.height)
                 .modifier(CardFaceRotation(angle: showingBack ? 180 : 0, perspective: 0.35, active: isFlipping))
@@ -52,11 +60,20 @@ struct CardWindow: View {
         .padding(CardMetrics.windowInset)
         .frame(width: CardMetrics.windowSize.width, height: CardMetrics.windowSize.height)
         .environment(\.colorScheme, .light)
-        .task { await memberSession.refresh() }
+        .environment(appLock)
+        .task { await appLock.load() }
+        .task(id: appLock.isUnlocked) {
+            guard appLock.isUnlocked else { return }
+            await memberSession.refresh()
+        }
+        .onChange(of: appLock.state) { _, state in
+            if state == .unlocked && !showingBack { flip() }
+        }
     }
 
     private var frontFace: some View {
-        AgentCardFront(identity: memberSession.selectedMember.map { AgentIdentity(name: $0.label) }, onFlip: flip)
+        AgentCardFront(identity: memberSession.selectedMember.map { AgentIdentity(name: $0.label) },
+            onFlip: flip, appLock: appLock)
             .overlay(alignment: .topLeading) {
                 WindowControls()
                     .padding(.leading, 24)
@@ -65,6 +82,7 @@ struct CardWindow: View {
     }
 
     private func flip() {
+        guard appLock.isUnlocked else { return }
         if reduceMotion {
             withAnimation(.easeInOut(duration: 0.18)) { showingBack.toggle() }
             return

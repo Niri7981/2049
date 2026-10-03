@@ -4,8 +4,8 @@ struct AgentCardFront: View {
     let identity: AgentIdentity?
     let onFlip: () -> Void
     var pinLength = 4
+    var appLock: YoshAppLock? = nil
 
-    @State private var pin = ""
     @FocusState private var passwordFocused: Bool
 
     var body: some View {
@@ -28,6 +28,7 @@ struct AgentCardFront: View {
             }
             .overlay(alignment: .topTrailing) {
                 CardFlipButton(action: flipCard)
+                    .disabled(appLock != nil && appLock?.isUnlocked != true)
                     .padding(.trailing, 36)
                     .padding(.top, 50)
             }
@@ -38,7 +39,7 @@ struct AgentCardFront: View {
                     .allowsHitTesting(false)
             }
             .overlay(alignment: .bottom) {
-                YoshPINEntry(pin: $pin, isFocused: $passwordFocused, digitCount: pinLength)
+                YoshLockEntry(appLock: appLock, isFocused: $passwordFocused, pinLength: pinLength)
                     .padding(.bottom, 36)
             }
             .foregroundStyle(Color(nsColor: .labelColor).opacity(0.88))
@@ -47,8 +48,8 @@ struct AgentCardFront: View {
     }
 
     private func flipCard() {
+        guard appLock == nil || appLock?.isUnlocked == true else { return }
         passwordFocused = false
-        pin = ""
         onFlip()
     }
 }
