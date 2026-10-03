@@ -202,12 +202,12 @@ struct BackOverview: View {
     }
 
     private var overviewContent: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             dailyAuthority
-                .padding(.top, 34)
+                .padding(.top, CardPageHeader.Layout.topSpacing)
 
             grantLimits
-                .padding(.top, 18)
+                .padding(.top, CardPageHeader.Layout.firstSectionSpacing)
 
             BackControls(
                 payments: presentation?.payments ?? "—",
@@ -216,7 +216,7 @@ struct BackOverview: View {
                 onPaymentsChange: { enabled in Task { await write(.paused(!enabled)) } },
                 execution: presentation?.execution ?? "—"
             )
-            .padding(.top, 9)
+            .padding(.top, 18)
 
             BackLatestPurchase(
                 latest: presentation?.latest,
@@ -229,38 +229,27 @@ struct BackOverview: View {
                 },
                 onPurchase: { id in open(.purchase(id, from: .authority)) }
             )
-            .padding(.top, 16)
+            .padding(.top, 13)
 
             Spacer(minLength: 0)
 
             loadStatus
+                .font(.system(size: 12))
                 .frame(minHeight: 28)
         }
-        .padding(.horizontal, 26)
+        .padding(.horizontal, CardPageHeader.Layout.contentInset)
     }
 
     private var dailyAuthority: some View {
         Button {
             open(.daily)
         } label: {
-            VStack(spacing: 0) {
-                Text(presentation?.remaining ?? "—")
-                    .font(.system(size: 56, weight: .regular))
-                    .tracking(-1.5)
-                    .monospacedDigit()
-                    .frame(height: 66)
+            VStack(alignment: .leading, spacing: 0) {
+                CardPageHeader(title: presentation?.remaining ?? "—",
+                    style: .hero(eyebrow: "REMAINING TODAY", isAmount: true))
 
-                Text("remaining today")
-                    .font(.system(size: 17))
-                    .foregroundStyle(.secondary)
-                    .frame(height: 22)
-
-                ProgressView(value: presentation?.progress ?? 0, total: 1)
-                    .progressViewStyle(.linear)
-                    .tint(Color(nsColor: .darkGray))
-                    .frame(width: 298)
-                    .padding(.top, 14)
-                    .accessibilityLabel("Daily authority remaining")
+                authorityLine
+                    .padding(.top, 10)
 
                 HStack(spacing: 6) {
                     Text(presentation?.dailyLimit ?? "of — daily")
@@ -268,15 +257,43 @@ struct BackOverview: View {
                         .font(.system(size: 11, weight: .medium))
                         .accessibilityHidden(true)
                 }
-                .font(.system(size: 15))
+                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-                .padding(.top, 10)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.top, 8)
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(overview == nil || writeState.isSaving || isRefreshing)
-        .accessibilityLabel("Daily Authority, \(presentation?.remaining ?? "unavailable") remaining. Change daily limit")
+        .accessibilityLabel("Shared daily Authority, \(presentation?.remaining ?? "unavailable") remaining. \(presentation?.dailyLimit ?? "Daily limit unavailable"). Change daily limit")
+        .accessibilityHint("Shared by all agents. Remaining excludes paid and reserved amounts.")
+    }
+
+    private var authorityLine: some View {
+        // This is a budget boundary, not a slider or payment-progress control.
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Rectangle()
+                    .fill(Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.35))
+                    .frame(height: 1.5)
+
+                if let presentation, overview?.budget.remaining != nil {
+                    let endpoint = max(0, geometry.size.width - 6) * presentation.progress
+                    Rectangle()
+                        .fill(Color(red: 0.48, green: 0.64, blue: 0.88).opacity(0.7))
+                        .frame(width: endpoint + 3, height: 1.5)
+                    Circle()
+                        .fill(Color(red: 0.48, green: 0.64, blue: 0.88))
+                        .frame(width: 6, height: 6)
+                        .offset(x: endpoint)
+                }
+            }
+            .frame(height: 6)
+        }
+        .frame(height: 6)
+        .accessibilityHidden(true)
     }
 
     private var grantLimits: some View {
@@ -284,44 +301,44 @@ struct BackOverview: View {
             open(.grant)
         } label: {
             HStack(spacing: 0) {
-                limit(label: "Grant", amount: presentation?.grantRemaining ?? "—", detail: presentation?.grantDetail ?? "unavailable")
+                limit(label: "GRANT", amount: presentation?.grantRemaining ?? "—", detail: presentation?.grantDetail ?? "unavailable")
 
                 Rectangle()
-                    .fill(Color.primary.opacity(0.09))
-                    .frame(width: 1, height: 54)
+                    .fill(Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5))
+                    .frame(width: 1, height: 60)
 
-                limit(label: "Per transaction", amount: presentation?.perTransaction ?? "—", detail: "max")
-                    .padding(.leading, 20)
+                limit(label: "PER TRANSACTION", amount: presentation?.perTransaction ?? "—", detail: "max")
+                    .padding(.leading, 18)
             }
-            .padding(.horizontal, 20)
-            .frame(height: 94)
-            .background(Color.white.opacity(0.38), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-            }
+            .frame(height: 64)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(overview == nil || writeState.isSaving || isRefreshing)
-        .accessibilityLabel("Spend grant, \(presentation?.grantRemaining ?? "unavailable") remaining; per transaction \(presentation?.perTransaction ?? "unavailable"). Manage grant")
+        .accessibilityLabel("\(agentName) spend grant, \(presentation?.grantRemaining ?? "unavailable") remaining, \(presentation?.grantDetail ?? "unavailable"); per transaction \(presentation?.perTransaction ?? "unavailable"). Manage grant")
     }
 
     private func limit(label: String, amount: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
                 Text(label)
+                    .tracking(1.8)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .medium))
                     .accessibilityHidden(true)
             }
-            .font(.system(size: 13))
+            .font(.system(size: 9, weight: .medium))
             .foregroundStyle(.secondary)
             Text(amount)
-                .font(.system(size: 25, weight: .regular))
+                .font(.system(size: 26, weight: .regular))
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .padding(.top, 8)
             Text(detail)
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
+                .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

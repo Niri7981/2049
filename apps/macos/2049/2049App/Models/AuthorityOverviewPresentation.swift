@@ -54,7 +54,9 @@ struct AuthorityOverviewPresentation {
         }
 
         payments = overview.service.status == .stopping ? "Unavailable" : (budget.paused ? "Paused" : "On")
-        execution = overview.service.purchaseMode == .liveDevnet ? "Live · Devnet" : "Simulated · Devnet"
+        let mode = overview.service.purchaseMode == .liveDevnet ? "Live" : "Simulated"
+        let network = overview.service.network == "Solana Devnet" ? "Devnet" : overview.service.network
+        execution = "\(mode) · \(network.isEmpty ? "Network unavailable" : network)"
 
         if let purchase = overview.purchases.first {
             let formatted = PurchasePresentation(purchase)

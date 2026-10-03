@@ -8,19 +8,26 @@ struct BackControls: View {
     let execution: String
 
     private var paymentsBinding: Binding<Bool> {
-        Binding(get: { paymentsEnabled ?? false }, set: onPaymentsChange)
+        Binding(get: { paymentsEnabled ?? false }, set: { enabled in onPaymentsChange(enabled) })
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            hairline
+
             HStack(spacing: 13) {
                 Image(systemName: "creditcard")
                     .font(.system(size: 22, weight: .regular))
                     .frame(width: 28)
                     .accessibilityHidden(true)
 
-                Text("Payments")
-                    .font(.system(size: 15))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Payments")
+                        .font(.system(size: 15, weight: .medium))
+                    Text("Allow agent purchases")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
 
                 Spacer(minLength: 8)
 
@@ -30,48 +37,53 @@ struct BackControls: View {
                 Toggle("Payments", isOn: paymentsBinding)
                     .labelsHidden()
                     .toggleStyle(.switch)
+                    .tint(Color(red: 0.48, green: 0.64, blue: 0.88))
                     .disabled(paymentsEnabled == nil || paymentsUpdating)
+                    .accessibilityLabel("Allow agent purchases")
+                    .accessibilityValue(paymentsUpdating ? "Saving" : payments)
+                    .accessibilityHint("Shared by all agents. Enabling payments still requires a valid grant and available authority.")
             }
-            .padding(.horizontal, 19)
-            .frame(height: 49)
+            .frame(minHeight: 57)
 
-            Rectangle()
-                .fill(Color.primary.opacity(0.08))
-                .frame(height: 1)
-                .padding(.horizontal, 18)
+            hairline
 
-            row(symbol: "square.stack.3d.up", title: "Execution", value: execution, valueColor: .secondary)
-        }
-        .frame(height: 100)
-        .background(Color.white.opacity(0.38), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+            HStack(spacing: 13) {
+                Image(systemName: "square.stack.3d.up")
+                    .font(.system(size: 22, weight: .regular))
+                    .frame(width: 28)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Execution")
+                        .font(.system(size: 15, weight: .medium))
+                    Text("Purchase environment")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Text(execution)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 57)
+            .accessibilityElement(children: .combine)
+
+            hairline
         }
     }
 
-    private func row(symbol: String, title: String, value: String, valueColor: Color) -> some View {
-        HStack(spacing: 13) {
-            Image(systemName: symbol)
-                .font(.system(size: 22, weight: .regular))
-                .frame(width: 28)
-                .accessibilityHidden(true)
-
-            Text(title)
-                .font(.system(size: 15))
-
-            Spacer(minLength: 8)
-
-            Text(value)
-                .font(.system(size: 14))
-                .foregroundStyle(valueColor)
-
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-        }
-        .padding(.horizontal, 19)
-        .frame(height: 49)
+    private var hairline: some View {
+        Rectangle()
+            .fill(Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.4))
+            .frame(height: 1)
+            .accessibilityHidden(true)
     }
 }
