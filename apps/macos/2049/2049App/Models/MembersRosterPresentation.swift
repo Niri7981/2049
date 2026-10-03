@@ -1,23 +1,39 @@
 import Foundation
 
-/// A curated integration roster alongside real backend members; names never prove provider support.
+/// Official integrations and custom identities have different setup and liveness evidence.
 struct MembersRosterPresentation {
-    enum ActionState {
-        case connect, connecting, connected, reconnect, enabled, unavailable
+    enum Status: Equatable {
+        case notConnected, notSetUp, settingUp, connected, waiting, comingSoon, accessAllowed, revoked, connectionIssue, loading
+
+        var title: String {
+            switch self {
+            case .notConnected: "Not Connected"
+            case .notSetUp: "Not set up"
+            case .settingUp: "Setting up…"
+            case .connected: "Connected"
+            case .waiting: "Waiting"
+            case .comingSoon: "Coming soon"
+            case .accessAllowed: "Access allowed"
+            case .revoked: "Revoked"
+            case .connectionIssue: "Connection issue"
+            case .loading: "Loading…"
+            }
+        }
+    }
+
+    enum Action {
+        case connect, retrySetup
 
         var title: String {
             switch self {
             case .connect: "Connect"
-            case .connecting: "Connecting…"
-            case .connected: "Connected"
-            case .reconnect: "Reconnect"
-            case .enabled: "Enabled"
-            case .unavailable: "Unavailable"
+            case .retrySetup: "Retry setup"
             }
         }
     }
 
     enum Icon { case monogram(String), symbol(String) }
+    enum Group: String, CaseIterable { case setUp = "SET UP", available = "AVAILABLE", custom = "CUSTOM" }
 
     struct Row: Identifiable {
         let id: String
@@ -25,60 +41,85 @@ struct MembersRosterPresentation {
         let name: String
         let provider: String
         let icon: Icon
-        let action: ActionState
+        let group: Group
+        let status: Status
+        let action: Action?
         let canSelect: Bool
         let explanation: String
+
+        var isCustom: Bool { group == .custom }
     }
 
-    let rows: [Row]
+    struct Section: Identifiable {
+        let group: Group
+        let rows: [Row]
+        var id: Group { group }
+    }
 
-    init(_ members: [CardMemberSummary], connectingMemberID: UUID? = nil) {
+    let sections: [Section]
+    var rows: [Row] { sections.flatMap(\.rows) }
+
+    init(_ members: [CardMemberSummary], connectingMemberID: UUID? = nil,
+         connectionIssueMemberID: UUID? = nil, hasLoadError: Bool = false) {
         var entries: [Row] = []
         if let codex = members.first(where: { $0.member.isDefault }) {
-            entries.append(Self.member(codex, provider: "OpenAI", icon: .symbol("command"), connecting: connectingMemberID))
+            entries.append(Self.member(codex, connecting: connectingMemberID, issue: connectionIssueMemberID))
         } else {
-            entries.append(Self.unavailable("codex", name: "Codex", provider: "OpenAI", icon: .symbol("command")))
+            entries.append(Row(id: "integration-codex", memberID: nil, name: "Codex", provider: "OpenAI",
+                icon: .symbol("command"), group: .available, status: hasLoadError ? .connectionIssue : .loading,
+                action: nil, canSelect: false, explanation: "2049 hasn't loaded this agent's connection status yet."))
         }
         entries += [
-            Self.unavailable("claude", name: "Claude Code", provider: "Anthropic", icon: .monogram("AI")),
-            Self.unavailable("gemini", name: "Gemini CLI", provider: "Google", icon: .monogram("G")),
-            Self.unavailable("grok", name: "Grok", provider: "xAI", icon: .monogram("xAI")),
-            Self.unavailable("cursor", name: "Cursor Agent", provider: "Cursor", icon: .symbol("cursorarrow")),
-            Self.unavailable("copilot", name: "GitHub Copilot", provider: "GitHub", icon: .monogram("GH")),
-            Self.unavailable("windsurf", name: "Windsurf", provider: "Windsurf", icon: .monogram("W")),
+            Self.comingSoon("claude", name: "Claude Code", provider: "Anthropic", icon: .monogram("AI")),
+            Self.comingSoon("gemini", name: "Gemini CLI", provider: "Google", icon: .monogram("G")),
+            Self.comingSoon("grok", name: "Grok", provider: "xAI", icon: .monogram("xAI")),
+            Self.comingSoon("cursor", name: "Cursor Agent", provider: "Cursor", icon: .symbol("cursorarrow")),
+            Self.comingSoon("copilot", name: "GitHub Copilot", provider: "GitHub", icon: .monogram("GH")),
+            Self.comingSoon("windsurf", name: "Windsurf", provider: "Windsurf", icon: .monogram("W")),
         ]
-        let custom = members.filter { !$0.member.isDefault }
-        if custom.isEmpty {
-            entries.append(Self.unavailable("custom", name: "Custom Agent", provider: "2049", icon: .symbol("sparkle")))
-        } else {
-            entries += custom.map { Self.member($0, provider: "2049", icon: .symbol("sparkle"), connecting: connectingMemberID) }
+        entries += members.filter { !$0.member.isDefault }.map {
+            Self.member($0, connecting: connectingMemberID, issue: connectionIssueMemberID)
         }
-        rows = entries
+        sections = Group.allCases.map { group in Section(group: group, rows: entries.filter { $0.group == group }) }
     }
 
-    private static func member(_ entry: CardMemberSummary, provider: String, icon: Icon, connecting: UUID?) -> Row {
+    private static func member(_ entry: CardMemberSummary, connecting: UUID?, issue: UUID?) -> Row {
+        let official = entry.member.isDefault
         let active = entry.member.status == .active
-        let state: ActionState = if !active { .unavailable }
-            else if entry.member.id == connecting { .connecting }
-            else if entry.connection.hasLiveMCPSession { .connected }
-            else if entry.member.isDefault && entry.connection.enabled && entry.connection.integration != nil { .reconnect }
-            else if entry.connection.enabled { .enabled }
-            else { .connect }
-        // Access enablement and historical authenticated requests are not live connectivity.
-        let explanation = switch state {
-        case .connect: entry.member.isDefault ? "Configure Codex MCP access for this member." : "Enable connection access. Reconnect the MCP host to use 2049."
-        case .connecting: "Setting up connection access."
-        case .reconnect: "Start a new Codex chat or reload MCP. This action checks configuration without replacing a valid credential or grant."
-        case .enabled: "Access is enabled. Reconnect the MCP host to use 2049."
-        case .unavailable: "This member has been revoked."
-        case .connected: "The host connection has been verified."
+        let group: Group = official
+            ? (entry.connection.enabled || entry.connection.integration?.configured == true ? .setUp : .available)
+            : .custom
+        let status: Status = if !active { .revoked }
+            else if entry.member.id == connecting { .settingUp }
+            else if entry.member.id == issue && (official ? !entry.connection.hasLiveMCPSession : !entry.connection.enabled) { .connectionIssue }
+            else if official && entry.connection.hasLiveMCPSession { .connected }
+            else if entry.connection.enabled { official ? .waiting : .accessAllowed }
+            else { official ? .notConnected : .notSetUp }
+        let action: Action? = switch status {
+        case .notConnected, .notSetUp: .connect
+        case .connectionIssue: .retrySetup
+        default: nil
+        }
+        let explanation = switch status {
+        case .notConnected: "Connect Codex to 2049."
+        case .notSetUp: "Allow this custom agent to use 2049."
+        case .settingUp: "Setting up access to 2049."
+        case .waiting: "Open or continue a Codex chat to finish connecting."
+        case .accessAllowed: "This custom agent is allowed to use 2049. Its online status cannot be confirmed."
+        case .revoked: "This member's access has been revoked."
+        case .connected: "Codex is ready to use 2049."
+        case .connectionIssue: "Connection setup wasn't confirmed. Retry setup after resolving the problem."
+        case .comingSoon: "Support for this integration is coming soon."
+        case .loading: "Loading connection status."
         }
         return Row(id: entry.member.id.uuidString, memberID: entry.member.id, name: entry.member.label,
-            provider: provider, icon: icon, action: state, canSelect: active, explanation: explanation)
+            provider: official ? "OpenAI" : "Custom agent", icon: .symbol(official ? "command" : "person"),
+            group: group, status: status, action: action, canSelect: active, explanation: explanation)
     }
 
-    private static func unavailable(_ id: String, name: String, provider: String, icon: Icon) -> Row {
+    private static func comingSoon(_ id: String, name: String, provider: String, icon: Icon) -> Row {
         Row(id: "integration-\(id)", memberID: nil, name: name, provider: provider, icon: icon,
-            action: .unavailable, canSelect: false, explanation: "This integration is not available in 2049 yet.")
+            group: .available, status: .comingSoon, action: nil, canSelect: false,
+            explanation: "This integration isn't supported yet.")
     }
 }

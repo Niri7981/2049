@@ -13,6 +13,10 @@ struct MembersView: View {
 
     private enum Editor: Equatable { case create, rename(UUID) }
 
+    private var showsSecondaryPage: Bool {
+        editor != nil || (showingDetail && session.selectedMember != nil)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let editor {
@@ -23,15 +27,15 @@ struct MembersView: View {
                 listContent
             }
         }
-        .padding(.horizontal, 26)
-        .padding(.top, 24)
+        .padding(.horizontal, CardPageHeader.Layout.contentInset)
+        .padding(.top, showsSecondaryPage ? 24 : CardPageHeader.Layout.topSpacing)
         .padding(.bottom, 12)
         .confirmationDialog("Revoke this agent?", isPresented: $showingRevokeConfirmation) {
             Button("Revoke agent", role: .destructive) {
                 if let id = revokeTargetID { Task { await revoke(id) } }
             }
         } message: {
-            Text("Its connection and grant will be revoked. Existing purchase records remain available in the backend.")
+            Text("Its access and current spending authorization will be revoked. Existing purchases will be kept.")
         }
         .onChange(of: session.selectedMemberID) { _, _ in
             // A focused rename is always about the card's current member.
@@ -51,7 +55,8 @@ struct MembersView: View {
 
     private var listContent: some View {
         MembersRoster(
-            presentation: MembersRosterPresentation(session.members, connectingMemberID: session.connectingMemberID),
+            presentation: MembersRosterPresentation(session.members, connectingMemberID: session.connectingMemberID,
+                connectionIssueMemberID: session.connectionIssueMemberID, hasLoadError: session.loadError != nil),
             selectedMemberID: session.selectedMemberID,
             isLoading: session.isLoading,
             interactionsDisabled: isSaving || session.isLoading || session.connectingMemberID != nil,
@@ -65,7 +70,6 @@ struct MembersView: View {
             },
             onRetry: session.loadError == nil ? nil : { retryMembers() }
         )
-        .padding(.top, 20)
     }
 
     private func selectMember(_ id: UUID) {
@@ -86,14 +90,15 @@ struct MembersView: View {
             Text(member.label)
                 .font(.title2)
                 .lineLimit(2)
-            Text(member.isDefault ? "Default agent · Active" : "Active agent")
+            Text(member.isDefault ? "OpenAI" : "Custom agent")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Divider()
             if let entry = session.members.first(where: { $0.member.id == member.id }) {
-                fact("Connection", entry.connection.hasLiveMCPSession
-                    ? "Connected" : entry.connection.enabled ? "Reconnect required" : "Not connected")
-                fact("Spend Grant", grantStatus(entry.grant))
+                let row = MembersRosterPresentation([entry], connectionIssueMemberID: session.connectionIssueMemberID)
+                    .rows.first { $0.memberID == member.id }
+                fact(member.isDefault ? "Connection" : "Access", row?.status.title ?? "Not set up")
+                fact("Spending authorization", grantStatus(entry.grant))
             }
             Divider()
             Button("Rename agent") {
@@ -121,13 +126,13 @@ struct MembersView: View {
             Button("Members", systemImage: "chevron.left") { self.editor = nil }
                 .buttonStyle(.plain)
                 .disabled(isSaving)
-            Text(editor == .create ? "Add agent" : "Rename agent")
+            Text(editor == .create ? "Add custom agent" : "Rename agent")
                 .font(.title2)
             TextField("Agent name", text: $nameInput)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { Task { await save(editor) } }
                 .disabled(isSaving)
-            Button(editor == .create ? "Add agent" : "Save name") { Task { await save(editor) } }
+            Button(editor == .create ? "Add custom agent" : "Save name") { Task { await save(editor) } }
                 .disabled(isSaving)
             if isSaving { ProgressView("Saving agent").controlSize(.small) }
             if let message {

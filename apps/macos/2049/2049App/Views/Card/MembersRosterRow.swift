@@ -23,42 +23,44 @@ struct MembersRosterRow: View {
             } else {
                 identity
             }
-            Button(action: connect) {
-                Text(row.action.title)
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundStyle(row.action == .unavailable ? secondaryInk : signal)
-                    .frame(width: 92, height: 32)
-                    .background(actionFill, in: Capsule())
-                    .overlay {
-                        Capsule().strokeBorder(row.action == .connect ? signal.opacity(0.45) : .clear, lineWidth: 1)
-                    }
-                    .contentShape(Capsule())
+            VStack(alignment: .trailing, spacing: 4) {
+                if row.status == .connectionIssue {
+                    status
+                }
+                if let action = row.action {
+                    Button(action.title, action: connect)
+                        .font(.system(size: 11))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(signal)
+                        .disabled(interactionsDisabled || row.memberID == nil)
+                        .help(row.explanation)
+                        .accessibilityLabel("\(action.title) · \(row.name)")
+                        .accessibilityHint(row.explanation)
+                } else if row.status != .connectionIssue {
+                    status
+                }
             }
-            .buttonStyle(.plain)
-            .disabled(interactionsDisabled || (row.action != .connect && row.action != .reconnect) || row.memberID == nil)
-            .help(row.explanation)
-            .accessibilityLabel("\(row.action.title) · \(row.name)")
-            .accessibilityHint(row.explanation)
         }
-        .frame(minHeight: 74)
+        .frame(minHeight: row.isCustom ? 56 : 74)
     }
 
     private var identity: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: row.isCustom ? 12 : 16) {
             providerIcon
             VStack(alignment: .leading, spacing: 4) {
                 Text(row.name)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: row.isCustom ? 14 : 15, weight: row.isCustom ? .regular : .medium))
                     .foregroundStyle(ink)
                     .lineLimit(1)
                 Text(row.provider)
-                    .font(.system(size: 12))
+                    .font(.system(size: row.isCustom ? 11 : 12))
                     .foregroundStyle(secondaryInk)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, minHeight: 74, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: row.isCustom ? 56 : 74, alignment: .leading)
         .contentShape(Rectangle())
     }
 
@@ -69,25 +71,35 @@ struct MembersRosterRow: View {
             case .monogram(let text):
                 Text(text).font(.system(size: text.count > 2 ? 18 : 23, weight: .semibold))
             case .symbol(let name):
-                Image(systemName: name).font(.system(size: 25, weight: .regular))
+                Image(systemName: name).font(.system(size: row.isCustom ? 16 : 25, weight: .regular))
             }
         }
-        .foregroundStyle(ink)
-        .frame(width: 44, height: 44)
-        .background(secondaryInk.opacity(0.06), in: .rect(cornerRadius: 12))
+        .foregroundStyle(row.isCustom ? secondaryInk : ink)
+        .frame(width: row.isCustom ? 26 : 44, height: row.isCustom ? 26 : 44)
+        .background(row.isCustom ? .clear : secondaryInk.opacity(0.06), in: .rect(cornerRadius: 12))
         .accessibilityHidden(true)
     }
 
-    private var actionFill: Color {
-        switch row.action {
-        case .connect: .clear
-        case .connecting, .connected, .reconnect, .enabled: Color(red: 0.76, green: 0.85, blue: 0.98).opacity(0.32)
-        case .unavailable: secondaryInk.opacity(0.08)
+    private var status: some View {
+        HStack(spacing: 6) {
+            if row.status == .connected || row.status == .waiting || row.status == .accessAllowed {
+                Circle()
+                    .fill(row.status == .connected ? signal : secondaryInk.opacity(0.65))
+                    .frame(width: 5, height: 5)
+                    .accessibilityHidden(true)
+            }
+            Text(row.status.title)
         }
+        .font(.system(size: 11))
+        .foregroundStyle(row.status == .connected ? signal : secondaryInk)
+        .fixedSize(horizontal: true, vertical: false)
+        .help(row.explanation)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(row.status.title) · \(row.name)")
     }
 
     private func connect() {
-        guard !interactionsDisabled, row.action == .connect || row.action == .reconnect, let id = row.memberID else { return }
+        guard !interactionsDisabled, row.action != nil, let id = row.memberID else { return }
         onConnect(id)
     }
 }

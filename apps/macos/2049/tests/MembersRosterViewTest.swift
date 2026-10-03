@@ -28,9 +28,10 @@ struct MembersRosterViewTest {
         precondition(selections == [id] && connections == [id], "Row selection must not enable access")
         rowWindow.close()
 
-        for state in [MembersRosterPresentation.ActionState.connecting, .connected, .enabled, .unavailable] {
+        for state in [MembersRosterPresentation.Status.settingUp, .connected, .waiting, .accessAllowed, .comingSoon, .revoked] {
             let inactive = MembersRosterPresentation.Row(id: "fixture", memberID: id, name: "Fixture",
-                provider: "2049", icon: .symbol("sparkle"), action: state, canSelect: true, explanation: "Fixture state")
+                provider: "2049", icon: .symbol("sparkle"), group: .available,
+                status: state, action: nil, canSelect: true, explanation: "Fixture state")
             let host = NSHostingView(rootView: MembersRosterRow(row: inactive, isSelected: false, interactionsDisabled: false,
                 onSelect: select, onConnect: connect).frame(width: 368, height: 74))
             let inactiveWindow = window(host, size: NSSize(width: 368, height: 74))
@@ -41,7 +42,8 @@ struct MembersRosterViewTest {
 
         let view = MembersRoster(presentation: roster, selectedMemberID: id, isLoading: false,
             interactionsDisabled: false, error: nil, onSelect: select, onConnect: connect, onAdd: {}, onRetry: {})
-            .padding(.horizontal, 26).padding(.top, 44).padding(.bottom, 12)
+            .padding(.horizontal, CardPageHeader.Layout.contentInset)
+            .padding(.top, CardPageHeader.Layout.topSpacing).padding(.bottom, 12)
             .frame(width: 420, height: 526)
             .background(Color(red: 0.95, green: 0.97, blue: 0.985))
             .environment(\.colorScheme, .light)

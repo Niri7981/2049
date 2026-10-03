@@ -24,7 +24,7 @@ struct MembersConnectionSmoke {
             try await Task.sleep(for: .milliseconds(10))
         }
         precondition(session.connectingMemberID == defaultID)
-        precondition(MembersRosterPresentation(session.members, connectingMemberID: session.connectingMemberID).rows[0].action == .connecting)
+        precondition(MembersRosterPresentation(session.members, connectingMemberID: session.connectingMemberID).rows[0].status == .settingUp)
         await session.connect(defaultID) // Duplicate and other-row clicks must not rotate credentials twice.
         await session.connect(customID)
         await first.value
@@ -46,7 +46,7 @@ struct MembersConnectionSmoke {
         precondition(session.connectingMemberID == nil)
         await session.refresh(retry: true)
         precondition(session.loadError == nil && session.members.first { $0.member.id == customID }?.connection.enabled == true)
-        precondition(!MembersRosterPresentation(session.members).rows.contains { $0.action == .connected })
+        precondition(!MembersRosterPresentation(session.members).rows.contains { $0.status == .connected })
         print("Members quick connect: member-scoped API, duplicate guard, stable selection, failure/retry, and unverified refresh passed")
     }
 }
