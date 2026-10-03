@@ -62,6 +62,14 @@ struct PurchasePresentation {
 
 /// Activity-only wording. The Authority overview continues to use PurchasePresentation unchanged.
 struct ActivityPurchasePresentation {
+    enum Section: String, CaseIterable {
+        case paid = "Paid"
+        case notPaid = "Not Paid"
+        case needsAttention = "Needs Attention"
+        case simulated = "Simulated"
+    }
+
+    let section: Section
     let title: String
     let symbol: String
     let status: String
@@ -76,6 +84,17 @@ struct ActivityPurchasePresentation {
     let timestamp: String
 
     init(_ purchase: AppOverview.Purchase) {
+        section = switch purchase.status {
+        case "PAID": switch purchase.executionMode {
+            case .liveDevnet: .paid
+            case .simulated: .simulated
+            case .unknown: .needsAttention
+        }
+        case "DENIED", "EXPIRED", "FAILED", "APPROVED", "REQUIRES_APPROVAL": .notPaid
+        case "PAYING", "PAYMENT_UNKNOWN": .needsAttention
+        default: .needsAttention
+        }
+
         switch purchase.resourceId ?? purchase.offerId {
         case "market-analysis":
             title = "Market Analysis"

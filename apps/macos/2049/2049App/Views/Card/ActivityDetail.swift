@@ -18,12 +18,8 @@ struct ActivityDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("LATEST ACTIVITY")
-                .font(.system(size: 10, weight: .medium))
-                .tracking(2.6)
-                .foregroundStyle(secondaryInk)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .trailing) {
+            CardPageHeader(title: "Agent activity", style: .hero(eyebrow: "LATEST ACTIVITY"))
+                .overlay(alignment: .topTrailing) {
                     HStack(spacing: 12) {
                         Button("Back to Authority", systemImage: "chevron.left", action: onBack)
                             .help("Back to Authority")
@@ -36,13 +32,6 @@ struct ActivityDetail: View {
                     .font(.system(size: 12))
                     .foregroundStyle(secondaryInk)
                 }
-
-            Text("Agent activity")
-                .font(.system(size: 44, weight: .regular, design: .serif))
-                .tracking(-1.4)
-                .frame(height: 52, alignment: .leading)
-                .padding(.top, 8)
-                .accessibilityAddTraits(.isHeader)
 
             Text("Purchases, decisions, and outcomes for \(agentName).")
                 .font(.system(size: 13))
@@ -91,11 +80,11 @@ struct ActivityDetail: View {
                     .padding(.bottom, 12)
                 }
                 .scrollIndicators(.automatic)
-                .padding(.top, 22)
+                .padding(.top, CardPageHeader.Layout.firstSectionSpacing)
             }
         }
-        .padding(.horizontal, 26)
-        .padding(.top, 44)
+        .padding(.horizontal, CardPageHeader.Layout.contentInset)
+        .padding(.top, CardPageHeader.Layout.topSpacing)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
