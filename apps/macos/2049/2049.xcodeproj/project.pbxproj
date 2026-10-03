@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B84900000000000000000012 /* YoshTabPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000013 /* YoshTabPage.swift */; };
+		B84900000000000000000010 /* YoshTabMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000011 /* YoshTabMotion.swift */; };
 		B84900000000000000000001 /* ProviderIcons.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000002 /* ProviderIcons.xcassets */; };
 		A0000000000000000000000B /* TwentyFortyNineApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000008 /* TwentyFortyNineApp.swift */; };
 		A0000000000000000000001A /* CardWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000016 /* CardWindow.swift */; };
@@ -72,6 +74,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B84900000000000000000013 /* YoshTabPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshTabPage.swift; sourceTree = "<group>"; };
+		B84900000000000000000011 /* YoshTabMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshTabMotion.swift; sourceTree = "<group>"; };
 		B84900000000000000000002 /* ProviderIcons.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = ProviderIcons.xcassets; sourceTree = "<group>"; };
 		A00000000000000000000008 /* TwentyFortyNineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwentyFortyNineApp.swift; sourceTree = "<group>"; };
 		A0000000000000000000000A /* 2049.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = 2049.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -263,6 +267,8 @@
 				A00000000000000000000030 /* BackControls.swift */,
 				A00000000000000000000032 /* BackLatestPurchase.swift */,
 				A00000000000000000000034 /* BackNavigation.swift */,
+				B84900000000000000000013 /* YoshTabPage.swift */,
+				B84900000000000000000011 /* YoshTabMotion.swift */,
 				A0000000000000000000005F /* CardSettingsView.swift */,
 				A00000000000000000000071 /* CardSettingsBody.swift */,
 				A00000000000000000000073 /* SettingsSection.swift */,
@@ -400,6 +406,8 @@
 				A00000000000000000000031 /* BackControls.swift in Sources */,
 				A00000000000000000000033 /* BackLatestPurchase.swift in Sources */,
 				A00000000000000000000035 /* BackNavigation.swift in Sources */,
+				B84900000000000000000012 /* YoshTabPage.swift in Sources */,
+				B84900000000000000000010 /* YoshTabMotion.swift in Sources */,
 				A00000000000000000000039 /* AgentsMenu.swift in Sources */,
 				A0000000000000000000003B /* BackFlipButton.swift in Sources */,
 				A0000000000000000000003D /* AppOverview.swift in Sources */,

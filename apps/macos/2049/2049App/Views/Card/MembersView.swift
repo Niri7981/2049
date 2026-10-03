@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MembersView: View {
     let session: CardMemberSession
+    var isActive = true
 
     @State private var showingDetail = false
     @State private var editor: Editor?
@@ -44,7 +45,8 @@ struct MembersView: View {
             revokeTargetID = nil
             message = nil
         }
-        .task {
+        .task(id: isActive) {
+            guard isActive else { return }
             await session.refresh()
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }

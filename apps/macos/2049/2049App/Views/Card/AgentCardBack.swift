@@ -6,12 +6,14 @@ struct AgentCardBack: View {
     let memberSession: CardMemberSession
 
     @State private var selectedSection: BackSection
+    @State private var visitedSections: Set<BackSection>
 
     init(onFlip: @escaping () -> Void, overviewClient: OverviewClient, memberSession: CardMemberSession, initialSection: BackSection = .connection) {
         self.onFlip = onFlip
         self.overviewClient = overviewClient
         self.memberSession = memberSession
         _selectedSection = State(initialValue: initialSection)
+        _visitedSections = State(initialValue: [initialSection])
     }
 
     var body: some View {
@@ -37,57 +39,73 @@ struct AgentCardBack: View {
                         memberID: memberID,
                         agentName: memberSession.selectedMember?.label ?? "Agent",
                         section: selectedSection,
-                        onMemberChanged: { await memberSession.refresh() }
+                        onMemberChanged: { await memberSession.refresh() },
+                        visitedSections: visitedSections
                     )
                     .id(memberID)
-                    .opacity(showsOverview ? 1 : 0)
+                    .zIndex(showsOverview ? 1 : 0)
                     .allowsHitTesting(showsOverview)
                     .accessibilityHidden(!showsOverview)
-                } else if showsOverview {
-                    if selectedSection == .connection {
-                        VStack(alignment: .leading, spacing: 16) {
-                            CardPageHeader(title: memberSession.loadError == nil ? "Connection" : "Connection Issue",
-                                style: .hero(eyebrow: "CONNECTION"))
-                            Text(memberSession.loadError ?? (memberSession.isLoading
-                                ? "Loading connection…" : "Choose an active agent in Members to connect."))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            if memberSession.loadError != nil {
-                                Button("Retry") { Task { await memberSession.refresh(retry: true) } }
-                                    .buttonStyle(.link)
-                            }
-                            Spacer(minLength: 0)
+                } else {
+                    YoshTabPage(section: .connection, selection: selectedSection) {
+                        if visitedSections.contains(.connection) { connectionUnavailable }
+                    }
+                    YoshTabPage(section: .authority, selection: selectedSection) {
+                        if visitedSections.contains(.authority) {
+                            ContentUnavailableView(
+                                memberSession.loadError == nil ? "No active agent" : "Agents unavailable",
+                                systemImage: "person.crop.circle.badge.questionmark",
+                                description: Text(memberSession.loadError
+                                    ?? (memberSession.isLoading ? "Waiting for the local service." : "Add an agent in Members to continue.")))
                         }
-                        .padding(.horizontal, CardPageHeader.Layout.contentInset)
-                        .padding(.top, CardPageHeader.Layout.topSpacing)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    } else {
-                        ContentUnavailableView(
-                            memberSession.loadError == nil ? "No active agent" : "Agents unavailable",
-                            systemImage: "person.crop.circle.badge.questionmark",
-                            description: Text(memberSession.loadError
-                                ?? (memberSession.isLoading ? "Waiting for the local service." : "Add an agent in Members to continue.")))
                     }
                 }
 
-                switch selectedSection {
-                case .connection, .authority:
-                    EmptyView()
-                case .members:
-                    MembersView(session: memberSession)
-                case .settings:
-                    CardSettingsView(overviewClient: overviewClient)
+                YoshTabPage(section: .members, selection: selectedSection) {
+                    if visitedSections.contains(.members) {
+                        MembersView(session: memberSession, isActive: selectedSection == .members)
+                    }
+                }
+                YoshTabPage(section: .settings, selection: selectedSection) {
+                    if visitedSections.contains(.settings) {
+                        CardSettingsView(overviewClient: overviewClient, isActive: selectedSection == .settings)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .clipped()
 
-            BackNavigation(selection: $selectedSection)
+            BackNavigation(selection: Binding(get: { selectedSection }, set: selectSection))
                 .padding(.horizontal, 20)
                 .padding(.bottom, 16)
         }
         .frame(width: CardMetrics.cardSize.width, height: CardMetrics.cardSize.height)
         .foregroundStyle(Color(nsColor: .labelColor))
         .accessibilityElement(children: .contain)
+    }
+
+    private func selectSection(_ section: BackSection) {
+        visitedSections.insert(section)
+        selectedSection = section
+    }
+
+    private var connectionUnavailable: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            CardPageHeader(title: memberSession.loadError == nil ? "Connection" : "Connection Issue",
+                style: .hero(eyebrow: "CONNECTION"))
+            Text(memberSession.loadError ?? (memberSession.isLoading
+                ? "Loading connection…" : "Choose an active agent in Members to connect."))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            if memberSession.loadError != nil {
+                Button("Retry") { Task { await memberSession.refresh(retry: true) } }
+                    .buttonStyle(.link)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, CardPageHeader.Layout.contentInset)
+        .padding(.top, CardPageHeader.Layout.topSpacing)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var showsOverview: Bool {

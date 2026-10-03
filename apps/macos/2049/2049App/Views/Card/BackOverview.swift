@@ -6,6 +6,7 @@ struct BackOverview: View {
     let agentName: String
     let section: BackSection
     let onMemberChanged: () async -> Void
+    var visitedSections: Set<BackSection> = [.connection, .authority]
 
     @State private var state: LoadState = .loading
     @State private var writeState: WriteState = .idle
@@ -82,13 +83,45 @@ struct BackOverview: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            if section == .connection {
-                if let overview {
-                    connectionPage(overview, onBack: nil)
-                } else {
-                    connectionLoadStatus
+            YoshTabPage(section: .connection, selection: section) {
+                if visitedSections.contains(.connection) {
+                    if let overview {
+                        connectionPage(overview, onBack: nil)
+                    } else {
+                        connectionLoadStatus
+                    }
                 }
-            } else if let overview, let selectedDetail {
+            }
+            YoshTabPage(section: .authority, selection: section) {
+                if visitedSections.contains(.authority) { authorityContent }
+            }
+        }
+        .task { if isActive { await reload() } }
+        .task(id: section) {
+            guard section == .connection else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(3)) } catch { return }
+                await refreshConnection()
+            }
+        }
+        .onChange(of: section) { _, _ in
+            // Tab surfaces retain their local route; only explicit Back or invalidation resets it.
+            if isActive {
+                Task { await reload(preservingContent: true) }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
+            selectedDetail = nil
+            writeState = .idle
+            activityRefreshing = false
+            activityRefreshError = nil
+            state = .failed(.serviceExited)
+        }
+    }
+
+    private var authorityContent: some View {
+        ZStack(alignment: .top) {
+            if let overview, let selectedDetail {
                 switch selectedDetail {
                 case .daily:
                     AuthoritySettingsDetail(
@@ -145,27 +178,6 @@ struct BackOverview: View {
             } else {
                 overviewContent
             }
-        }
-        .task { if isActive { await reload() } }
-        .task(id: section) {
-            guard section == .connection else { return }
-            while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(3)) } catch { return }
-                await refreshConnection()
-            }
-        }
-        .onChange(of: section) { _, _ in
-            selectedDetail = nil
-            if isActive {
-                Task { await reload(preservingContent: true) }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
-            selectedDetail = nil
-            writeState = .idle
-            activityRefreshing = false
-            activityRefreshError = nil
-            state = .failed(.serviceExited)
         }
     }
 

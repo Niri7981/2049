@@ -2,12 +2,17 @@ import SwiftUI
 
 struct BackNavigation: View {
     @Binding var selection: BackSection
+    @Namespace private var selectionSurface
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(BackSection.allCases, id: \.self) { section in
                 Button {
-                    selection = section
+                    withAnimation(reduceMotion ? .easeOut(duration: YoshTabMotion.reducedDuration)
+                        : YoshTabMotion.indicatorSpring) {
+                        selection = section
+                    }
                 } label: {
                     VStack(spacing: 4) {
                         Image(systemName: section.symbol)
@@ -21,9 +26,18 @@ struct BackNavigation: View {
                     .frame(height: 66)
                     .contentShape(Rectangle())
                     .background {
-                        if selection == section {
-                            Capsule()
-                                .fill(Color.white.opacity(0.78))
+                        Group {
+                            if selection == section {
+                                if reduceMotion {
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.78))
+                                        .transition(.opacity)
+                                } else {
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.78))
+                                        .matchedGeometryEffect(id: "selection", in: selectionSurface)
+                                }
+                            }
                         }
                     }
                 }
@@ -31,6 +45,8 @@ struct BackNavigation: View {
                 .accessibilityAddTraits(selection == section ? .isSelected : [])
             }
         }
+        .animation(reduceMotion ? .easeOut(duration: YoshTabMotion.reducedDuration)
+            : YoshTabMotion.indicatorSpring, value: selection)
         .padding(5)
         .frame(height: 76)
         .background(.regularMaterial, in: Capsule())

@@ -1,4 +1,4 @@
-enum BackSection: CaseIterable {
+enum BackSection: Int, CaseIterable {
     case connection
     case authority
     case members
