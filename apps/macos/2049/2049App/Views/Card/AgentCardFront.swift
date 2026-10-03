@@ -3,45 +3,60 @@ import SwiftUI
 struct AgentCardFront: View {
     let identity: AgentIdentity?
     let onFlip: () -> Void
+    var pinLength = 4
+
+    @State private var pin = ""
+    @FocusState private var passwordFocused: Bool
 
     var body: some View {
         Color.clear
             .frame(width: CardMetrics.cardSize.width, height: CardMetrics.cardSize.height)
             .allowsHitTesting(false)
+            .background {
+                RoundedRectangle(cornerRadius: 30, style: .continuous)
+                    .fill(Color(white: 0.925).opacity(0.9))
+                    .padding(1)
+                    .allowsHitTesting(false)
+            }
             .overlay(alignment: .topLeading) {
-                Text("2049")
-                    .font(.system(size: 38, weight: .ultraLight, design: .default))
+                Text("Yosh")
+                    .font(.system(size: 46, weight: .regular, design: .serif))
                     .tracking(-0.8)
+                    .foregroundStyle(Color(nsColor: .labelColor).opacity(0.96))
                     .padding(.leading, 36)
-                    .padding(.top, 38)
+                    .padding(.top, 48)
             }
             .overlay(alignment: .topTrailing) {
-                CardFlipButton(action: onFlip)
+                CardFlipButton(action: flipCard)
                     .padding(.trailing, 36)
-                    .padding(.top, 38)
+                    .padding(.top, 50)
             }
-            .overlay(alignment: .bottomLeading) {
-                AgentIdentityBlock(identity: identity)
-                    .padding(.leading, 36)
-                    .padding(.bottom, 42)
+            .overlay {
+                YoshSpiritView(posture: passwordFocused ? .protective : .idle)
+                    .frame(width: 260, height: 374)
+                    .offset(y: 17)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .bottom) {
+                YoshPINEntry(pin: $pin, isFocused: $passwordFocused, digitCount: pinLength)
+                    .padding(.bottom, 36)
             }
             .foregroundStyle(Color(nsColor: .labelColor).opacity(0.88))
             .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("YoshFront")
+    }
+
+    private func flipCard() {
+        passwordFocused = false
+        pin = ""
+        onFlip()
     }
 }
 
-private struct AgentIdentityBlock: View {
-    let identity: AgentIdentity?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text(identity?.name ?? "No agent selected")
-                .font(.system(size: 27, weight: .medium))
-                .tracking(2.4)
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-        }
-    }
+#Preview("Yosh front") {
+    AgentCardFront(identity: nil, onFlip: {})
+        .background(CardMaterial())
+        .environment(\.colorScheme, .light)
 }
 
 struct CardFlipButton: View {
