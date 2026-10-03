@@ -7,12 +7,27 @@ struct AgentConnectionDetail: View {
     let writeFailed: Bool
     let onBack: (() -> Void)?
     let onSetEnabled: (Bool) async -> Void
+    let onRetry: (() async -> Void)?
+    let retryTitle: String
 
     @State private var showingRevokeConfirmation = false
 
     private let signal = Color(red: 0.24, green: 0.49, blue: 0.81)
     private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
     private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
+
+    init(presentation: ConnectionPresentation, isSaving: Bool, writeMessage: String?, writeFailed: Bool,
+         onBack: (() -> Void)?, onSetEnabled: @escaping (Bool) async -> Void,
+         onRetry: (() async -> Void)? = nil, retryTitle: String = "Retry setup") {
+        self.presentation = presentation
+        self.isSaving = isSaving
+        self.writeMessage = writeMessage
+        self.writeFailed = writeFailed
+        self.onBack = onBack
+        self.onSetEnabled = onSetEnabled
+        self.onRetry = onRetry
+        self.retryTitle = retryTitle
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -25,71 +40,68 @@ struct AgentConnectionDetail: View {
                     .padding(.bottom, 20)
             }
 
-            Text("CONNECTION")
-                .font(.system(size: 10, weight: .medium))
-                .tracking(2.6)
-                .foregroundStyle(secondaryInk)
-
-            Text(presentation.title)
-                .font(.system(size: 56, weight: .regular, design: .serif))
-                .tracking(-1.8)
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-                .frame(height: 66, alignment: .leading)
-                .padding(.top, 8)
-                .accessibilityAddTraits(.isHeader)
+            CardPageHeader(title: presentation.title, style: .hero(eyebrow: "CONNECTION"))
 
             connectionBridge
-                .padding(.top, 22)
+                .padding(.top, CardPageHeader.Layout.firstSectionSpacing)
 
             Text(presentation.description)
                 .font(.system(size: 15))
                 .foregroundStyle(secondaryInk)
                 .lineSpacing(3)
-                .lineLimit(2)
-                .frame(height: 42, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 20)
 
-            hairline
+            if presentation.network != "—" {
+                hairline.padding(.top, 24)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Test environment")
+                        .font(.system(size: 12))
+                        .foregroundStyle(secondaryInk)
+                    Text(presentation.network)
+                        .font(.system(size: 15))
+                }
                 .padding(.top, 16)
-
-            metadata
-                .padding(.vertical, 20)
-
-            hairline
-
-            statusLine
-                .padding(.top, 22)
+            }
 
             Spacer(minLength: 24)
-
             hairline
 
-            Button(action: setConnection) {
-                HStack(spacing: 16) {
-                    Text(presentation.canDisconnect ? "Disconnect" : "Connect")
-                        .foregroundStyle(signal)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(secondaryInk)
-                        .accessibilityHidden(true)
+            if presentation.state == .connectionIssue, let onRetry {
+                Button(retryTitle) { Task { await onRetry() } }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 16))
+                    .foregroundStyle(signal)
+                    .disabled(isSaving)
+                    .padding(.top, 12)
+            }
+            if presentation.canDisconnect || presentation.state != .connectionIssue {
+                Button(action: setConnection) {
+                    HStack(spacing: 16) {
+                        Text(presentation.canDisconnect ? "Disconnect" : "Connect")
+                            .foregroundStyle(signal)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(secondaryInk)
+                            .accessibilityHidden(true)
+                    }
+                    .font(.system(size: 16))
+                    .frame(minHeight: 34, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .font(.system(size: 16))
-                .frame(minHeight: 34, alignment: .leading)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .disabled(isSaving)
+                .popover(isPresented: $showingRevokeConfirmation, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                    disconnectConfirmation
+                }
+                .accessibilityHint(presentation.canDisconnect
+                    ? "Disconnects this agent and revokes its current spending authorization after confirmation."
+                    : "Sets up this agent's access to 2049.")
+                .padding(.top, 12)
             }
-            .buttonStyle(.plain)
-            .disabled(isSaving)
-            .popover(isPresented: $showingRevokeConfirmation, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-                disconnectConfirmation
-            }
-            .accessibilityHint(presentation.canDisconnect
-                ? "Revokes connection access and the active Spend Grant after confirmation."
-                : "Sets up MCP access. Connected requires a verified host handshake.")
-            .padding(.top, 12)
 
-            if isSaving || writeMessage != nil {
-                Text(isSaving ? "Saving…" : (writeMessage ?? ""))
+            if isSaving || (writeMessage != nil && !(writeFailed && presentation.state == .connectionIssue)) {
+                Text(isSaving ? "Updating…" : (writeMessage ?? ""))
                     .font(.system(size: 12))
                     .foregroundStyle(writeFailed ? Color.red : secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
@@ -97,18 +109,18 @@ struct AgentConnectionDetail: View {
                     .padding(.top, 4)
             }
         }
-        .padding(.horizontal, 26)
-        .padding(.top, onBack == nil ? 44 : 18)
+        .padding(.horizontal, CardPageHeader.Layout.contentInset)
+        .padding(.top, onBack == nil ? CardPageHeader.Layout.topSpacing : 18)
         .padding(.bottom, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var disconnectConfirmation: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Disconnect this Agent?")
+            Text("Disconnect \(presentation.agentName)?")
                 .font(.headline)
                 .accessibilityAddTraits(.isHeader)
-            Text("This also revokes the active Spend Grant. The external MCP session will need to reconnect.")
+            Text("Disconnecting \(presentation.agentName) will also revoke its current spending authorization.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -181,67 +193,6 @@ struct AgentConnectionDetail: View {
             .frame(width: 10, height: 10)
     }
 
-    private var metadata: some View {
-        HStack(spacing: 0) {
-            specification("AGENT", presentation.agentName)
-            metadataSeparator
-            specification("TRANSPORT", "MCP")
-                .padding(.leading, 18)
-            metadataSeparator
-            specification("BACKEND", "Local")
-                .padding(.leading, 18)
-            metadataSeparator
-            specification("NETWORK", presentation.network)
-                .padding(.leading, 18)
-        }
-    }
-
-    private func specification(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(label)
-                .font(.system(size: 9, weight: .medium))
-                .tracking(1.7)
-                .foregroundStyle(secondaryInk)
-            Text(value)
-                .font(.system(size: 15))
-        }
-        .lineLimit(1)
-        .minimumScaleFactor(0.7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-    }
-
-    private var metadataSeparator: some View {
-        Rectangle().fill(rule).frame(width: 1, height: 46)
-            .accessibilityHidden(true)
-    }
-
-    private var statusLine: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 5) {
-                Text(presentation.activityLabel)
-                Text("·")
-                if let date = presentation.activityDate {
-                    Text(date, style: .relative)
-                } else {
-                    Text("—")
-                }
-            }
-            Spacer(minLength: 0)
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(presentation.canDisconnect && presentation.backendAvailable
-                        ? Color(red: 0.34, green: 0.68, blue: 0.65) : secondaryInk)
-                    .frame(width: 7, height: 7)
-                    .accessibilityHidden(true)
-                Text(presentation.status)
-            }
-        }
-        .font(.system(size: 12))
-        .foregroundStyle(secondaryInk)
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
     private var hairline: some View {
         Rectangle().fill(rule).frame(height: 1)
             .accessibilityHidden(true)
@@ -258,8 +209,8 @@ struct AgentConnectionDetail: View {
 
 #Preview("Connection · Connected (fixture)") {
     AgentConnectionDetail(
-        presentation: ConnectionPresentation(agentName: "Codex", state: .connected(lastHandshake: .now),
-            network: "Solana Devnet", backendAvailable: true),
+        presentation: ConnectionPresentation(agentName: "Codex", state: .connected,
+            network: "Solana Devnet", canDisconnect: true),
         isSaving: false, writeMessage: nil, writeFailed: false, onBack: nil, onSetEnabled: { _ in }
     )
     .frame(width: 420, height: 526)
@@ -270,7 +221,7 @@ struct AgentConnectionDetail: View {
 #Preview("Connection · Not Connected (fixture)") {
     AgentConnectionDetail(
         presentation: ConnectionPresentation(agentName: "Codex", state: .notConnected,
-            network: "Solana Devnet", backendAvailable: true),
+            network: "Solana Devnet", canDisconnect: false),
         isSaving: false, writeMessage: nil, writeFailed: false, onBack: nil, onSetEnabled: { _ in }
     )
     .frame(width: 420, height: 526)
@@ -278,10 +229,10 @@ struct AgentConnectionDetail: View {
     .environment(\.colorScheme, .light)
 }
 
-#Preview("Connection · Access Enabled (fixture)") {
+#Preview("Connection · Waiting (fixture)") {
     AgentConnectionDetail(
-        presentation: ConnectionPresentation(agentName: "Codex", state: .reconnectRequired(lastRequest: nil),
-            network: "Solana Devnet", backendAvailable: true),
+        presentation: ConnectionPresentation(agentName: "Codex", state: .waitingForCodex,
+            network: "Solana Devnet", canDisconnect: true),
         isSaving: false, writeMessage: nil, writeFailed: false, onBack: nil, onSetEnabled: { _ in }
     )
     .frame(width: 420, height: 526)

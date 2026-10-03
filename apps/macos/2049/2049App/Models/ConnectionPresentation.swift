@@ -1,89 +1,68 @@
 import Foundation
 
-/// Connection facts for the page, separate from access enablement and local service health.
+/// Product language for existing backend facts. Access alone never proves host liveness.
 struct ConnectionPresentation {
     enum State: Equatable {
-        case connected(lastHandshake: Date?)
-        case notConnected
-        case reconnectRequired(lastRequest: Date?)
+        case connected, notConnected, waitingForCodex, accessAllowed, notSetUp, connectionIssue
     }
 
     let agentName: String
     let state: State
     let network: String
-    let backendAvailable: Bool
-    private var codexConfigured = false
+    let canDisconnect: Bool
+    private let issueMessage: String?
 
-    init(agentName: String, state: State, network: String, backendAvailable: Bool) {
+    init(agentName: String, state: State, network: String, canDisconnect: Bool, issueMessage: String? = nil) {
         self.agentName = agentName
         self.state = state
-        self.network = network == "Solana Devnet" ? "Devnet" : (network.isEmpty ? "—" : network)
-        self.backendAvailable = backendAvailable
+        self.network = network.isEmpty ? "—" : network
+        self.canDisconnect = canDisconnect
+        self.issueMessage = issueMessage
     }
 
-    init(connection: AppOverview.Connection, service: AppOverview.Service, agentName: String) {
-        let integration = connection.integration
-        let verified = connection.hasLiveMCPSession && service.status == .running
-        self.init(
-            agentName: agentName,
-            state: verified
-                ? .connected(lastHandshake: integration?.lastHandshake.map {
-                    Date(timeIntervalSince1970: TimeInterval($0) / 1_000)
-                })
-                : connection.enabled
-                ? .reconnectRequired(lastRequest: connection.lastSeen.map {
-                    Date(timeIntervalSince1970: TimeInterval($0) / 1_000)
-                })
-                : .notConnected,
-            network: service.network,
-            backendAvailable: service.status == .running
-        )
-        codexConfigured = integration?.provider == "codex" && integration?.configured == true
+    init(connection: AppOverview.Connection, service: AppOverview.Service, agentName: String, issueMessage: String? = nil) {
+        let integrated = connection.integration?.provider == "codex"
+        let state: State
+        let problem: String?
+        if let issueMessage {
+            state = .connectionIssue
+            problem = issueMessage
+        } else if service.status != .running {
+            state = .connectionIssue
+            problem = "2049 is stopping. Open 2049 again to connect."
+        } else if integrated {
+            state = connection.hasLiveMCPSession ? .connected : connection.enabled ? .waitingForCodex : .notConnected
+            problem = nil
+        } else {
+            // Custom members have access control, but no verified provider-session detector.
+            state = connection.enabled ? .accessAllowed : .notSetUp
+            problem = nil
+        }
+        self.init(agentName: agentName, state: state, network: service.network,
+            canDisconnect: connection.enabled, issueMessage: problem)
     }
 
-    var isConnected: Bool {
-        if case .connected = state { return true }
-        return false
-    }
-
-    var canDisconnect: Bool {
-        if case .notConnected = state { return false }
-        return true
-    }
+    var isConnected: Bool { state == .connected }
 
     var title: String {
         switch state {
         case .connected: "Connected"
         case .notConnected: "Not Connected"
-        case .reconnectRequired: "Reconnect Required"
+        case .waitingForCodex: "Waiting for Codex"
+        case .accessAllowed: "Access allowed"
+        case .notSetUp: "Not set up"
+        case .connectionIssue: "Connection Issue"
         }
     }
 
     var description: String {
         switch state {
         case .connected: "\(agentName) is ready to use 2049."
-        case .notConnected: "\(agentName) is not connected to 2049.\nConnect to set up MCP access."
-        case .reconnectRequired: codexConfigured
-            ? "Codex MCP is configured. Start a new Codex chat\nor reload MCP to verify the connection."
-            : "Access is enabled for \(agentName).\nReconnect the MCP host to use 2049."
+        case .notConnected: "Connect Codex to 2049."
+        case .waitingForCodex: "2049 is ready.\nOpen or continue a Codex chat to finish connecting."
+        case .accessAllowed: "\(agentName) is allowed to use 2049.\nIts online status cannot be confirmed."
+        case .notSetUp: "Allow \(agentName) to use 2049."
+        case .connectionIssue: issueMessage ?? "2049 couldn't confirm the connection. Try again."
         }
-    }
-
-    var activityLabel: String {
-        if case .reconnectRequired(let lastRequest) = state, lastRequest != nil { return "Last request" }
-        return "Last handshake"
-    }
-
-    var activityDate: Date? {
-        switch state {
-        case .connected(let lastHandshake): lastHandshake
-        case .notConnected: nil
-        case .reconnectRequired(let lastRequest): lastRequest
-        }
-    }
-
-    var status: String {
-        if case .notConnected = state { return "Disconnected" }
-        return backendAvailable ? "Backend available" : "Backend stopping"
     }
 }

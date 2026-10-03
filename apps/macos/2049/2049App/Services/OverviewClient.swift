@@ -47,6 +47,29 @@ enum OverviewLoadError: Error {
     }
 }
 
+extension OverviewLoadError {
+    /// Connection-only language; other pages retain their existing error presentation.
+    var connectionMessage: String {
+        switch self {
+        case .codexNotInstalled: "Install Codex to connect it to 2049, then try again."
+        case .codexConfigConflict: "Codex's 2049 connection settings have changed. Review them in Codex, then try again."
+        case .codexConfigFailed: "2049 couldn't finish setting up Codex. Try setup again."
+        case .codexBridgeUnavailable, .configuration: "2049 needs to be reinstalled before connecting."
+        case .unauthorized: "2049 couldn't confirm access. Reopen 2049 and try again."
+        case .memberNotFound, .memberInactive: "This agent's access is no longer available. Choose another agent."
+        case .defaultMemberRequired: "The default agent can't be revoked."
+        case .invalidRequest: "Check the entered values and try again."
+        case .writeRejected: "The change wasn't confirmed. Check the current status and try again."
+        case .serviceExited: "2049 stopped unexpectedly. Try again to restore access."
+        case .dataDirectoryInUse: "Another copy of 2049 is using your data. Close it, then try again."
+        case .portConflict: "2049 couldn't start because another app is using its connection. Try again after closing it."
+        case .authenticatedShutdownFailed, .authenticatedShutdownTimedOut: "2049 couldn't finish restarting safely. Try again when its current work has finished."
+        case .requestTimedOut, .readinessTimedOut: "2049 is taking too long to respond. Try again."
+        case .startupFailed, .unavailable, .invalidResponse: "2049 couldn't load the connection. Try again."
+        }
+    }
+}
+
 struct OverviewClient {
     let runtime: NativeServiceRuntime
 

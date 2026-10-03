@@ -44,13 +44,30 @@ struct AgentCardBack: View {
                     .allowsHitTesting(showsOverview)
                     .accessibilityHidden(!showsOverview)
                 } else if showsOverview {
-                    ContentUnavailableView(
-                        selectedSection == .connection
-                            ? (memberSession.isLoading ? "Loading connection" : "Connection unavailable")
-                            : (memberSession.loadError == nil ? "No active agent" : "Agents unavailable"),
-                        systemImage: "person.crop.circle.badge.questionmark",
-                        description: Text(memberSession.loadError
-                            ?? (memberSession.isLoading ? "Waiting for the local service." : "Add an agent in Members to continue.")))
+                    if selectedSection == .connection {
+                        VStack(alignment: .leading, spacing: 16) {
+                            CardPageHeader(title: memberSession.loadError == nil ? "Connection" : "Connection Issue",
+                                style: .hero(eyebrow: "CONNECTION"))
+                            Text(memberSession.loadError ?? (memberSession.isLoading
+                                ? "Loading connection…" : "Choose an active agent in Members to connect."))
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            if memberSession.loadError != nil {
+                                Button("Retry") { Task { await memberSession.refresh(retry: true) } }
+                                    .buttonStyle(.link)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, CardPageHeader.Layout.contentInset)
+                        .padding(.top, CardPageHeader.Layout.topSpacing)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    } else {
+                        ContentUnavailableView(
+                            memberSession.loadError == nil ? "No active agent" : "Agents unavailable",
+                            systemImage: "person.crop.circle.badge.questionmark",
+                            description: Text(memberSession.loadError
+                                ?? (memberSession.isLoading ? "Waiting for the local service." : "Add an agent in Members to continue.")))
+                    }
                 }
 
                 switch selectedSection {

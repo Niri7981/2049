@@ -13,6 +13,12 @@ struct BackOverview: View {
     @State private var activityRefreshing = false
     @State private var activityRefreshError: String?
     @State private var isRefreshing = false
+    @State private var connectionFailure: ConnectionFailure?
+
+    private struct ConnectionFailure {
+        let enabled: Bool
+        let message: String
+    }
 
     private enum Detail {
         case daily, grant, connection, activity
@@ -166,26 +172,29 @@ struct BackOverview: View {
     private func connectionPage(_ overview: AppOverview, onBack: (() -> Void)?) -> AgentConnectionDetail {
         AgentConnectionDetail(
             presentation: ConnectionPresentation(connection: overview.connection,
-                service: overview.service, agentName: agentName),
+                service: overview.service, agentName: agentName, issueMessage: connectionFailure?.message),
             isSaving: writeState.isSaving || isRefreshing,
-            writeMessage: writeState.message,
-            writeFailed: writeState.isFailure,
+            writeMessage: connectionFailure?.message,
+            writeFailed: connectionFailure != nil,
             onBack: onBack,
-            onSetEnabled: { enabled in await write(.connection(enabled)) }
+            onSetEnabled: { enabled in await write(.connection(enabled)) },
+            onRetry: {
+                if let connectionFailure {
+                    await write(.connection(connectionFailure.enabled))
+                } else {
+                    await reload(retry: true)
+                }
+            },
+            retryTitle: connectionFailure.map { $0.enabled ? "Retry setup" : "Retry disconnect" } ?? "Retry"
         )
     }
 
     private var connectionLoadStatus: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("CONNECTION")
-                .font(.system(size: 10, weight: .medium))
-                .tracking(2.6)
-                .foregroundStyle(.secondary)
-            Text("Connection")
-                .font(.system(size: 56, weight: .regular, design: .serif))
-                .accessibilityAddTraits(.isHeader)
+            CardPageHeader(title: overviewLoadFailed ? "Connection Issue" : "Connection",
+                style: .hero(eyebrow: "CONNECTION"))
             if case .failed(let error) = state {
-                Text(error.message)
+                Text(error.connectionMessage)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Button("Retry") { Task { await reload(retry: true) } }
@@ -197,8 +206,15 @@ struct BackOverview: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 26)
-        .padding(.top, 44)
+        .padding(.horizontal, CardPageHeader.Layout.contentInset)
+        .padding(.top, CardPageHeader.Layout.topSpacing)
+    }
+
+    private var overviewLoadFailed: Bool {
+        if case .failed(.memberInactive) = state { return false }
+        if case .failed(.memberNotFound) = state { return false }
+        if case .failed = state { return true }
+        return false
     }
 
     private var overviewContent: some View {
@@ -445,6 +461,7 @@ struct BackOverview: View {
     private func write(_ change: SettingsChange) async {
         guard overview != nil, !writeState.isSaving, !isRefreshing else { return }
         writeState = .saving
+        if case .connection = change { connectionFailure = nil }
         let success: String
         do {
             switch change {
@@ -462,10 +479,16 @@ struct BackOverview: View {
                 success = "Grant revoked. Reconnect the MCP host."
             case .connection(let enabled):
                 try await overviewClient.setMemberConnection(memberID, enabled: enabled)
-                success = enabled ? "MCP access ready. Start a new host chat or reload MCP." : "Connection revoked. Active grant revoked."
+                success = enabled ? "Access is ready." : "Disconnected. Current spending authorization revoked."
             }
         } catch {
-            let failure = (error as? OverviewLoadError)?.message ?? "Setting change failed"
+            let failure: String
+            if case .connection(let enabled) = change {
+                failure = (error as? OverviewLoadError)?.connectionMessage ?? "2049 couldn't confirm the change. Try again."
+                connectionFailure = ConnectionFailure(enabled: enabled, message: failure)
+            } else {
+                failure = (error as? OverviewLoadError)?.message ?? "Setting change failed"
+            }
             // A lost response does not prove the write was rejected; re-read the source of truth.
             do {
                 state = .loaded(try await loadSelectedOverview())

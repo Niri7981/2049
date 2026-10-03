@@ -10,6 +10,7 @@ final class CardMemberSession {
     private(set) var isLoading = false
     private(set) var connectingMemberID: UUID?
     private(set) var connectionError: String?
+    private(set) var connectionIssueMemberID: UUID?
 
     private let client: OverviewClient
     private var loadRevision = 0
@@ -48,7 +49,7 @@ final class CardMemberSession {
             // An unavailable member list cannot certify that the previous selection is still active.
             members = []
             selectedMemberID = nil
-            loadError = (error as? OverviewLoadError)?.message ?? "Agents could not be loaded"
+            loadError = (error as? OverviewLoadError)?.connectionMessage ?? "2049 couldn't load your agents. Try again."
         }
     }
 
@@ -67,14 +68,16 @@ final class CardMemberSession {
                   && member.connection.integration?.connected != true)) else { return }
         connectingMemberID = id
         connectionError = nil
+        connectionIssueMemberID = nil
         defer { connectingMemberID = nil }
         do {
             try await client.setMemberConnection(id, enabled: true)
             // Read the backend's resulting state; a 200 write response alone is not the roster snapshot.
             await refresh()
         } catch {
-            let explanation = (error as? OverviewLoadError)?.message ?? "Connection access could not be enabled"
+            let explanation = (error as? OverviewLoadError)?.connectionMessage ?? "2049 couldn't finish setting up access. Try again."
             connectionError = "\(member.member.label): \(explanation)"
+            connectionIssueMemberID = id
         }
     }
 

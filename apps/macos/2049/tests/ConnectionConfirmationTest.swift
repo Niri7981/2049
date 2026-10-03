@@ -10,8 +10,8 @@ struct ConnectionConfirmationTest {
         app.setActivationPolicy(.prohibited)
         var writes: [Bool] = []
         let view = AgentConnectionDetail(
-            presentation: ConnectionPresentation(agentName: "Codex", state: .reconnectRequired(lastRequest: nil),
-                network: "Solana Devnet", backendAvailable: true),
+            presentation: ConnectionPresentation(agentName: "Codex", state: .waitingForCodex,
+                network: "Solana Devnet", canDisconnect: true),
             isSaving: false, writeMessage: nil, writeFailed: false, onBack: nil,
             onSetEnabled: { writes.append($0) }
         )
