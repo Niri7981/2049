@@ -16,7 +16,8 @@ struct BackendLaunchConfiguration {
     }
 
     func repositoryRoot() throws -> URL {
-        let candidates = [environment["APP2049_REPOSITORY_ROOT"].map { URL(fileURLWithPath: $0) }, bundleURL]
+        let candidates = [environment["APP2049_REPOSITORY_ROOT"].map { URL(fileURLWithPath: $0) },
+                          installedPath(for: "APP2049RepositoryRoot").map { URL(fileURLWithPath: $0) }, bundleURL]
             .compactMap { $0 }
         for candidate in candidates {
             var directory = candidate.standardizedFileURL
@@ -35,12 +36,20 @@ struct BackendLaunchConfiguration {
 
     func nodeExecutable() throws -> URL {
         let explicit = environment["APP2049_NODE_PATH"].map { [$0] } ?? []
+        let installed = installedPath(for: "APP2049NodeExecutable").map { [$0] } ?? []
         let pathCandidates = (environment["PATH"] ?? "").split(separator: ":").map { "\($0)/node" }
-        let candidates = explicit + pathCandidates + ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
+        let candidates = explicit + installed + pathCandidates + ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
         guard let path = candidates.first(where: { $0.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: $0) }) else {
             throw ServiceRuntimeError.configuration
         }
         return URL(fileURLWithPath: path)
+    }
+
+    // The local installer records paths only; Finder does not inherit a development shell's cwd/PATH.
+    private func installedPath(for key: String) -> String? {
+        guard let path = Bundle(url: bundleURL)?.object(forInfoDictionaryKey: key) as? String,
+              path.hasPrefix("/") else { return nil }
+        return path
     }
 
     func validToken(_ token: String) -> Bool {

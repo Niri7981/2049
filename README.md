@@ -61,14 +61,20 @@ STEP 1 已通过模拟外部依赖的自动化测试；本轮没有执行新的�
 
 ### 本地运行
 
-要求 macOS 和 Node.js 24.5 或更高版本。
+原生 App 要求 macOS 15 或更高版本、Node.js 24.5 或更高版本；重建需要 Xcode 命令行构建工具。
 
 ```bash
 npm ci
-npm run app:dev
+./scripts/install-macos-app.sh
 ```
 
-App 使用 `127.0.0.1:3049` 本地服务。关闭窗口后服务继续在菜单栏运行；退出 App 时停止服务。首次启动会创建产品专用钱包，私钥只保存在 macOS 钥匙串中。
+脚本构建后端与现有原生 Release target，将 App 安装到 `~/Applications/2049.app`，构建产物保留在 `build.noindex/macos/Build/Products/Release/2049.app`；`.noindex` 避免构建副本另行出现在 Spotlight 中。以后直接在 Finder 双击图标或通过 Spotlight 打开，无需终端、Xcode 或手动启动后端。修改代码后先正常退出 2049，再重新运行 `./scripts/install-macos-app.sh`。
+
+这是本机安装流程：App 仍依赖原位置的仓库（含 `.next`、`node_modules` 与本地配置）和安装时记录的 Node 可执行文件；移动仓库或更换 Node 后需重装。脚本只把两个绝对路径写入生成 bundle 的 Info.plist，并使用本机 ad-hoc 签名，不复制密钥、配置内容或依赖。工程目前没有自定义 AppIcon，使用系统临时图标。完整可分发版本仍需打包 Node 与后端运行资源、处理配置和 MCP 路径，并完成 Developer ID 签名、notarization 及图标资源。
+
+App 使用 `127.0.0.1:3049` 本地服务，启动和退出仍由 `NativeServiceRuntime` 管理。首次运行或本机 ad-hoc 构建更新后，macOS 可能要求确认已有钥匙串项目的访问；在系统提示中完成授权后后端才能继续启动。关闭窗口后 App 与服务继续运行；再次打开图标可恢复窗口，正常退出时等待后端安全停止。首次启动会创建产品专用钱包，私钥只保存在 macOS 钥匙串中。原有环境变量和仓库内构建路径查找继续可用于开发。
+
+管理凭据成功加载后只在当前 App 进程内复用，后端启动重试和就绪检查不会再次读取钥匙串；预览与诊断 fixture 必须显式提供自己的测试凭据。钱包初始化只缓存公钥信息，付款时仍重新加载并核对签名器。相同安装构建的重开保留相同签名身份，但 ad-hoc 新构建的指定要求会随代码变化；跨构建保留访问授权需要有效的 Apple Development 或 Developer ID Application 签名身份。系统的“允许一次”、钥匙串锁定和项目访问策略仍然生效。详见[钥匙串读取与签名审计](docs/architecture/keychain-access.md)。
 
 在 App 中：
 
@@ -147,14 +153,18 @@ STEP 1 is verified with automated tests and mocked external payment dependencies
 
 ### Run locally
 
-Requires macOS and Node.js 24.5 or newer.
+The native App requires macOS 15+ and Node.js 24.5+. Rebuilding requires Xcode command-line build tools.
 
 ```bash
 npm ci
-npm run app:dev
+./scripts/install-macos-app.sh
 ```
 
-The App runs a local service on `127.0.0.1:3049`. Closing the window keeps it available from the menu bar; quitting the App stops the service. The first launch creates a dedicated product wallet whose private key remains in macOS Keychain.
+The script builds the backend and existing native Release target, installs `~/Applications/2049.app`, and leaves the build output at `build.noindex/macos/Build/Products/Release/2049.app`; `.noindex` keeps the build copy out of Spotlight. Subsequent launches work by double-clicking the icon in Finder or using Spotlight, with no Terminal, Xcode, or manual backend startup. After code changes, quit 2049 normally and rerun `./scripts/install-macos-app.sh`.
+
+This is a local installation: the App still needs the repository at its original location (including `.next`, `node_modules`, and local configuration) and the Node executable recorded during installation. Reinstall after moving the repository or changing Node. The script writes only two absolute paths into the generated bundle's Info.plist and ad-hoc signs it locally; it does not copy credentials, configuration contents, or dependencies. There is no custom AppIcon yet, so the App uses a temporary system icon. A self-contained distribution would still need bundled Node/backend runtime resources, configuration and MCP path handling, Developer ID signing, notarization, and icon assets.
+
+`NativeServiceRuntime` still owns startup and shutdown of the local service on `127.0.0.1:3049`. On first launch or after an ad-hoc build update, macOS may request access to the existing Keychain item; respond in the system prompt before backend startup can continue. Closing the window leaves the App and service running; reopening the icon restores the window, and normal quit waits for safe backend shutdown. The first launch creates a dedicated product wallet whose private key remains in macOS Keychain. Existing environment overrides and repository build discovery remain available for development.
 
 In the App:
 
