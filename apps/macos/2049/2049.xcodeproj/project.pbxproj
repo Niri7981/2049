@@ -55,6 +55,7 @@
 		A00000000000000000000076 /* SettingsRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000075 /* SettingsRow.swift */; };
 		A00000000000000000000078 /* DailyAuthorityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000077 /* DailyAuthorityPresentation.swift */; };
 		A0000000000000000000007A /* DailyAuthorityContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000079 /* DailyAuthorityContent.swift */; };
+		A0000000000000000000007C /* CardPageHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000007B /* CardPageHeader.swift */; };
 		A0000000000000000000081 /* YoshPINEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000080 /* YoshPINEntry.swift */; };
 		A0000000000000000000083 /* YoshClothShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000082 /* YoshClothShape.swift */; };
 		A0000000000000000000085 /* YoshEyeShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000084 /* YoshEyeShape.swift */; };
@@ -113,6 +114,7 @@
 		A00000000000000000000075 /* SettingsRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsRow.swift; sourceTree = "<group>"; };
 		A00000000000000000000077 /* DailyAuthorityPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyAuthorityPresentation.swift; sourceTree = "<group>"; };
 		A00000000000000000000079 /* DailyAuthorityContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyAuthorityContent.swift; sourceTree = "<group>"; };
+		A0000000000000000000007B /* CardPageHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardPageHeader.swift; sourceTree = "<group>"; };
 		A0000000000000000000080 /* YoshPINEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshPINEntry.swift; sourceTree = "<group>"; };
 		A0000000000000000000082 /* YoshClothShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshClothShape.swift; sourceTree = "<group>"; };
 		A0000000000000000000084 /* YoshEyeShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshEyeShape.swift; sourceTree = "<group>"; };
@@ -224,6 +226,7 @@
 				A0000000000000000000082 /* YoshClothShape.swift */,
 				A0000000000000000000080 /* YoshPINEntry.swift */,
 				A00000000000000000000026 /* AgentCardBack.swift */,
+				A0000000000000000000007B /* CardPageHeader.swift */,
 				A0000000000000000000002C /* BackSection.swift */,
 				A0000000000000000000002E /* BackOverview.swift */,
 				A0000000000000000000004B /* AuthoritySettingsDetail.swift */,
@@ -365,6 +368,7 @@
 				A00000000000000000000076 /* SettingsRow.swift in Sources */,
 				A00000000000000000000078 /* DailyAuthorityPresentation.swift in Sources */,
 				A0000000000000000000007A /* DailyAuthorityContent.swift in Sources */,
+				A0000000000000000000007C /* CardPageHeader.swift in Sources */,
 				A00000000000000000000031 /* BackControls.swift in Sources */,
 				A00000000000000000000033 /* BackLatestPurchase.swift in Sources */,
 				A00000000000000000000035 /* BackNavigation.swift in Sources */,

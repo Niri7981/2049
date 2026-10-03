@@ -14,12 +14,9 @@ struct CardSettingsBody: View {
     private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("Settings")
-                .font(.system(size: 52, weight: .regular, design: .serif))
-                .tracking(-1.5)
+        VStack(alignment: .leading, spacing: CardPageHeader.Layout.firstSectionSpacing) {
+            CardPageHeader(title: "Settings", style: .collection(subtitle: "Manage 2049 on this Mac."))
                 .foregroundStyle(Color(red: 0.07, green: 0.10, blue: 0.15))
-                .accessibilityAddTraits(.isHeader)
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 28) {
                     SettingsSection(title: "GENERAL", symbol: "gearshape") {
@@ -74,8 +71,8 @@ struct CardSettingsBody: View {
             }
             .scrollIndicators(.automatic)
         }
-        .padding(.horizontal, 26)
-        .padding(.top, 44)
+        .padding(.horizontal, CardPageHeader.Layout.contentInset)
+        .padding(.top, CardPageHeader.Layout.topSpacing)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }

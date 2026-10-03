@@ -43,7 +43,8 @@ struct SettingsBodyViewTest {
                       NSPoint(x: 320, y: 175), NSPoint(x: 320, y: 137)] { click(window, at: point) }
         precondition(copied.isEmpty && opened.isEmpty && repositories == 0 && reloads == 0)
         scrollTo(scroll, y: 210)
-        click(window, at: NSPoint(x: 340, y: 252))
+        // Keep the click within the wallet row below the shared header.
+        click(window, at: NSPoint(x: 340, y: 226))
         precondition(copied == [address], "Copy must receive the full backend public address, not the shortened label")
 
         scrollTo(scroll, y: document.bounds.height - scroll.contentView.bounds.height)
@@ -61,7 +62,7 @@ struct SettingsBodyViewTest {
             .frame(width: 420, height: 526))
         let failedWindow = fixtureWindow(unavailable)
         if let scroll = scrollView(in: unavailable) { scrollTo(scroll, y: 210) }
-        click(failedWindow, at: NSPoint(x: 340, y: 252))
+        click(failedWindow, at: NSPoint(x: 340, y: 226))
         precondition(copied == [address] && opened == [directory] && repositories == 1,
             "Unavailable wallet/storage must not expose active actions")
         failedWindow.close()
