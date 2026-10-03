@@ -6,7 +6,7 @@ private final class SelectionBox {
     var value: BackSection = .connection
 }
 
-/// Compile with BackSection.swift and BackNavigation.swift to test the real SwiftUI hit regions.
+/// Compile with BackSection.swift, BackNavigation.swift and YoshTabMotion.swift to test the real SwiftUI hit regions.
 @main
 struct BackNavigationHitTest {
     @MainActor
