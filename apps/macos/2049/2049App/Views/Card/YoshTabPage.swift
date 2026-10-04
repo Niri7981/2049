@@ -24,7 +24,11 @@ struct YoshTabSurface: ViewModifier {
     private var isActive: Bool { section == selection }
 
     func body(content: Content) -> some View {
-        ZStack(alignment: .top) {
+        let widthScale = reduceMotion || isActive ? 1 : YoshTabMotion.recededWidthScale
+        let translation = reduceMotion ? 0
+            : YoshTabMotion.side(of: section, relativeTo: selection) * YoshTabMotion.travel
+
+        return ZStack(alignment: .top) {
             // Keep a render surface even before a lazily visited page creates its content.
             Color.clear
             content
@@ -33,13 +37,15 @@ struct YoshTabSurface: ViewModifier {
             // Other transactions originating inside a page keep their original behavior.
             .transaction(value: selection) { $0.animation = nil }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .geometryGroup()
-            .scaleEffect(reduceMotion || isActive ? 1 : YoshTabMotion.recededScale)
-            .offset(x: reduceMotion ? 0
-                : YoshTabMotion.side(of: section, relativeTo: selection) * YoshTabMotion.travel)
-            .animation(reduceMotion ? nil : YoshTabMotion.pageSpring(isActive: isActive), value: selection)
-            .opacity(isActive ? 1 : 0)
-            .animation(YoshTabMotion.opacityAnimation(isActive: isActive, reduceMotion: reduceMotion), value: selection)
+            // Keep the chosen scroll offset through tab transforms and page refresh layout.
+            .transaction { $0.scrollContentOffsetAdjustmentBehavior = .disabled }
+            .animation(reduceMotion ? nil : YoshTabMotion.pageSpring(isActive: isActive)) { surface in
+                // Scaling the height makes macOS resize native scroll viewports.
+                surface.scaleEffect(x: widthScale, y: 1).offset(x: translation)
+            }
+            .animation(YoshTabMotion.opacityAnimation(isActive: isActive, reduceMotion: reduceMotion)) { surface in
+                surface.opacity(isActive ? 1 : 0)
+            }
             // These gates use selection immediately; they never wait for a spring completion.
             .disabled(!isActive)
             .allowsHitTesting(isActive)

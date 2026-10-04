@@ -3,7 +3,7 @@ import SwiftUI
 /// Only top-level navigation uses these values; page internals keep their own transactions.
 enum YoshTabMotion {
     static let travel: CGFloat = 18
-    static let recededScale: CGFloat = 0.988
+    static let recededWidthScale: CGFloat = 0.988
     static let indicatorResponse = 0.30
     static let indicatorDamping = 0.88
     static let entryResponse = 0.30

@@ -159,7 +159,9 @@ struct TopLevelTabMotionTest {
         // A child's own update must be immediate even when the page starts its motion.
         probe.markerWidth = 140
         probe.select(.members)
-        pause(reduceMotion ? 0.09 : 0.025)
+        // Wait for the outgoing color to clear; overlapping markers hide part of the
+        // incoming width. The page spring is still moving when this is measured.
+        pause(reduceMotion ? YoshTabMotion.reducedDuration + 0.02 : YoshTabMotion.exitOpacityDuration + 0.02)
         let childUpdate = try bounds(.members, in: capture(host))
         try require(childUpdate.width > 135, "Surface animation must not animate page internals")
         probe.markerWidth = 40

@@ -39,6 +39,8 @@ struct BackNavigation: View {
                                 }
                             }
                         }
+                        // The moving indicator must not capture presses meant for another tab.
+                        .allowsHitTesting(false)
                     }
                 }
                 .buttonStyle(.plain)

@@ -17,3 +17,12 @@ for fixture in BackNavigationHitTest TopLevelTabMotionTest; do
     "apps/macos/2049/tests/$fixture.swift" -o "$fixture_directory/$fixture"
   "$fixture_directory/$fixture"
 done
+
+# Exercise the real Members and Settings bodies, including their native scroll views.
+app_sources=()
+while IFS= read -r source; do
+  app_sources+=("$source")
+done < <(rg --files apps/macos/2049/2049App -g '*.swift' -g '!TwentyFortyNineApp.swift')
+xcrun swiftc -parse-as-library -swift-version 6 "${app_sources[@]}" \
+  apps/macos/2049/tests/TabScrollStabilityTest.swift -o "$fixture_directory/TabScrollStabilityTest"
+"$fixture_directory/TabScrollStabilityTest"
