@@ -10,7 +10,7 @@ const directories: string[] = [];
 afterEach(() => directories.splice(0).forEach(directory => rmSync(directory, { recursive: true, force: true })));
 
 it('holds one data-directory owner across ports and symlink aliases, then recovers after a crash', async () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-owner-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-owner-'));
   directories.push(directory);
   const alias = `${directory}-alias`;
   symlinkSync(directory, alias);

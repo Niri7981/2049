@@ -2,6 +2,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('app2049', {
-  request(path, options) { return ipcRenderer.invoke('app2049:request', path, options); },
+  contextBridge.exposeInMainWorld('yosh', {
+    request(path, options) { return ipcRenderer.invoke('yosh:request', path, options); },
 });

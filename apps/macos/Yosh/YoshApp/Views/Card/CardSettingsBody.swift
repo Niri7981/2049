@@ -1,0 +1,131 @@
+import SwiftUI
+
+struct CardSettingsBody: View {
+    let information: CardSettingsPresentation?
+    let appVersion: String
+    let isLoading: Bool
+    let error: String?
+    let onCopyWallet: (String) -> Void
+    let onOpenDataFolder: (URL) -> Void
+    let onOpenRepository: () -> Void
+    let onReload: () -> Void
+    var appLock: YoshAppLock? = nil
+
+    private var unavailableValue: String { isLoading ? "Checking…" : "Unavailable" }
+    private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CardPageHeader.Layout.firstSectionSpacing) {
+            CardPageHeader(title: "Settings", style: .collection(subtitle: "Manage Yosh on this Mac."))
+                .foregroundStyle(Color(red: 0.07, green: 0.10, blue: 0.15))
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 28) {
+                    SettingsSection(title: "GENERAL", symbol: "gearshape") {
+                        SettingsRow(title: "Language", value: "English")
+                            .help("English is the only language currently implemented.")
+                        separator
+                        unavailableToggle("Launch at login")
+                        separator
+                        unavailableToggle("Notifications")
+                    }
+                    SettingsSection(title: "APPEARANCE", symbol: "sun.max") {
+                        SettingsRow(title: "Appearance", value: "Light")
+                            .help("Yosh currently uses a light appearance.")
+                        separator
+                        SettingsRow(title: "Reduce motion", value: "Follow System")
+                            .help("Yosh follows the macOS Reduce Motion accessibility setting.")
+                    }
+                    SettingsSection(title: "SECURITY", symbol: "lock") {
+                        if let appLock {
+                            YoshAppLockSettings(appLock: appLock)
+                            separator
+                        }
+                        walletRow
+                        separator
+                        SettingsRow(title: "Private key", value: "Stored in macOS Keychain")
+                        separator
+                        SettingsRow(title: "Local management", value: information == nil ? unavailableValue : "Protected")
+                    }
+                    SettingsSection(title: "DATA", symbol: "internaldrive") {
+                        SettingsRow(title: "Storage", value: "Local on this Mac")
+                        separator
+                        dataFolderRow
+                    }
+                    SettingsSection(title: "ABOUT", symbol: "info.circle") {
+                        SettingsRow(title: "Version", value: appVersion)
+                        separator
+                        SettingsRow(title: "GitHub", symbol: "arrow.up.right.square", showsChevron: true,
+                            action: onOpenRepository)
+                            .accessibilityIdentifier("settings.github")
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let error {
+                            Text(error)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color(red: 0.58, green: 0.28, blue: 0.31))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Button(error == nil ? "Refresh status" : "Retry", action: onReload)
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color(red: 0.42, green: 0.48, blue: 0.57))
+                            .disabled(isLoading)
+                    }
+                }
+                .padding(.bottom, 12)
+            }
+            .scrollIndicators(.automatic)
+        }
+        .padding(.horizontal, CardPageHeader.Layout.contentInset)
+        .padding(.top, CardPageHeader.Layout.topSpacing)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var separator: some View {
+        Rectangle().fill(rule).frame(height: 1).accessibilityHidden(true)
+    }
+
+    private func unavailableToggle(_ title: String) -> some View {
+        HStack(spacing: 12) {
+            Text(title).foregroundStyle(Color(red: 0.07, green: 0.10, blue: 0.15))
+            Spacer(minLength: 4)
+            Text("Unavailable")
+                .font(.system(size: 11))
+                .foregroundStyle(Color(red: 0.42, green: 0.48, blue: 0.57))
+            Toggle(title, isOn: .constant(false))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .disabled(true)
+                .accessibilityHint("This feature is not implemented.")
+        }
+        .font(.system(size: 13))
+        .frame(minHeight: 38)
+        .help("This feature is not available in Yosh yet.")
+    }
+
+    @ViewBuilder
+    private var walletRow: some View {
+        if let information, !information.walletAddress.isEmpty {
+            SettingsRow(title: "Wallet address", value: information.shortWalletAddress, symbol: "square.on.square",
+                actionLabel: "Copy wallet address", action: { onCopyWallet(information.walletAddress) })
+                .accessibilityValue(information.walletAddress)
+                .accessibilityIdentifier("settings.wallet.copy")
+                .help("Copy the full public wallet address")
+        } else {
+            SettingsRow(title: "Wallet address", value: unavailableValue)
+        }
+    }
+
+    @ViewBuilder
+    private var dataFolderRow: some View {
+        if let directory = information?.dataDirectory {
+            SettingsRow(title: "Open data folder", symbol: "folder", showsChevron: true,
+                action: { onOpenDataFolder(directory) })
+                .accessibilityIdentifier("settings.data-folder")
+        } else {
+            SettingsRow(title: "Open data folder", value: unavailableValue)
+        }
+    }
+}

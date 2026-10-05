@@ -7,8 +7,9 @@
 - [macOS App 壳与本地服务生命周期](architecture/macos-app-shell.md)：App 壳、进程与本地服务边界。
 - [Authority Core（阶段一）](architecture/authority-core.md)：当前通用消费意图、授权决策与预算预占模型。
 - [MCP 接入](architecture/mcp-integration.md)：当前 MCP 工具、权限边界、验证状态与限制。
+- [Yosh 更名兼容边界](architecture/yosh-rename-compatibility.md)：公开名称、内部安全身份、存储及 MCP 迁移规则。
 - [按职责命名与历史数据兼容](architecture/naming.md)：代码重命名与旧数据标识兼容。
-- [原生 macOS UI 设计参考](design/README.md)：Agent Card 视觉参考；产品约束以 [`2049-ui` Skill](../.codex/skills/2049-ui/SKILL.md) 为准。
+- [原生 macOS UI 设计参考](design/README.md)：Agent Card 视觉参考；产品约束以 [`yosh-ui` Skill](../.codex/skills/yosh-ui/SKILL.md) 为准。
 
 当前进度和验收结果请直接查阅 [`plan.md`](../plan.md)。上面的架构文档补充模块细节，不单独代表最新验收状态。
 
@@ -46,7 +47,7 @@
 
 ### 隔离验收
 
-- [Bound Devnet E2E validation](demo/bound-e2e-validation.md)：隔离数据目录下的验收准备与只读证据检查。
+- [Yosh Devnet E2E validation](demo/yosh-e2e-validation.md)：隔离数据目录下的验收准备与只读证据检查。
 
 ### 历史演示与运行手册
 
@@ -61,7 +62,7 @@
 
 ## 设计素材
 
-- [2049 UI 设计参考](design/README.md)：说明卡片图片与 Phantom 录屏的使用边界，并链接素材。
+- [Yosh UI 设计参考](design/README.md)：说明卡片图片与 Phantom 录屏的使用边界，并链接素材。
 
 ## 历史审计
 

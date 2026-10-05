@@ -124,7 +124,7 @@ it('pause during preparation is checked at the actual signing boundary', async (
 });
 
 it('startup releases a crashed claim without a persisted payload', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'app2049-crash-')); const path = join(dir, 'ledger.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'yosh-crash-')); const path = join(dir, 'ledger.sqlite');
   const f = await fixture(path); f.ledger.claim(f.record.approvalId); f.ledger.close();
   const reopened = new PurchaseLedger(path);
   try {
@@ -135,7 +135,7 @@ it('startup releases a crashed claim without a persisted payload', async () => {
 });
 
 it('startup preserves a signed unknown payment and its reservation', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'app2049-unknown-')); const path = join(dir, 'ledger.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'yosh-unknown-')); const path = join(dir, 'ledger.sqlite');
   const f = await fixture(path);
   f.ledger.claim(f.record.approvalId);
   f.ledger.savePayload(f.record.approvalId, { x402Version: 2, accepted: f.record.quote, payload: { transaction: 'test-wire' } });
@@ -150,7 +150,7 @@ it('startup preserves a signed unknown payment and its reservation', async () =>
 });
 
 it('delivery recovery after restart preserves the payment day and uses no new signature', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'app2049-delivery-')); const path = join(dir, 'ledger.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'yosh-delivery-')); const path = join(dir, 'ledger.sqlite');
   const f = await fixture(path);
   f.ledger.claim(f.record.approvalId);
   f.ledger.savePayload(f.record.approvalId, { x402Version: 2, accepted: f.record.quote, payload: { transaction: 'test-wire' } });

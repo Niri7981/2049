@@ -93,7 +93,7 @@ it('denies an oversized amount and every scope or principal mismatch', () => {
 });
 
 it('serializes the lifetime total across two ledger clients', () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-grant-')); paths.push(directory);
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-grant-')); paths.push(directory);
   const path = join(directory, 'ledger.sqlite');
   const first = ledger(path); const second = ledger(path);
   try {
@@ -118,7 +118,7 @@ it('reuses an idempotent request across connections for the same CardMember', ()
 });
 
 it('scopes grants and requestIds per member while enforcing one shared daily budget', () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-member-budget-')); paths.push(directory);
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-member-budget-')); paths.push(directory);
   const path = join(directory, 'ledger.sqlite');
   const value = ledger(path);
   try {
@@ -190,7 +190,7 @@ it('rechecks revocation and expiry before a reserved payment can sign', () => {
 });
 
 it('persists grant history but an App restart can revoke the old connection-bound grant', () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-grant-restart-')); paths.push(directory);
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-grant-restart-')); paths.push(directory);
   const path = join(directory, 'ledger.sqlite');
   const first = ledger(path);
   try { authority(first); } finally { first.close(); }

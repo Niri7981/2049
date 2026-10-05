@@ -28,7 +28,7 @@ function paymentEvidence(payer = historicalPayer) {
 }
 
 async function fixture(options: { mode?: string | null; includePaymentEvidence?: boolean; settlementPayer?: string; settlementStatus?: string; includeSettlementReceipt?: boolean } = {}) {
-  const directory = mkdtempSync(join(tmpdir(), '2049-e2e-evidence-')); directories.push(directory);
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-e2e-evidence-')); directories.push(directory);
   const ledgerPath = join(directory, 'app-ledger.sqlite');
   const settlementPath = join(directory, 'settlements.sqlite');
   const ledger = new DatabaseSync(ledgerPath);

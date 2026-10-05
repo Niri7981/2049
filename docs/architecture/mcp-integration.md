@@ -1,11 +1,11 @@
-# 2049 MCP 接入（更新于 2026-10-02）
+# Yosh MCP 接入（更新于 2026-10-05）
 
 ## Codex 专属连接路径
 
 原生 App 的 Members → 默认 Codex Member → Connect，现在通过认证管理 API 完成 Codex 专属配置，而不是只启用 Member 凭据。当前只有 Codex 提供此路径；Claude、Grok、Gemini、Cursor、Copilot、Windsurf 保持 Unavailable。自定义 Member 的已有通用凭据入口保留，不因显示名称而推断 Provider。
 
 ```text
-2049 后端 → 共享每日额度
+Yosh 后端 → 共享每日额度
   └─ 持久 Member UUID → Member SpendGrant / 购买所有权
        └─ 独立 AgentConnection / 可轮换凭据
             └─ CodexIntegration → Codex MCP 配置
@@ -14,10 +14,10 @@
 ```
 
 - `CodexIntegration` 封装宿主发现、配置安装、核对与移除。使用已安装 Codex 的官方 `mcp list/add/remove`，由 Codex 管理 TOML。固定默认 Member 是现有 Codex 身份，不通过 label 或客户端自报名称选择 Provider。新增 Provider 时增加独立配置适配器与明确的 Member 绑定，不复制凭据、Grant、额度或付款逻辑。
-- 专属条目命名为 `2049-codex-<Member UUID 的完整 base64url 编码>`，避免覆盖现有 `2049`、`2049-research` 或其他用户条目。启动命令使用 Node、tsx loader 和桥接脚本的绝对路径；环境变量只有 `APP2049_DATA_DIR`、`APP2049_CARD_MEMBER_ID`、`APP2049_MCP_PROVIDER=codex`。不写入钱包密钥、Agent 令牌或管理认证。
+- 新专属条目命名为 `yosh-codex-<Member UUID 的完整 base64url 编码>`。旧的 `2049-codex-<相同 UUID 编码>` 只有在持久安装记录、Member UUID 和当前 Codex 配置都匹配时才迁移；使用持久迁移记录恢复中断，不覆盖用户修改的条目，也不删除用户自行创建的 `2049`、`2049-research` 或其他配置。启动命令使用 Node、tsx loader 和桥接脚本的绝对路径；新环境变量为 `YOSH_DATA_DIR`、`YOSH_CARD_MEMBER_ID`、`YOSH_MCP_PROVIDER=codex`，旧 `APP2049_*` 仍兼容。不写入钱包密钥、Agent 令牌或管理认证。
 - 配置经 CLI 回读核对后，保存权限为 `0600` 的 Member 配置记录，再签发凭据。管理连接操作串行执行；重复 Connect 检查配置并复用有效凭据，保留现有 Grant。配置错误不伪造 Connected，不暴露 CLI 原始错误。记录损坏只阻止 Codex 配置操作，不阻止钱包／账本启动。
 - Disconnect 先撤销 Member 凭据及其 Grant，再移除确认为本功能创建且未被修改的条目。用户修改条目时返回 `CODEX_CONFIG_CONFLICT`，保留用户设置，凭据仍失效。App 正常退出保留配置，撤销凭据；配置存在不意味着 MCP 会自动启动 App。
-- 保存配置不证明当前 Codex 会话已加载。App 显示 Reconnect Required，并提示新建 Codex 对话或重新加载 MCP。2049 不控制正在运行的 Codex 对话，也不启动隐藏宿主来伪造连接。
+- 保存配置只表示 Yosh 已准备连接，界面显示 Waiting for Codex；新建或继续 Codex 对话后，实际握手与宿主响应才建立 Connected。Yosh 不控制正在运行的 Codex 对话，也不启动隐藏宿主来伪造连接。
 
 ### 握手、存活与可信边界
 
@@ -29,7 +29,9 @@ Provider 事实来自本地 Codex 配置与绑定 Member 的桥接路径，不�
 
 管理投影新增 `connection.integration`，包含 Provider、配置状态、连接状态与最后握手／心跳时间，不包含令牌。配置状态是最后一次成功安装记录，Connect 会核对当前磁盘配置；Connected 另由当前会话租约决定。原生 Members 和 Connection 页面定时读取后端事实，无循环动画；服务不可用时不继续显示旧 Connected。
 
-### 本轮验证
+### 历史验证（2026-10-02）
+
+以下安装路径、命令、测试数量和验收结果记录当时的版本；不代表本轮安装或后端就绪。
 
 `tests/integration/codex-provider.test.ts` 使用实际安装的 Codex CLI / app-server，在临时 `CODEX_HOME` 中验证：管理 Connect 保存专属配置、宿主加载配置、官方 MCP 握手／持续 ping、只读调用的 Member 归属、Grant 轮换后的旧凭据拒绝、配置重新加载后的新会话、重复 Connect 保留 Grant、宿主关闭／租约失效、重启保留配置与 UUID 但关闭凭据／撤销 Grant、Disconnect 移除专属条目。没有 Codex 的环境明确跳过该用例；跳过不代表实际宿主验收通过。
 
@@ -41,7 +43,7 @@ Provider 事实来自本地 Codex 配置与绑定 Member 的桥接路径，不�
 
 ## 已实现的范围
 
-采用 x402 官方 MCP→HTTP 桥接示例的结构：官方 MCP SDK 负责工具注册、协议协商和 stdio；2049 的薄适配只调用运行中的本地后端。协议报价仍由现有 `@x402/core` HTTP 客户端解析。保留产品钥匙串钱包、共享额度和账本。
+采用 x402 官方 MCP→HTTP 桥接示例的结构：官方 MCP SDK 负责工具注册、协议协商和 stdio；Yosh 的薄适配只调用运行中的本地后端。协议报价仍由现有 `@x402/core` HTTP 客户端解析。保留产品钥匙串钱包、共享额度和账本。
 
 当前开放两个只读工具和一个可提交购买意图的工具；SpendGrant 决定意图是否获准执行付款：
 
@@ -59,17 +61,19 @@ App 在本地账本中持久维护默认 Codex CardMember 和用户创建的其�
 
 本轮锁定 `@modelcontextprotocol/sdk@1.27.1`，使用 `McpServer.registerTool`、`StdioServerTransport`。已有 x402 依赖保持不变。
 
-- [x402 官方 MCP→HTTP 示例](https://github.com/x402-foundation/x402/blob/main/docs/guides/mcp-server-with-x402.md)：适用于当前 HTTP Paid API。示例中的自动支付由 2049 既有购买服务管理，不能复制出第二条绕开额度的付款路径。
+- [x402 官方 MCP→HTTP 示例](https://github.com/x402-foundation/x402/blob/main/docs/guides/mcp-server-with-x402.md)：适用于当前 HTTP Paid API。示例中的自动支付由 Yosh 既有购买服务管理，不能复制出第二条绕开额度的付款路径。
 - [`@x402/mcp`](https://github.com/x402-foundation/x402/tree/main/typescript/packages/mcp)：处理原生付费 MCP 工具的付款元数据，不是本轮 HTTP API 的必要依赖。
-- [官方 MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)：负责 MCP 协议实现。本地仅补 App 生命周期、管理与 Agent 分权、撤销，以及工具到业务入口的映射；这些属于 2049 的应用边界。
+- [官方 MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)：负责 MCP 协议实现。本地仅补 App 生命周期、管理与 Agent 分权、撤销，以及工具到业务入口的映射；这些属于 Yosh 的应用边界。
 - [Codex MCP 配置](https://developers.openai.com/codex/mcp)：通过 stdio 连接本地桥接脚本。
 
 ## 本机连接
 
+公开名称和旧存储／认证／MCP 身份的保留与迁移边界见 [Yosh 更名兼容边界](yosh-rename-compatibility.md)。
+
 Codex 用户从已安装原生 App 的 Members 或 Connection 页面点击 Connect，由后端自动保存配置，然后新建 Codex 对话或重新加载 MCP。以下仅为已有通用 stdio 桥接的手工开发示例（不是新的产品 Connect 流程）：
 
 ```sh
-codex mcp add 2049 -- /absolute/path/to/node --import /absolute/path/to/2049/node_modules/tsx/dist/loader.mjs /absolute/path/to/2049/scripts/mcp.ts
+codex mcp add yosh -- /absolute/path/to/node --import /absolute/path/to/repository/node_modules/tsx/dist/loader.mjs /absolute/path/to/repository/scripts/mcp.ts
 ```
 
 MCP 进程不会启动钱包服务，也不会读取项目 `.env.local`。它只读取产品数据目录内权限为 `0600` 的只读连接凭据，然后调用 loopback 后端。配置文件不包含钱包密钥或管理令牌。

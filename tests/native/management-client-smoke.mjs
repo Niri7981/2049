@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const temporary = mkdtempSync(join(tmpdir(), '2049-native-client-'));
+const temporary = mkdtempSync(join(tmpdir(), 'yosh-native-client-'));
 const token = randomBytes(32).toString('base64url');
 let connection = { enabled: false, lastSeen: null, access: 'read_only' };
 let grant = null;
@@ -110,13 +110,13 @@ function run(command, args, environment = process.env) {
 try {
   await new Promise(ready => server.listen(0, '127.0.0.1', ready));
   const sources = [
-    'apps/macos/2049/2049App/Services/BackendChildProcess.swift',
-    'apps/macos/2049/2049App/Services/BackendLaunchConfiguration.swift',
-    'apps/macos/2049/2049App/Services/ManagementTransport.swift',
-    'apps/macos/2049/2049App/Services/NativeServiceRuntime.swift',
-    'apps/macos/2049/2049App/Services/OverviewClient.swift',
-    'apps/macos/2049/2049App/Models/AppOverview.swift',
-    'apps/macos/2049/2049App/Models/PurchasePresentation.swift',
+    'apps/macos/Yosh/YoshApp/Services/BackendChildProcess.swift',
+    'apps/macos/Yosh/YoshApp/Services/BackendLaunchConfiguration.swift',
+    'apps/macos/Yosh/YoshApp/Services/ManagementTransport.swift',
+    'apps/macos/Yosh/YoshApp/Services/NativeServiceRuntime.swift',
+    'apps/macos/Yosh/YoshApp/Services/OverviewClient.swift',
+    'apps/macos/Yosh/YoshApp/Models/AppOverview.swift',
+    'apps/macos/Yosh/YoshApp/Models/PurchasePresentation.swift',
     'tests/native/ManagementClientSmoke.swift',
   ];
   const executable = join(temporary, 'management-client-smoke');

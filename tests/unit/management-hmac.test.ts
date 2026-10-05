@@ -8,8 +8,8 @@ const url = 'http://127.0.0.1:3049/api/app/health';
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.useRealTimers();
-  const globals = globalThis as typeof globalThis & { __app2049ManagementNonces?: Map<string, number> };
-  globals.__app2049ManagementNonces?.clear();
+  const globals = globalThis as typeof globalThis & { __yoshManagementNonces?: Map<string, number> };
+  globals.__yoshManagementNonces?.clear();
 });
 
 it('accepts a signed management request without transmitting the reusable secret', () => {

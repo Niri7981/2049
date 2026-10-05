@@ -8,6 +8,8 @@
 # production
 /build
 /build.noindex
+/apps/macos/*/build/
+/apps/macos/*/.build/
 
 # local environment and secrets
 .env*

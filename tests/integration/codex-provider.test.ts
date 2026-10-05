@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { AppRuntime } from '../../src/modules/app/app-runtime';
@@ -15,13 +15,13 @@ import { signedManagementRequest } from '../helpers/management-request';
 import { codexHost } from '../helpers/codex-app-server';
 
 const directories: string[] = [];
-const globals = globalThis as typeof globalThis & { __app2049?: { runtime?: AppRuntime } };
-afterEach(() => { globals.__app2049 = undefined; vi.unstubAllEnvs(); directories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })); });
+const globals = globalThis as typeof globalThis & { __yosh?: { runtime?: AppRuntime } };
+afterEach(() => { globals.__yosh = undefined; vi.unstubAllEnvs(); directories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })); });
 let executable: string | undefined;
 try { executable = execFileSync('which', ['codex'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { /* CI without Codex runs SDK and unit coverage. */ }
 
 it.skipIf(!executable)('allows slow Codex CLI startup while keeping the complete configuration operation bounded', async () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-codex-slow-')); directories.push(directory);
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-codex-slow-')); directories.push(directory);
   const home = join(directory, 'codex-home'); mkdirSync(home);
   const wrapper = join(directory, 'slow-codex');
   writeFileSync(wrapper, `#!${process.execPath}\nconst { spawn } = require('node:child_process');\nsetTimeout(() => { const child = spawn(${JSON.stringify(executable)}, process.argv.slice(2), { stdio: 'inherit' }); child.on('exit', code => process.exit(code ?? 1)); }, 3100);\n`, { mode: 0o700 });
@@ -31,15 +31,41 @@ it.skipIf(!executable)('allows slow Codex CLI startup while keeping the complete
   expect(adapter.configured).toBe(true);
 }, 20_000);
 
+it.skipIf(!executable)('finishes an owned rename with slow real Codex CLI startup and preserves other entries', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-codex-rename-slow-')); directories.push(directory);
+  const home = join(directory, 'codex-home'); mkdirSync(home);
+  const wrapper = join(directory, 'slow-codex');
+  writeFileSync(wrapper, `#!${process.execPath}\nconst { spawn } = require('node:child_process');\nsetTimeout(() => { const child = spawn(${JSON.stringify(executable)}, process.argv.slice(2), { stdio: 'inherit' }); child.on('exit', code => process.exit(code ?? 1)); }, 3100);\n`, { mode: 0o700 });
+  vi.stubEnv('CODEX_HOME', home); vi.stubEnv('YOSH_CODEX_PATH', wrapper);
+  const memberId = '11111111-1111-4111-8111-111111111111';
+  const adapter = new CodexIntegration(directory, memberId);
+  execFileSync(executable!, ['mcp', 'add', adapter.legacyServerName,
+    '--env', `APP2049_DATA_DIR=${directory}`, '--env', `APP2049_CARD_MEMBER_ID=${memberId}`,
+    '--env', 'APP2049_MCP_PROVIDER=codex', '--', process.execPath, '--import',
+    resolve('node_modules/tsx/dist/loader.mjs'), resolve('scripts/mcp.ts')], { stdio: 'ignore' });
+  const entries = JSON.parse(execFileSync(executable!, ['mcp', 'list', '--json'], { encoding: 'utf8' }));
+  const config = z.array(z.object({ name: z.string() }).passthrough()).parse(entries)
+    .find(entry => entry.name === adapter.legacyServerName);
+  mkdirSync(dirname(adapter.recordPath), { recursive: true });
+  writeFileSync(adapter.recordPath, JSON.stringify({ provider: 'codex', memberId, config }), { mode: 0o600 });
+  const restarted = new CodexIntegration(directory, memberId);
+  await restarted.migrateLegacy();
+  const after = execFileSync(executable!, ['mcp', 'list', '--json'], { encoding: 'utf8' });
+  expect(after).toContain(adapter.serverName);
+  expect(after).not.toContain(adapter.legacyServerName);
+  expect(after).toContain(memberId);
+  expect(existsSync(adapter.migrationPath)).toBe(false);
+}, 30_000);
+
 it.skipIf(!executable)('uses the saved provider config in the real Codex host, observes handshake/ping, and keeps member and grant isolation', async () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-codex-host-')); directories.push(directory);
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-codex-host-')); directories.push(directory);
   const home = join(directory, 'codex-home'); mkdirSync(home);
   writeFileSync(join(home, 'config.toml'), '# unrelated configuration must survive\nmodel_reasoning_effort = "low"\n');
   vi.stubEnv('CODEX_HOME', home);
   vi.stubEnv('APP2049_CODEX_PATH', executable!);
   vi.stubEnv('APP2049_MANAGEMENT_TOKEN', 'm'.repeat(48));
   let app = new AppRuntime(directory);
-  globals.__app2049 = { runtime: app };
+  globals.__yosh = { runtime: app };
   const memberId = app.ledger.defaultCardMember().id;
   const other = app.createCardMember('Fixture Research').member.id;
   const context = { params: Promise.resolve({ memberId }) };
@@ -77,7 +103,7 @@ it.skipIf(!executable)('uses the saved provider config in the real Codex host, o
     expect(app.memberOverview(memberId).connection.integration).toMatchObject({ configured: true, connected: false });
     expect(readFileSync(join(home, 'config.toml'), 'utf8')).toContain('model_reasoning_effort = "low"');
     host = codexHost(executable!, home, tmpdir());
-    await host.request('initialize', { clientInfo: { name: '2049_provider_test', version: '1' }, capabilities: { experimentalApi: true } });
+    await host.request('initialize', { clientInfo: { name: 'yosh_provider_test', version: '1' }, capabilities: { experimentalApi: true } });
     host.notify('initialized');
     const started = z.object({ thread: z.object({ id: z.string() }) }).passthrough().parse(await host.request('thread/start', {
       cwd: tmpdir(), ephemeral: true, approvalPolicy: 'never', sandbox: 'read-only',
@@ -121,7 +147,7 @@ it.skipIf(!executable)('uses the saved provider config in the real Codex host, o
     // Codex can kill stdio children without a close report. Their lease must still expire.
     await vi.waitFor(() => expect(app.agentConnection.status().integration?.connected).toBe(false), { timeout: 35_000, interval: 100 });
     await app.prepareQuit(); app.close();
-    app = new AppRuntime(directory); globals.__app2049 = { runtime: app };
+    app = new AppRuntime(directory); globals.__yosh = { runtime: app };
     expect(app.ledger.defaultCardMember().id).toBe(memberId);
     expect(app.memberOverview(other).member.label).toBe('Fixture Research');
     expect(app.agentConnection.status()).toMatchObject({ enabled: false, integration: { configured: true, connected: false } });

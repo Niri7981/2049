@@ -11,7 +11,7 @@ const directories: string[] = [];
 afterEach(() => directories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })));
 function fixture() {
   let now = 1_800_000_000_000;
-  const directory = mkdtempSync(join(tmpdir(), '2049-session-')); directories.push(directory);
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-session-')); directories.push(directory);
   const connection = new AgentConnection(directory, memberId, () => true, false, () => now);
   connection.setIntegration(true, `2049-codex-${memberId}`);
   connection.setEnabled(true, 'http://127.0.0.1:3049');

@@ -6,9 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { createAgentServer } from '../src/modules/mcp/server';
 import { readConnection } from '../src/modules/mcp/connection';
 import { appRequestTimeout } from '../src/modules/mcp/request-timeout';
+import { resolveYoshConfiguration } from '../src/modules/app/yosh-configuration';
 
-const directory = process.env.APP2049_DATA_DIR || join(homedir(), 'Library', 'Application Support', '2049');
-const memberId = process.env.APP2049_CARD_MEMBER_ID;
+const configuration = resolveYoshConfiguration();
+// Legacy hosts and Yosh share the original member ledger until an explicit data migration.
+const directory = configuration.dataDirectory || join(homedir(), 'Library', 'Application Support', '2049');
+const memberId = configuration.cardMemberId;
 // Capture one connection capability. Revocation/re-enable requires a new MCP session.
 let connection: ReturnType<typeof readConnection> | undefined;
 async function callApp(path: string, init?: RequestInit) {
@@ -32,7 +35,7 @@ const server = createAgentServer(
   operation => callApp(`/api/agent?operation=${operation}`),
   input => callApp('/api/agent/purchases', { method: 'POST', body: JSON.stringify(input) }),
 );
-if (process.env.APP2049_MCP_PROVIDER === 'codex') {
+if (configuration.mcpProvider === 'codex') {
   const sessionId = randomUUID();
   let sequence = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -59,4 +62,4 @@ if (process.env.APP2049_MCP_PROVIDER === 'codex') {
   process.stdin.on('end', () => { stop(); void server.close(); });
   for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => { stop(); void server.close(); });
 }
-server.connect(new StdioServerTransport()).catch(() => { console.error('2049 MCP could not start'); process.exitCode = 1; });
+server.connect(new StdioServerTransport()).catch(() => { console.error('Yosh MCP could not start'); process.exitCode = 1; });

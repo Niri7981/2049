@@ -4,8 +4,9 @@ import Synchronization
 @main
 struct ManagementTransportSecurity {
     static func main() async throws {
-        let port = ProcessInfo.processInfo.environment["APP2049_PORT"]!
-        let secret = ProcessInfo.processInfo.environment["APP2049_MANAGEMENT_TOKEN"]!
+        let launch = BackendLaunchConfiguration(environment: ProcessInfo.processInfo.environment, bundleURL: Bundle.main.bundleURL)
+        let port = try launch.configuredValue("PORT")!
+        let secret = try launch.configuredValue("MANAGEMENT_TOKEN")!
         let configuration = ServiceConfiguration(baseURL: URL(string: "http://127.0.0.1:\(port)")!, managementToken: secret)
         let mode = CommandLine.arguments.dropFirst().first ?? "fake"
         if mode == "credential-cache" {
@@ -33,7 +34,16 @@ struct ManagementTransportSecurity {
             do { _ = try await invalidLaunch.ready(); fatalError("Missing repository was accepted") }
             catch ServiceRuntimeError.configuration { }
             precondition(invalidLaunchLoads.withLock { $0 } == 0, "invalid launch configuration must fail before Keychain access")
-            print("Credential cache, concurrent readiness, retries and no-secret diagnostics passed")
+            let conflictingLoads = Mutex(0)
+            var conflictingEnvironment = ProcessInfo.processInfo.environment
+            conflictingEnvironment["YOSH_MANAGEMENT_TOKEN"] = "conflicting-ambient-value"
+            conflictingEnvironment["APP2049_MANAGEMENT_TOKEN"] = secret
+            let conflicting = NativeServiceRuntime(environment: conflictingEnvironment,
+                managementTokenLoader: { conflictingLoads.withLock { $0 += 1 }; return secret })
+            do { _ = try await conflicting.ready(); fatalError("Conflicting ambient tokens were accepted") }
+            catch ServiceRuntimeError.configuration { }
+            precondition(conflictingLoads.withLock { $0 } == 0, "alias conflicts must fail before Keychain access or backend takeover")
+            print("Credential cache, concurrent readiness, retries, alias conflicts and no-secret diagnostics passed")
             return
         }
         if mode == "credential-denied" || mode == "credential-invalid" {

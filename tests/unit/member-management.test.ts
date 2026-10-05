@@ -14,9 +14,9 @@ const directories: string[] = [];
 const token = 'm'.repeat(48);
 const origin = 'http://127.0.0.1:3049';
 const now = Date.parse('2026-09-28T00:00:00Z');
-const globals = globalThis as typeof globalThis & { __app2049?: { runtime?: AppRuntime } };
+const globals = globalThis as typeof globalThis & { __yosh?: { runtime?: AppRuntime } };
 function runtime() {
-  const directory = mkdtempSync(join(tmpdir(), '2049-members-')); directories.push(directory);
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-members-')); directories.push(directory);
   return new AppRuntime(directory, { now: () => now });
 }
 function request(path: string, method = 'GET', body?: unknown, secret = token, requestOrigin = origin) {
@@ -28,7 +28,7 @@ function agentRequest(authorization: string) {
   return new Request(`${origin}/api/agent`, { headers: { host: '127.0.0.1:3049', authorization } });
 }
 afterEach(() => {
-  globals.__app2049 = undefined;
+  globals.__yosh = undefined;
   delete process.env.APP2049_MANAGEMENT_TOKEN;
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -71,7 +71,7 @@ it('isolates live member credentials and grants, then invalidates them on revoke
 });
 
 it('requires management auth and same-origin writes for member routes', async () => {
-  const app = runtime(); globals.__app2049 = { runtime: app };
+  const app = runtime(); globals.__yosh = { runtime: app };
   process.env.APP2049_MANAGEMENT_TOKEN = token;
   try {
     expect((await GET(request('/api/app/members', 'GET', undefined, 'wrong'))).status).toBe(401);

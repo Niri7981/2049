@@ -81,7 +81,7 @@ it('quotes both real 402 resources, then evaluates the same resource and amount 
 });
 
 it('registers token risk, approves its fresh 0.05 quote, and replays the persisted resource path', async () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-token-risk-purchase-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-token-risk-purchase-'));
   const path = join(directory, 'ledger.sqlite');
   const f = setup(path);
   try {
@@ -162,7 +162,7 @@ it('rejects an unknown resource through the registry before quoting or reserving
 });
 
 it('uses a stored legacy grant for registered resources without rewriting its operation', async () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-legacy-resource-grant-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-legacy-resource-grant-'));
   const path = join(directory, 'ledger.sqlite');
   const f = setup(path, LEGACY_MARKET_SNAPSHOT_OPERATION);
   try {
@@ -231,7 +231,7 @@ it('routes a live approval to the existing executor with persisted 402 terms and
 });
 
 it('reopens new purchases without offerId and reconstructs the exact selected endpoint', async () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-resource-recovery-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-resource-recovery-'));
   const path = join(directory, 'ledger.sqlite');
   const f = setup(path);
   try {

@@ -163,7 +163,7 @@ it('recovers a timed-out offer with the original payload and never signs again',
 });
 
 it('reopens SQLite and recovers the original unknown offer payload without re-signing', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'bound-offer-restart-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-offer-restart-'));
   const path = join(directory, 'ledger.sqlite');
   const f = await fixture(path);
   const fetcher = vi.fn().mockRejectedValueOnce(new Error('timeout')).mockImplementation(async () => paidResponse(f.config));
@@ -186,7 +186,7 @@ it('reopens SQLite and recovers the original unknown offer payload without re-si
 
 it.each(['amount', 'payTo', 'asset', 'network', 'memo', 'feePayer', 'binding', 'resource'] as const)(
   'rejects persisted %s tampering before loading the signer', async field => {
-    const directory = mkdtempSync(join(tmpdir(), 'bound-offer-tamper-'));
+    const directory = mkdtempSync(join(tmpdir(), 'yosh-offer-tamper-'));
     const path = join(directory, 'ledger.sqlite');
     const f = await fixture(path);
     f.ledger.close();

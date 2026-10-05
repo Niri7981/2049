@@ -11,7 +11,7 @@ import { AgentConnection } from '../../src/modules/mcp/connection';
 const cardMemberId = '11111111-1111-4111-8111-111111111111';
 
 it('connects the real stdio bridge from another cwd and does not reacquire revoked access', async () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-stdio-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-stdio-'));
   const connection = new AgentConnection(directory, cardMemberId, () => true);
   const operations: string[] = [];
   const http = createServer((incoming, outgoing) => {
@@ -52,7 +52,7 @@ it('connects the real stdio bridge from another cwd and does not reacquire revok
 }, 15_000);
 
 it('returns policy denials as structured results while keeping backend failures as MCP errors', async () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-stdio-request-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-stdio-request-'));
   const connection = new AgentConnection(directory, cardMemberId, () => true);
   let received: { url?: string; method?: string; body?: unknown } = {};
   const purchase = { purchaseId: 'stdio-request-1', resourceId: 'market-snapshot', amount: '200000', display: '0.20 test USDC',

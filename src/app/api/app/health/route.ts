@@ -7,7 +7,7 @@ export async function GET(request: Request) {
   return managementRoute(request, false, async () => {
     const backend = appRuntime();
     void backend.start(new URL(request.url).origin).catch(() => undefined);
-    return Response.json({ ready: true, service: '2049', pid: process.pid, dataDirectory: realpathSync(backend.directory) },
+    return Response.json({ ready: true, service: 'Yosh', pid: process.pid, dataDirectory: realpathSync(backend.directory) },
       { headers: { 'cache-control': 'no-store' } });
   });
 }

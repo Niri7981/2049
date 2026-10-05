@@ -13,7 +13,7 @@ const dirs: string[] = [];
 const cardMemberId = '11111111-1111-4111-8111-111111111111';
 afterEach(() => { vi.unstubAllEnvs(); dirs.splice(0).forEach(dir => rmSync(dir, { recursive: true, force: true })); });
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), '2049-mcp-')); dirs.push(dir);
+  const dir = mkdtempSync(join(tmpdir(), 'yosh-mcp-')); dirs.push(dir);
   const connection = new AgentConnection(dir, cardMemberId, () => true);
   return { dir, connection };
 }
@@ -76,7 +76,7 @@ it('keeps purchase intent access across credential rotation without granting pay
 });
 
 it('rejects every credential after its CardMember is revoked', () => {
-  const dir = mkdtempSync(join(tmpdir(), '2049-mcp-member-')); dirs.push(dir);
+  const dir = mkdtempSync(join(tmpdir(), 'yosh-mcp-member-')); dirs.push(dir);
   let active = true;
   const connection = new AgentConnection(dir, cardMemberId, () => active);
   connection.setEnabled(true, origin);

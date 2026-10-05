@@ -9,7 +9,7 @@ const directories: string[] = [];
 afterEach(() => directories.splice(0).forEach(directory => rmSync(directory, { recursive: true, force: true })));
 
 it('migrates historical connection owners without merging different connectionIds or rewriting payment evidence', () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-card-member-migration-')); directories.push(directory);
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-card-member-migration-')); directories.push(directory);
   const path = join(directory, 'ledger.sqlite');
   const firstConnection = '11111111-1111-4111-8111-111111111111';
   const secondConnection = '22222222-2222-4222-8222-222222222222';

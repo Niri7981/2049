@@ -20,7 +20,7 @@ import { loadBuyerSigner } from '../../src/modules/payment/wallet';
 import type { PaidResourceId } from '../../src/modules/resources/paid-resources';
 
 vi.mock('@/modules/app/app-runtime', () => ({
-  appRuntime: () => (globalThis as typeof globalThis & { __app2049?: { runtime?: AppRuntime } }).__app2049?.runtime,
+  appRuntime: () => (globalThis as typeof globalThis & { __yosh?: { runtime?: AppRuntime } }).__yosh?.runtime,
 }));
 vi.mock('@/modules/http/local-request', async () => await import('../../src/modules/http/local-request'));
 vi.mock('@/modules/purchases/request-paid-resource-purchase', async () => await import('../../src/modules/purchases/request-paid-resource-purchase'));
@@ -43,7 +43,7 @@ function purchaseRequest(origin: string, token: string, requestId: string) {
 }
 
 it('separates authenticated MCP purchase intents from SpendGrant authority across creation, revoke and expiry', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'bound-intent-lifecycle-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-intent-lifecycle-'));
   const store = new SettlementStore(':memory:');
   const facilitator = {
     getSupported: vi.fn(async () => ({ kinds: [{ x402Version: 2 as const, scheme: 'exact', network: config.network, extra: { feePayer } }], extensions: [], signers: {} })),
@@ -61,9 +61,9 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
     timeZone: () => 'Asia/Shanghai', fetcher: quote });
   const claim = vi.spyOn(app.ledger, 'claim');
   const savePayload = vi.spyOn(app.ledger, 'savePayload');
-  const state = globalThis as typeof globalThis & { __app2049?: { runtime?: AppRuntime } };
-  const previous = state.__app2049;
-  state.__app2049 = { runtime: app };
+  const state = globalThis as typeof globalThis & { __yosh?: { runtime?: AppRuntime } };
+  const previous = state.__yosh;
+  state.__yosh = { runtime: app };
   const http = createServer(async (incoming, outgoing) => {
     try {
       const address = http.address();
@@ -227,7 +227,7 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
     for (const { client, transport } of clients) { await client.close(); await transport.close(); }
     await new Promise<void>(done => http.close(() => done()));
     app.close(); store.close();
-    if (previous === undefined) delete state.__app2049; else state.__app2049 = previous;
+    if (previous === undefined) delete state.__yosh; else state.__yosh = previous;
     vi.unstubAllEnvs(); vi.clearAllMocks();
     rmSync(directory, { recursive: true, force: true });
   }

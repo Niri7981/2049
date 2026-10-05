@@ -5,11 +5,12 @@ import Foundation
 struct MembersConnectionSmoke {
     @MainActor
     static func main() async throws {
-        let environment = ProcessInfo.processInfo.environment
+        let launch = BackendLaunchConfiguration(environment: ProcessInfo.processInfo.environment, bundleURL: Bundle.main.bundleURL)
+        let environment = try launch.normalizedEnvironment()
         let runtime = NativeServiceRuntime(allowsLaunch: false, environment: [
-            "APP2049_PORT": environment["APP2049_PORT"]!, "APP2049_DATA_DIR": environment["APP2049_DATA_DIR"]!,
-            "APP2049_REPOSITORY_ROOT": environment["APP2049_REPOSITORY_ROOT"]!,
-        ], managementTokenOverride: environment["APP2049_MANAGEMENT_TOKEN"]!)
+            "YOSH_PORT": environment["YOSH_PORT"]!, "YOSH_DATA_DIR": environment["YOSH_DATA_DIR"]!,
+            "YOSH_REPOSITORY_ROOT": environment["YOSH_REPOSITORY_ROOT"]!,
+        ], managementTokenOverride: environment["YOSH_MANAGEMENT_TOKEN"]!)
         let session = CardMemberSession(client: OverviewClient(runtime: runtime))
         let defaultID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         let customID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!

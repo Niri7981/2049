@@ -28,7 +28,7 @@ const address = 'BSEDrH4umjwCKUL5TqYm69ffsSjwWcV2BXQkczVp1F52';
 const dirs: string[] = [];
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); delete process.env.APP2049_MANAGEMENT_TOKEN; delete process.env.APP2049_ENABLE_DEVNET_PURCHASES; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 function runtime(timeZone = 'America/Los_Angeles', now?: () => number) {
-  const dir = mkdtempSync(join(tmpdir(), 'app2049-')); dirs.push(dir);
+  const dir = mkdtempSync(join(tmpdir(), 'yosh-')); dirs.push(dir);
   return new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }), timeZone: () => timeZone, now });
 }
 const origin = 'http://127.0.0.1:3049';
@@ -62,7 +62,7 @@ describe('authenticated local management boundary', () => {
 
 describe('managed budget and Devnet test records', () => {
   it('shares one wallet initialization across concurrent overview and readiness requests', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'app2049-wallet-cache-')); dirs.push(dir);
+    const dir = mkdtempSync(join(tmpdir(), 'yosh-wallet-cache-')); dirs.push(dir);
     let release!: () => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
     const initializeWallet = vi.fn(async () => { await pending; return { address, reused: true }; });
@@ -81,7 +81,7 @@ describe('managed budget and Devnet test records', () => {
   });
 
   it('retries a denied wallet read without creating a replacement wallet', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'app2049-wallet-denied-')); dirs.push(dir);
+    const dir = mkdtempSync(join(tmpdir(), 'yosh-wallet-denied-')); dirs.push(dir);
     const initializeWallet = vi.fn<() => Promise<{ address: string; reused: boolean }>>()
       .mockRejectedValueOnce(new Error('Keychain access denied')).mockResolvedValue({ address, reused: true });
     const app = new AppRuntime(dir, { initializeWallet });
@@ -126,7 +126,7 @@ describe('managed budget and Devnet test records', () => {
   });
 
   it('keeps a policy-only purchase request away from wallet initialization', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'app2049-request-wallet-')); dirs.push(dir);
+    const dir = mkdtempSync(join(tmpdir(), 'yosh-request-wallet-')); dirs.push(dir);
     const initializeWallet = vi.fn(async () => ({ address, reused: true }));
     const app = new AppRuntime(dir, { initializeWallet });
     try {
@@ -157,7 +157,7 @@ describe('managed budget and Devnet test records', () => {
   });
 
   it('persists the default CardMember across successive MCP connections and App restart', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'app2049-card-member-')); dirs.push(dir);
+    const dir = mkdtempSync(join(tmpdir(), 'yosh-card-member-')); dirs.push(dir);
     const first = new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }) });
     let firstMember: string;
     let firstConnection: string;
@@ -183,7 +183,7 @@ describe('managed budget and Devnet test records', () => {
   });
 
   it('quit waits for a request loading its wallet and prevents it from making a purchase', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'app2049-drain-')); dirs.push(dir);
+    const dir = mkdtempSync(join(tmpdir(), 'yosh-drain-')); dirs.push(dir);
     let release!: () => void;
     let entered!: () => void;
     const loading = new Promise<void>(resolve => { entered = resolve; });
@@ -268,7 +268,7 @@ describe('managed budget and Devnet test records', () => {
   });
 
   it('records a simulated purchase once and persists settings and history after restart', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'app2049-restart-')); dirs.push(dir);
+    const dir = mkdtempSync(join(tmpdir(), 'yosh-restart-')); dirs.push(dir);
     const create = () => new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }), timeZone: () => 'America/Los_Angeles' });
     const app = create(); const id = `app-${randomUUID()}`;
     try {
@@ -318,7 +318,7 @@ describe('managed budget and Devnet test records', () => {
   it('advances at local midnight without allowing a time-zone change or clock rollback to open another window', () => {
     let zone = 'America/Los_Angeles';
     const start = Date.parse('2026-09-14T06:00:00Z');
-    const dir = mkdtempSync(join(tmpdir(), 'app2049-clock-')); dirs.push(dir);
+    const dir = mkdtempSync(join(tmpdir(), 'yosh-clock-')); dirs.push(dir);
     const app = new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }), timeZone: () => zone, now: () => start });
     try {
       expect(app.ledger.managedSummary(start).day).toBe('2026-09-13');
@@ -331,7 +331,7 @@ describe('managed budget and Devnet test records', () => {
   });
 
   it('serializes concurrent App requests against one shared managed limit', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'app2049-concurrent-')); dirs.push(dir);
+    const dir = mkdtempSync(join(tmpdir(), 'yosh-concurrent-')); dirs.push(dir);
     const make = () => new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }), timeZone: () => 'Asia/Shanghai' });
     const first = make();
     try {

@@ -3,17 +3,18 @@ import Foundation
 @main
 struct ManagementClientSmoke {
     static func main() async throws {
-        let port = ProcessInfo.processInfo.environment["APP2049_PORT"]!
-        let token = ProcessInfo.processInfo.environment["APP2049_MANAGEMENT_TOKEN"]!
-        let dataDirectory = ProcessInfo.processInfo.environment["APP2049_DATA_DIR"]!
-        let repositoryRoot = ProcessInfo.processInfo.environment["APP2049_REPOSITORY_ROOT"]!
+        let launch = BackendLaunchConfiguration(environment: ProcessInfo.processInfo.environment, bundleURL: Bundle.main.bundleURL)
+        let port = try launch.configuredValue("PORT")!
+        let token = try launch.configuredValue("MANAGEMENT_TOKEN")!
+        let dataDirectory = try launch.configuredValue("DATA_DIR")!
+        let repositoryRoot = try launch.configuredValue("REPOSITORY_ROOT")!
         let runtime = NativeServiceRuntime(allowsLaunch: false,
-            environment: ["APP2049_PORT": port, "APP2049_DATA_DIR": dataDirectory,
-                "APP2049_REPOSITORY_ROOT": repositoryRoot], managementTokenOverride: token)
+            environment: ["YOSH_PORT": port, "YOSH_DATA_DIR": dataDirectory,
+                "YOSH_REPOSITORY_ROOT": repositoryRoot], managementTokenOverride: token)
         let client = OverviewClient(runtime: runtime)
         let unauthorizedRuntime = NativeServiceRuntime(allowsLaunch: false,
-            environment: ["APP2049_PORT": port, "APP2049_DATA_DIR": dataDirectory,
-                "APP2049_REPOSITORY_ROOT": repositoryRoot], managementTokenOverride: String(repeating: "x", count: 43))
+            environment: ["YOSH_PORT": port, "YOSH_DATA_DIR": dataDirectory,
+                "YOSH_REPOSITORY_ROOT": repositoryRoot], managementTokenOverride: String(repeating: "x", count: 43))
         do {
             _ = try await OverviewClient(runtime: unauthorizedRuntime).load()
             fatalError("Wrong management token unexpectedly worked")

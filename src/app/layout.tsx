@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "2049",
+  title: "Yosh",
   description: "Local API purchase service for macOS.",
 };
 

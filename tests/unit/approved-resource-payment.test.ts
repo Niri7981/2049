@@ -127,7 +127,7 @@ it('rejects malformed token risk delivery, then recovers with the original payme
 });
 
 it('recovers a resource purchase after restart from the saved payload and resource identity', async () => {
-  const directory = mkdtempSync(join(tmpdir(), '2049-resource-payment-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-resource-payment-'));
   const path = join(directory, 'ledger.sqlite');
   const f = await fixture('market-analysis', path);
   const fetcher = vi.fn().mockRejectedValueOnce(new Error('timeout')).mockImplementation(async () => paidResponse('market-analysis', f.config, f.amount));

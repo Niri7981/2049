@@ -56,5 +56,5 @@ it('sanitizes internal failures and reports ownership contention as unavailable'
   state.appRuntime.mockImplementationOnce(() => { throw new DataDirectoryInUseError(); });
   const busy = await overview(request());
   expect(busy.status).toBe(503);
-  await expect(busy.json()).resolves.toEqual({ code: 'DATA_DIRECTORY_IN_USE', error: '2049 数据已由另一服务使用。' });
+  await expect(busy.json()).resolves.toEqual({ code: 'DATA_DIRECTORY_IN_USE', error: 'Yosh 数据已由另一服务使用。' });
 });

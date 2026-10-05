@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const directory = mkdtempSync(join(tmpdir(), '2049-members-fixture-'));
+const directory = mkdtempSync(join(tmpdir(), 'yosh-members-fixture-'));
 const token = randomBytes(32).toString('base64url');
 const ids = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222',
   '33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'];
@@ -79,7 +79,7 @@ try {
     'Services/BackendChildProcess.swift', 'Services/BackendLaunchConfiguration.swift', 'Services/ManagementTransport.swift',
     'Services/NativeServiceRuntime.swift', 'Services/OverviewClient.swift', 'Models/AppOverview.swift',
     'Models/CardMemberSession.swift', 'Models/CardMemberSelection.swift', 'Models/MembersRosterPresentation.swift',
-  ].map(path => `apps/macos/2049/2049App/${path}`);
+  ].map(path => `apps/macos/Yosh/YoshApp/${path}`);
   const executable = join(directory, 'members-connection-smoke');
   await run('swiftc', ['-parse-as-library', ...sources, 'tests/native/MembersConnectionSmoke.swift', '-o', executable]);
   process.stdout.write(await run(executable, [], { ...process.env,

@@ -11,7 +11,7 @@ type Overview = {
 };
 type Balance = { amount: string | null; display: string; available: boolean };
 type BridgeResponse = { ok: boolean; status: number; body: unknown };
-declare global { interface Window { app2049?: { request(path: string, options?: { method?: string; body?: unknown }): Promise<BridgeResponse> } } }
+declare global { interface Window { yosh?: { request(path: string, options?: { method?: string; body?: unknown }): Promise<BridgeResponse> } } }
 
 function toMinor(input: string) {
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/.test(input)) throw new Error('请输入最多 6 位小数的 USDC 金额。');
@@ -50,8 +50,8 @@ export function AppDashboard() {
   const [grantSingle, setGrantSingle] = useState('0.5');
   const [grantExpiry, setGrantExpiry] = useState(defaultExpiry);
   const api = useCallback(async (path: string, options?: { method?: string; body?: unknown }) => {
-    if (!window.app2049) throw new Error('请从 2049 macOS App 打开此页面。');
-    const response = await window.app2049.request(path, options);
+    if (!window.yosh) throw new Error('请从 Yosh macOS App 打开此页面。');
+    const response = await window.yosh.request(path, options);
     if (!response.ok) throw new Error((response.body as { error?: string }).error || '操作失败。');
     return response.body;
   }, []);
@@ -89,7 +89,7 @@ export function AppDashboard() {
     catch (reason) { setError(reason instanceof Error ? reason.message : '授权参数不正确。'); }
   }
   return <main className="app-shell">
-    <header><div><p className="eyebrow">2049 · 本地购买服务</p><h1>消费钱包</h1></div><span className={data?.budget.paused ? 'pill warn' : 'pill'}>{data?.budget.paused ? '付款已暂停' : '服务运行中'}</span></header>
+    <header><div><p className="eyebrow">Yosh · 本地购买服务</p><h1>消费钱包</h1></div><span className={data?.budget.paused ? 'pill warn' : 'pill'}>{data?.budget.paused ? '付款已暂停' : '服务运行中'}</span></header>
     {error && <p className="error" role="alert">{error}</p>}
     <section><h2>钱包</h2><p className="address">{data?.wallet.address || '正在初始化…'}</p><div className="metric"><span>Devnet 余额</span><strong>{balance?.display || '—'}</strong></div><p className="hint">从 Phantom 等外部钱包向上方地址转入测试 USDC。私钥仅保存在 macOS 钥匙串。</p></section>
     <section><h2>每日共用额度</h2><div className="limit-row"><label><span>额度（test USDC）</span><input value={limit} onChange={event => setLimit(event.target.value)} placeholder="例如 1.00" inputMode="decimal" /></label><button disabled={busy} onClick={() => void saveLimit()}>保存额度</button></div>

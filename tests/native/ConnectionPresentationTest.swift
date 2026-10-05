@@ -12,7 +12,7 @@ struct ConnectionPresentationTest {
         let live = try decode(liveJSON)
         let connected = ConnectionPresentation(connection: live, service: service, agentName: "Research")
         precondition(connected.state == .connected && connected.isConnected && connected.canDisconnect)
-        precondition(connected.description == "Research is ready to use 2049.")
+        precondition(connected.description == "Research is ready to use Yosh.")
         precondition(connected.network == "Solana Devnet")
 
         let staleJSON = liveJSON.replacingOccurrences(of: #""connected":true"#, with: #""connected":false"#)
@@ -20,12 +20,12 @@ struct ConnectionPresentationTest {
         let waiting = ConnectionPresentation(connection: try decode(staleJSON), service: service, agentName: "Research")
         precondition(waiting.state == .waitingForCodex && !waiting.isConnected && waiting.canDisconnect)
         precondition(waiting.title == "Waiting for Codex")
-        precondition(waiting.description == "2049 is ready.\nOpen or continue a Codex chat to finish connecting.")
+        precondition(waiting.description == "Yosh is ready.\nOpen or continue a Codex chat to finish connecting.")
 
         let disabledJSON = staleJSON.replacingOccurrences(of: #""enabled":true"#, with: #""enabled":false"#)
         let disabled = ConnectionPresentation(connection: try decode(disabledJSON), service: service, agentName: "Research")
         precondition(disabled.state == .notConnected && !disabled.canDisconnect)
-        precondition(disabled.description == "Connect Codex to 2049.")
+        precondition(disabled.description == "Connect Codex to Yosh.")
 
         // Removing any existing live-evidence condition must still prevent Connected.
         for json in [liveJSON.replacingOccurrences(of: #""configured":true"#, with: #""configured":false"#),

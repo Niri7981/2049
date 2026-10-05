@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const temporary = mkdtempSync(join(tmpdir(), '2049-management-security-'));
+const temporary = mkdtempSync(join(tmpdir(), 'yosh-management-security-'));
 const secret = randomBytes(32).toString('base64url');
 const hash = body => createHash('sha256').update(body).digest('hex');
 const mac = message => createHmac('sha256', secret).update(message).digest();
@@ -112,7 +112,7 @@ async function actualApplication(app) {
   const env = { ...environment, APP2049_PORT: String(port) };
   // Production App must ignore this ordinary env override and use its Keychain item.
   let launchNumber = 0;
-  const launch = () => child(join(app, 'Contents/MacOS/2049'), [], { ...env,
+  const launch = () => child(join(app, 'Contents/MacOS/Yosh'), [], { ...env,
     APP2049_MANAGEMENT_TOKEN: `ignored-environment-identity-${++launchNumber}-${randomBytes(32).toString('hex')}` });
   const listener = async () => Number((await child('lsof', ['-t', '-nP', `-iTCP:${port}`, '-sTCP:LISTEN']).done.catch(() => '')).trim());
   const waitForBackend = async (owner, previous = 0) => {
@@ -162,13 +162,13 @@ async function actualApplication(app) {
 
 try {
   const sources = ['BackendChildProcess', 'BackendLaunchConfiguration', 'ManagementTransport', 'NativeServiceRuntime']
-    .map(name => `apps/macos/2049/2049App/Services/${name}.swift`);
+    .map(name => `apps/macos/Yosh/YoshApp/Services/${name}.swift`);
   await child('swiftc', ['-swift-version', '6', '-parse-as-library', ...sources,
     'tests/native/ManagementTransportSecurity.swift', '-o', executable]).done;
   for (const mode of ['credential-cache', 'credential-denied', 'credential-invalid',
     'normal', 'fake', 'tamper', 'status', 'nonce', 'stall', 'drip', 'oversized', 'content-length']) await fixture(mode);
-  // Bind the reported product port only when free; never stop a pre-existing listener.
-  await fixture('fake-owner', 3049);
+  // The untrusted listener owns an isolated free port, never the installed App's port.
+  await fixture('fake-owner');
 
   const port = await freePort();
   const env = { ...environment, APP2049_PORT: String(port) };
@@ -191,10 +191,11 @@ try {
   assert.throws(() => process.kill(oldPID, 0), { code: 'ESRCH' });
   process.stdout.write(`Real backend replacement: ${oldPID} -> ${newPID}\n${restarted}`);
   const lockTest = join(temporary, 'instance-lock');
-  await child('swiftc', ['-swift-version', '6', '-parse-as-library', 'apps/macos/2049/2049App/App/AppInstanceLock.swift',
-    'apps/macos/2049/tests/AppInstanceLockTest.swift', '-o', lockTest]).done;
+  await child('swiftc', ['-swift-version', '6', '-parse-as-library', 'apps/macos/Yosh/YoshApp/App/AppInstanceLock.swift',
+    'apps/macos/Yosh/tests/AppInstanceLockTest.swift', '-o', lockTest]).done;
   process.stdout.write(await child(lockTest, []).done);
-  if (process.env.APP2049_NATIVE_TEST_APP) await actualApplication(process.env.APP2049_NATIVE_TEST_APP);
+  const testApp = process.env.YOSH_NATIVE_TEST_APP;
+  if (testApp) await actualApplication(testApp);
   console.log('Management security and lifecycle tests passed (no payments)');
 } finally {
   const live = [...trackedBackendPIDs].some(pid => { try { process.kill(pid, 0); return true; } catch { return false; } });

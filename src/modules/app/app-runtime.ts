@@ -19,17 +19,19 @@ import { readPaidResourceQuotes } from '../purchases/paid-resource-quote';
 import { acquireDataDirectoryOwnership } from './data-directory-owner';
 import { readWalletBalance } from './wallet-balance';
 import { assembleAuthorityOverview } from './authority-overview';
+import { resolveYoshConfiguration } from './yosh-configuration';
 
 type RuntimeState = { runtime?: AppRuntime };
 export type TestPurchaseResult = { purchaseId: string; status: string; deliveryStatus: string; policy: { decision: string; reason: string }; transaction: string | null; simulated: boolean; warning?: string };
-const globals = globalThis as typeof globalThis & { __app2049?: RuntimeState };
+const globals = globalThis as typeof globalThis & { __yosh?: RuntimeState };
 
 function dataDirectory() {
-  const configured = process.env.APP2049_DATA_DIR;
+  const configured = resolveYoshConfiguration().dataDirectory;
+  // Reuse the installation's ledger, member identities and pending-payment evidence.
   return configured || join(homedir(), 'Library', 'Application Support', '2049');
 }
 function purchaseExecutionMode() {
-  return process.env.APP2049_ENABLE_DEVNET_PURCHASES === '1' ? 'live_devnet' as const : 'simulated' as const;
+  return resolveYoshConfiguration().enableDevnetPurchases ? 'live_devnet' as const : 'simulated' as const;
 }
 
 function localTimeZone() {
@@ -50,6 +52,7 @@ export class AppRuntime {
   private wallet?: Promise<{ address: string; reused: boolean }>;
   private walletAddress?: string;
   constructor(readonly directory = dataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number; fetcher?: typeof fetch; codex?: CodexIntegrationOptions } = {}) {
+    resolveYoshConfiguration();
     this.owner = acquireDataDirectoryOwnership(directory);
     let ledger: PurchaseLedger | undefined;
     try {
@@ -79,10 +82,12 @@ export class AppRuntime {
     this.owner.release();
   }
   async initializeWallet() {
+    resolveYoshConfiguration();
     this.wallet ??= (this.dependencies.initializeWallet ?? initializeProductWallet)().then(wallet => {
       this.walletAddress = wallet.address;
       process.env.DEMO_BUYER_PUBLIC_KEY = wallet.address;
-      process.env.APP2049_USE_PRODUCT_WALLET = '1';
+      process.env.YOSH_USE_PRODUCT_WALLET = '1';
+      if (process.env.APP2049_USE_PRODUCT_WALLET !== undefined) process.env.APP2049_USE_PRODUCT_WALLET = '1';
       return wallet;
     }).catch(error => { this.wallet = undefined; throw error; });
     return this.wallet;
@@ -93,6 +98,7 @@ export class AppRuntime {
     return operation;
   }
   start(origin: string): Promise<void> {
+    resolveYoshConfiguration();
     if (this.startup) return this.startup;
     if (!this.accepting) return Promise.resolve();
     this.startup = this.track(this.recoverOnStartup(origin));
@@ -118,6 +124,16 @@ export class AppRuntime {
       }
       this.recoveryStatus = this.ledger.pendingRecovery().length ? 'pending' : 'complete';
     } catch { this.recoveryStatus = 'pending'; }
+    // Renaming an owned MCP entry must never delay or replace original payment recovery.
+    if (this.accepting && this.codexIntegration.needsMigration) {
+      try {
+        await this.codexIntegration.migrateLegacy();
+        this.agentConnection.setIntegration(this.accepting && this.codexIntegration.configured, this.codexIntegration.serverName);
+      } catch {
+        // Explicit Connect will surface the ownership conflict; configuration is not liveness.
+        this.agentConnection.setIntegration(false, this.codexIntegration.serverName);
+      }
+    }
   }
   async prepareQuit() {
     this.accepting = false;
@@ -195,13 +211,13 @@ export class AppRuntime {
   setMemberConnection(enabled: boolean, origin: string, memberId: string) {
     if (memberId !== this.ledger.defaultCardMember().id) return Promise.resolve(this.setAgentConnection(enabled, origin, memberId));
     const operation = this.providerWrite.catch(() => {}).then(async () => {
-      if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, '2049 正在退出。');
+      if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, 'Yosh 正在退出。');
       this.ledger.assertCardMemberActive(memberId);
       if (enabled) {
         await this.codexIntegration.connect();
         this.agentConnection.setIntegration(true, this.codexIntegration.serverName);
         // Quit may begin while Codex writes its configuration. Never re-enable after that boundary.
-        if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, '2049 正在退出。');
+        if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, 'Yosh 正在退出。');
         if (!this.agentConnection.status().enabled) this.setAgentConnection(true, origin, memberId);
       } else {
         // Revoke first even if configuration removal subsequently fails or conflicts.
@@ -288,6 +304,7 @@ export class AppRuntime {
       : loadPaymentConfig({ ...process.env, SOLANA_CLUSTER: 'devnet', DEMO_BUYER_PUBLIC_KEY: wallet.address, DEMO_MERCHANT_PUBLIC_KEY: merchant });
     if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Devnet 钱包配置不匹配。');
     const authority = this.ledger.get(id) ? undefined : this.authority();
+    // This legacy intent is a persisted request-hash input; branding must not break replay.
     const result = await purchaseMarketSnapshot({ purchaseId: id, intent: '2049 App test purchase' }, {
       config, ledger: this.ledger, origin, mode,
       authority,
@@ -300,7 +317,8 @@ export class AppRuntime {
 }
 
 export function appRuntime() {
-  globals.__app2049 ??= {};
-  globals.__app2049.runtime ??= new AppRuntime();
-  return globals.__app2049.runtime;
+  resolveYoshConfiguration();
+  globals.__yosh ??= {};
+  globals.__yosh.runtime ??= new AppRuntime();
+  return globals.__yosh.runtime;
 }

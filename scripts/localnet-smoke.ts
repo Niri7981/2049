@@ -80,7 +80,7 @@ async function main() {
     SOLANA_LOCALNET_NETWORK: network, LOCAL_USDC_MINT: mint.toBase58(),
     DEMO_BUYER_PUBLIC_KEY: buyer.publicKey.toBase58(), DEMO_MERCHANT_PUBLIC_KEY: merchant.publicKey.toBase58(),
     X402_FACILITATOR_URL: facilitatorUrl });
-  const directory = await mkdtemp(join(tmpdir(), "2049-day4-smoke-"));
+  const directory = await mkdtemp(join(tmpdir(), "yosh-localnet-smoke-"));
   const dbPath = join(directory, "payments.sqlite");
   let store = new SettlementStore(dbPath);
   let api = createPaidMarketApi(config, new HTTPFacilitatorClient({ url: facilitatorUrl }), store);

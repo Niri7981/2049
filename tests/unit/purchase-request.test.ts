@@ -116,7 +116,7 @@ it('bridges basic APPROVED through the existing claim path using the one persist
 });
 
 it('does not replay another CardMember purchase with the same requestId', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'bound-purchase-owner-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-purchase-owner-'));
   const ledgerPath = join(directory, 'ledger.sqlite');
   const { ledger, fetcher, store } = setup('5000000', ledgerPath);
   const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
@@ -193,7 +193,7 @@ it('does not return a resource while payment is unknown', async () => {
 });
 
 it('rejects malformed persisted resources instead of returning unvalidated database JSON', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'bound-purchase-resource-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-purchase-resource-'));
   const ledgerPath = join(directory, 'ledger.sqlite');
   const { ledger, fetcher, store } = setup('5000000', ledgerPath);
   const pay = vi.fn(async (paymentLedger: PurchaseLedger, approvalId: string) => {
@@ -318,7 +318,7 @@ it('atomically applies the grant total to concurrent quoted requests', async () 
 });
 
 it('persists a structured DENIED request when the grant is already revoked', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'bound-revoked-denial-'));
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-revoked-denial-'));
   const ledgerPath = join(directory, 'ledger.sqlite');
   const { ledger, remote, store } = setup('5000000', ledgerPath);
   const pay = vi.fn();

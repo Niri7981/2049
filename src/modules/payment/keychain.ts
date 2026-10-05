@@ -34,20 +34,20 @@ export const APP_WALLET_KEYCHAIN = Object.freeze({ service: 'com.2049.wallet.v1'
 
 /** The product wallet uses one fixed Keychain item so a crash cannot orphan a newly-created signer. */
 export async function readAppWalletKeychain(): Promise<string | undefined> {
-  if (process.platform !== 'darwin') throw new Error('The 2049 wallet requires macOS Keychain');
+  if (process.platform !== 'darwin') throw new Error('The Yosh wallet requires macOS Keychain');
   try {
     const secret = await security(['find-generic-password', '-s', APP_WALLET_KEYCHAIN.service, '-a', APP_WALLET_KEYCHAIN.account, '-w']);
     if (!/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(secret)) throw new Error();
     return secret;
   } catch (error) {
     if (error instanceof KeychainCommandError && error.exitCode === 44) return undefined;
-    throw new Error('The 2049 wallet Keychain item could not be accessed');
+    throw new Error('The Yosh wallet Keychain item could not be accessed');
   }
 }
 
 export async function createAppWalletKeychain(secret: string): Promise<void> {
-  if (process.platform !== 'darwin') throw new Error('The 2049 wallet requires macOS Keychain');
-  if (!/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(secret)) throw new Error('Invalid 2049 wallet signer encoding');
+  if (process.platform !== 'darwin') throw new Error('The Yosh wallet requires macOS Keychain');
+  if (!/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(secret)) throw new Error('Invalid Yosh wallet signer encoding');
   await security(['-i'], `add-generic-password -s ${APP_WALLET_KEYCHAIN.service} -a ${APP_WALLET_KEYCHAIN.account} -w ${secret}\n`);
 }
 

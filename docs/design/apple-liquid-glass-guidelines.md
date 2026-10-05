@@ -1,6 +1,6 @@
-# 2049 — Apple Liquid Glass Design Notes
+# Yosh — Apple Liquid Glass Design Notes
 
-Design reference for the native macOS app; no implementation changes are implied. Section 1 records Apple's statements. Sections 2–6 are **2049-specific interpretations and internal rules**, not Apple requirements.
+Design reference for the native macOS app; no implementation changes are implied. Section 1 records Apple's statements. Sections 2–6 are **Yosh-specific interpretations and internal rules**, not Apple requirements.
 
 ## 1. What Apple is actually saying
 
@@ -15,13 +15,13 @@ Source: [Apple introduces a delightful and elegant new software design](https://
 - **Navigation behavior:** In iOS 26, tab bars shrink on downward scrolling and expand on upward scrolling. iPadOS/macOS sidebars preserve context through surrounding content and wallpaper.
 - **Platform familiarity:** A shared design preserves familiar experiences and each platform's distinct qualities; visionOS supplies material inspiration.
 
-**Attribution boundary:** The article does not prescribe 2049's palette, component exclusions, opacity values, spring settings or animation timings. Selective use and restraint below are our decisions.
+**Attribution boundary:** The article does not prescribe Yosh's palette, component exclusions, opacity values, spring settings or animation timings. Selective use and restraint below are our decisions.
 
-## 2. What this means for 2049
+## 2. What this means for Yosh
 
-2049 is a narrow vertical native macOS app. The whole app surface is conceptually **the card**. Use cool white / pale blue-gray, Hermes-inspired editorial typography and spacing, and restrained blue as a system signal. Static content stays mostly flat and editorial.
+Yosh is a narrow vertical native macOS app. The whole app surface is conceptually **the card**. Use cool white / pale blue-gray, Hermes-inspired editorial typography and spacing, and restrained blue as a system signal. Static content stays mostly flat and editorial.
 
-This current direction takes precedence here over the earlier warm/orange palette and navigation restrictions in the [2049 UI skill](../../.codex/skills/2049-ui/SKILL.md). Retain its one-card identity, native controls and explicit status hierarchy.
+This current direction takes precedence here over the earlier warm/orange palette and navigation restrictions in the [Yosh UI skill](../../.codex/skills/yosh-ui/SKILL.md). Retain its one-card identity, native controls and explicit status hierarchy.
 
 | Principle | Internal application |
 | --- | --- |
@@ -38,7 +38,7 @@ This current direction takes precedence here over the earlier warm/orange palett
 
 **Keep flat:** hero balance; Grant, Per transaction and Execution content; Payments text/content; Activity ledger rows; core content surfaces. A control inside these areas may use material without making its entire section glass.
 
-## 3. 2049 Liquid Glass rules
+## 3. Yosh Liquid Glass rules
 
 ### DO
 
@@ -73,7 +73,7 @@ This current direction takes precedence here over the earlier warm/orange palett
 
 ## 5. Motion principles
 
-For 2049, the dynamic material principle becomes causal feedback. The [2049 Motion skill](../../.codex/skills/2049-motion/SKILL.md) remains the motion reference; the rules below are our product choices.
+For Yosh, the dynamic material principle becomes causal feedback. The [Yosh Motion skill](../../.codex/skills/yosh-motion/SKILL.md) remains the motion reference; the rules below are our product choices.
 
 - **Connect input to result.** Acknowledge pointer-down immediately; release, control recovery and the resulting transition form one response.
 - **Stay interruptible.** New input or Back can reverse/retarget from the current presentation state. Never wait for an animation to finish.

@@ -10,11 +10,11 @@ import { POST } from '../../src/app/api/agent/session/route';
 
 const origin = 'http://127.0.0.1:3049';
 const directories: string[] = [];
-const globals = globalThis as typeof globalThis & { __app2049?: { runtime?: AppRuntime } };
-afterEach(() => { globals.__app2049 = undefined; vi.restoreAllMocks(); directories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })); });
+const globals = globalThis as typeof globalThis & { __yosh?: { runtime?: AppRuntime } };
+afterEach(() => { globals.__yosh = undefined; vi.restoreAllMocks(); directories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })); });
 function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), '2049-codex-lifecycle-')); directories.push(directory);
-  const app = new AppRuntime(directory); globals.__app2049 = { runtime: app };
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-codex-lifecycle-')); directories.push(directory);
+  const app = new AppRuntime(directory); globals.__yosh = { runtime: app };
   return { app, memberId: app.ledger.defaultCardMember().id };
 }
 const agent = (token: string, body: unknown, headers: Record<string, string> = {}) => new Request(`${origin}/api/agent/session`, {

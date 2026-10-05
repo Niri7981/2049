@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { CodexIntegration } from '../../src/modules/mcp/codex-integration';
 
@@ -8,7 +8,7 @@ const memberId = '11111111-1111-4111-8111-111111111111';
 const directories: string[] = [];
 afterEach(() => directories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })));
 function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), '2049-codex-')); directories.push(directory);
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-codex-')); directories.push(directory);
   const entries = new Map<string, unknown>([['unrelated', { name: 'unrelated', enabled: true, transport: { type: 'stdio', command: '/other' } }]]);
   const run = vi.fn(async (args: string[]) => {
     if (args[1] === 'list') return JSON.stringify([...entries.values()]);
@@ -32,12 +32,109 @@ it('installs only a dedicated member-specific Codex configuration, without crede
   await adapter.connect();
   const config = entries.get(adapter.serverName);
   expect(config).toMatchObject({ enabled: true, transport: { type: 'stdio', command: process.execPath,
-    env: { APP2049_CARD_MEMBER_ID: memberId, APP2049_DATA_DIR: directory, APP2049_MCP_PROVIDER: 'codex' } } });
+    env: { YOSH_CARD_MEMBER_ID: memberId, YOSH_DATA_DIR: directory, YOSH_MCP_PROVIDER: 'codex' } } });
   expect(JSON.stringify(config)).not.toMatch(/token|MANAGEMENT|PRIVATE_KEY/);
   expect(entries.get('unrelated')).toMatchObject({ transport: { command: '/other' } });
   expect(adapter.configured).toBe(true);
   expect(statSync(adapter.recordPath).mode & 0o777).toBe(0o600);
   expect(JSON.parse(readFileSync(adapter.recordPath, 'utf8'))).toMatchObject({ provider: 'codex', memberId });
+});
+
+function legacyFixture() {
+  const f = fixture();
+  const config = { name: f.adapter.legacyServerName, enabled: true, transport: {
+    type: 'stdio', command: process.execPath,
+    args: ['--import', resolve('node_modules/tsx/dist/loader.mjs'), resolve('scripts/mcp.ts')],
+    env: { APP2049_CARD_MEMBER_ID: memberId, APP2049_DATA_DIR: f.directory, APP2049_MCP_PROVIDER: 'codex' },
+  } };
+  f.entries.set(config.name, config);
+  mkdirSync(dirname(f.adapter.recordPath), { recursive: true });
+  writeFileSync(f.adapter.recordPath, JSON.stringify({ provider: 'codex', memberId, config }), { mode: 0o600 });
+  const restart = () => new CodexIntegration(f.directory, memberId, { root: resolve('.'), node: process.execPath, run: f.run });
+  return { ...f, adapter: restart(), config, restart };
+}
+
+it('renames an owned legacy entry without changing the member or exposing duplicate entries', async () => {
+  const { adapter, entries, run, restart } = legacyFixture();
+  entries.set('2049-research', { name: '2049-research', enabled: true, transport: { type: 'stdio', command: '/user' } });
+  expect(adapter.needsMigration).toBe(true);
+  await adapter.migrateLegacy();
+  expect(entries.has(adapter.legacyServerName)).toBe(false);
+  expect(entries.get(adapter.serverName)).toMatchObject({ transport: { env: { YOSH_CARD_MEMBER_ID: memberId } } });
+  expect(entries.has('2049-research')).toBe(true);
+  const mutations = run.mock.calls.filter(([args]) => ['add', 'remove'].includes(args[1])).map(([args]) => args[1]);
+  expect(mutations).toEqual(['remove', 'add']);
+  expect(existsSync(adapter.migrationPath)).toBe(false);
+  expect(restart().configured).toBe(true);
+  await restart().migrateLegacy();
+  expect(run.mock.calls.filter(([args]) => args[1] === 'add')).toHaveLength(1);
+});
+
+it('retains ownership evidence and resumes after a crash between removal and installation', async () => {
+  const { adapter, entries, run, restart } = legacyFixture();
+  const invoke = run.getMockImplementation()!;
+  run.mockImplementation(async args => {
+    if (args[1] === 'add') throw new Error('interrupted');
+    return invoke(args);
+  });
+  await expect(adapter.migrateLegacy()).rejects.toMatchObject({ code: 'CODEX_CONFIG_FAILED' });
+  expect(entries.has(adapter.legacyServerName)).toBe(false);
+  expect(existsSync(adapter.migrationPath)).toBe(true);
+  expect(JSON.parse(readFileSync(adapter.recordPath, 'utf8')).memberId).toBe(memberId);
+  run.mockImplementation(invoke);
+  await restart().migrateLegacy();
+  expect(entries.has(adapter.serverName)).toBe(true);
+  expect(existsSync(adapter.migrationPath)).toBe(false);
+});
+
+it('resumes a crash after canonical installation without installing twice', async () => {
+  const { adapter, entries, run, restart } = legacyFixture();
+  const invoke = run.getMockImplementation()!;
+  run.mockImplementation(async args => {
+    const result = await invoke(args);
+    if (args[1] === 'add') throw new Error('crash before read-back');
+    return result;
+  });
+  await expect(adapter.migrateLegacy()).rejects.toMatchObject({ code: 'CODEX_CONFIG_FAILED' });
+  expect(entries.has(adapter.serverName)).toBe(true);
+  run.mockImplementation(invoke);
+  await restart().migrateLegacy();
+  expect(run.mock.calls.filter(([args]) => args[1] === 'add')).toHaveLength(1);
+});
+
+it('preserves modified legacy entries and rejects a canonical collision before removal', async () => {
+  const { adapter, config, entries, run } = legacyFixture();
+  entries.set(config.name, { ...config, enabled: false });
+  await expect(adapter.migrateLegacy()).rejects.toMatchObject({ code: 'CODEX_CONFIG_CONFLICT' });
+  entries.set(config.name, config);
+  entries.set(adapter.serverName, { name: adapter.serverName, enabled: true, transport: { type: 'stdio', command: '/other' } });
+  await expect(adapter.migrateLegacy()).rejects.toMatchObject({ code: 'CODEX_CONFIG_CONFLICT' });
+  expect(run.mock.calls.some(([args]) => ['remove', 'add'].includes(args[1]))).toBe(false);
+});
+
+it('does not infer ownership of an old UUID entry without a receipt', async () => {
+  const { adapter, config, entries, run, restart } = legacyFixture();
+  rmSync(adapter.recordPath);
+  await expect(restart().connect()).rejects.toMatchObject({ code: 'CODEX_CONFIG_CONFLICT' });
+  expect(entries.get(config.name)).toEqual(config);
+  expect(run.mock.calls.some(([args]) => args[1] === 'remove')).toBe(false);
+});
+
+it('fails closed on a corrupt migration journal without changing either host entry', async () => {
+  const { adapter, run } = legacyFixture();
+  writeFileSync(adapter.migrationPath, '{broken');
+  await expect(adapter.migrateLegacy()).rejects.toMatchObject({ code: 'CODEX_CONFIG_FAILED' });
+  expect(run.mock.calls.some(([args]) => ['remove', 'add'].includes(args[1]))).toBe(false);
+});
+
+it('rejects a receipt and host entry bound to another member or data store', async () => {
+  const { adapter, config, entries, run, restart } = legacyFixture();
+  const incorrect = { ...config, transport: { ...config.transport,
+    env: { ...config.transport.env, APP2049_DATA_DIR: '/another/store' } } };
+  entries.set(config.name, incorrect);
+  writeFileSync(adapter.recordPath, JSON.stringify({ provider: 'codex', memberId, config: incorrect }));
+  await expect(restart().migrateLegacy()).rejects.toMatchObject({ code: 'CODEX_CONFIG_CONFLICT' });
+  expect(run.mock.calls.some(([args]) => ['add', 'remove'].includes(args[1]))).toBe(false);
 });
 
 it('is idempotent and recovers saved configuration across backend restart', async () => {

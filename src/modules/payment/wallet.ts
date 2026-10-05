@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { createKeyPairSignerFromBytes, getBase58Encoder } from "@solana/kit";
 import { readDemoKeychain } from "./keychain";
+import { resolveYoshConfiguration } from '../app/yosh-configuration';
 
 export async function loadBuyerSigner(expectedAddress: string, env: Record<string, string | undefined> = process.env) {
-  if (env.APP2049_USE_PRODUCT_WALLET === '1') {
+  if (resolveYoshConfiguration(env).useProductWallet) {
     const { loadProductWalletSigner } = await import('../app-wallet/product-wallet');
     return loadProductWalletSigner(expectedAddress);
   }
