@@ -7,6 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B84900000000000000000034 /* SpendGrantWheelColumn.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000035 /* SpendGrantWheelColumn.swift */; };
+		B84900000000000000000032 /* SpendGrantExpiryPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000033 /* SpendGrantExpiryPicker.swift */; };
+		B84900000000000000000030 /* SpendGrantDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000031 /* SpendGrantDraft.swift */; };
+		B84900000000000000000020 /* YoshDetailNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000021 /* YoshDetailNavigation.swift */; };
+		B84900000000000000000022 /* YoshDetailStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000023 /* YoshDetailStack.swift */; };
+		B84900000000000000000024 /* YoshDetailPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000025 /* YoshDetailPage.swift */; };
 		B84900000000000000000012 /* YoshTabPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000013 /* YoshTabPage.swift */; };
 		B84900000000000000000010 /* YoshTabMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000011 /* YoshTabMotion.swift */; };
 		B84900000000000000000001 /* ProviderIcons.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000002 /* ProviderIcons.xcassets */; };
@@ -74,6 +80,12 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B84900000000000000000035 /* SpendGrantWheelColumn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpendGrantWheelColumn.swift; sourceTree = "<group>"; };
+		B84900000000000000000033 /* SpendGrantExpiryPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpendGrantExpiryPicker.swift; sourceTree = "<group>"; };
+		B84900000000000000000031 /* SpendGrantDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpendGrantDraft.swift; sourceTree = "<group>"; };
+		B84900000000000000000021 /* YoshDetailNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshDetailNavigation.swift; sourceTree = "<group>"; };
+		B84900000000000000000023 /* YoshDetailStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshDetailStack.swift; sourceTree = "<group>"; };
+		B84900000000000000000025 /* YoshDetailPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshDetailPage.swift; sourceTree = "<group>"; };
 		B84900000000000000000013 /* YoshTabPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshTabPage.swift; sourceTree = "<group>"; };
 		B84900000000000000000011 /* YoshTabMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshTabMotion.swift; sourceTree = "<group>"; };
 		B84900000000000000000002 /* ProviderIcons.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = ProviderIcons.xcassets; sourceTree = "<group>"; };
@@ -257,6 +269,9 @@
 				A0000000000000000000004B /* AuthoritySettingsDetail.swift */,
 				A00000000000000000000079 /* DailyAuthorityContent.swift */,
 				A0000000000000000000004D /* SpendGrantDetail.swift */,
+				B84900000000000000000035 /* SpendGrantWheelColumn.swift */,
+				B84900000000000000000033 /* SpendGrantExpiryPicker.swift */,
+				B84900000000000000000031 /* SpendGrantDraft.swift */,
 				A0000000000000000000004F /* AgentConnectionDetail.swift */,
 				A00000000000000000000053 /* ActivityDetail.swift */,
 				A00000000000000000000067 /* ActivityLedgerRow.swift */,
@@ -268,6 +283,9 @@
 				A00000000000000000000032 /* BackLatestPurchase.swift */,
 				A00000000000000000000034 /* BackNavigation.swift */,
 				B84900000000000000000013 /* YoshTabPage.swift */,
+				B84900000000000000000021 /* YoshDetailNavigation.swift */,
+				B84900000000000000000023 /* YoshDetailStack.swift */,
+				B84900000000000000000025 /* YoshDetailPage.swift */,
 				B84900000000000000000011 /* YoshTabMotion.swift */,
 				A0000000000000000000005F /* CardSettingsView.swift */,
 				A00000000000000000000071 /* CardSettingsBody.swift */,
@@ -381,6 +399,9 @@
 				A0000000000000000000002F /* BackOverview.swift in Sources */,
 				A0000000000000000000004C /* AuthoritySettingsDetail.swift in Sources */,
 				A0000000000000000000004E /* SpendGrantDetail.swift in Sources */,
+				B84900000000000000000034 /* SpendGrantWheelColumn.swift in Sources */,
+				B84900000000000000000032 /* SpendGrantExpiryPicker.swift in Sources */,
+				B84900000000000000000030 /* SpendGrantDraft.swift in Sources */,
 				A00000000000000000000050 /* AgentConnectionDetail.swift in Sources */,
 				A00000000000000000000064 /* ConnectionPresentation.swift in Sources */,
 				A00000000000000000000052 /* PurchasePresentation.swift in Sources */,
@@ -407,6 +428,9 @@
 				A00000000000000000000033 /* BackLatestPurchase.swift in Sources */,
 				A00000000000000000000035 /* BackNavigation.swift in Sources */,
 				B84900000000000000000012 /* YoshTabPage.swift in Sources */,
+				B84900000000000000000020 /* YoshDetailNavigation.swift in Sources */,
+				B84900000000000000000022 /* YoshDetailStack.swift in Sources */,
+				B84900000000000000000024 /* YoshDetailPage.swift in Sources */,
 				B84900000000000000000010 /* YoshTabMotion.swift in Sources */,
 				A00000000000000000000039 /* AgentsMenu.swift in Sources */,
 				A0000000000000000000003B /* BackFlipButton.swift in Sources */,

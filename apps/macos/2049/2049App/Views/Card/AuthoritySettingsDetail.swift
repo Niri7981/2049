@@ -7,6 +7,7 @@ struct AuthoritySettingsDetail: View {
     let writeMessage: String?
     let writeFailed: Bool
     let onBack: () -> Void
+    var isActive: Bool = true
     let onSave: (String) async -> Void
 
     @State private var dailyLimitInput: String
@@ -26,6 +27,7 @@ struct AuthoritySettingsDetail: View {
         writeMessage: String?,
         writeFailed: Bool,
         onBack: @escaping () -> Void,
+        isActive: Bool = true,
         onSave: @escaping (String) async -> Void
     ) {
         self.overview = overview
@@ -34,6 +36,7 @@ struct AuthoritySettingsDetail: View {
         self.writeMessage = writeMessage
         self.writeFailed = writeFailed
         self.onBack = onBack
+        self.isActive = isActive
         self.onSave = onSave
         _dailyLimitInput = State(initialValue: DailyAuthorityPresentation.editableLimit(overview.budget.dailyLimit?.value))
     }
@@ -71,7 +74,10 @@ struct AuthoritySettingsDetail: View {
             messageFailed: inputError != nil || writeFailed, balanceDisplay: balanceDisplay,
             balanceIsLoading: balanceIsLoading, balanceMessage: balanceMessage, canRetryBalance: canRetryBalance,
             onBack: onBack, onSave: saveLimit, onRetryBalance: { Task { await readBalance() } })
-            .task(id: overview.service.network) { await readBalance() }
+            // Retaining the surface must not add background reads; re-entry still refreshes.
+            .task(id: isActive ? overview.service.network : nil) {
+                if isActive { await readBalance() }
+            }
             .onChange(of: overview.budget.dailyLimit?.value) { _, newValue in
                 dailyLimitInput = DailyAuthorityPresentation.editableLimit(newValue)
                 inputError = nil

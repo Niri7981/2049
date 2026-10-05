@@ -10,7 +10,8 @@ struct BackOverview: View {
 
     @State private var state: LoadState = .loading
     @State private var writeState: WriteState = .idle
-    @State private var selectedDetail: Detail?
+    @State private var detailNavigation = YoshDetailNavigation<Detail>()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var activityRefreshing = false
     @State private var activityRefreshError: String?
     @State private var isRefreshing = false
@@ -21,12 +22,17 @@ struct BackOverview: View {
         let message: String
     }
 
-    private enum Detail {
+    private enum Detail: Hashable {
         case daily, grant, connection, activity
         case purchase(String, from: PurchaseOrigin)
+
+        var parent: Detail? {
+            if case .purchase(_, from: .activity) = self { return .activity }
+            return nil
+        }
     }
 
-    private enum PurchaseOrigin: Equatable {
+    private enum PurchaseOrigin: Hashable {
         case authority, activity
     }
 
@@ -81,6 +87,14 @@ struct BackOverview: View {
         section == .connection || section == .authority
     }
 
+    private var selectedDetail: Detail? { detailNavigation.selection }
+
+    private var availableNavigation: YoshDetailNavigation<Detail> {
+        var navigation = detailNavigation
+        if overview == nil { navigation.show(nil, animated: false) }
+        return navigation
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             YoshTabPage(section: .connection, selection: section) {
@@ -111,7 +125,7 @@ struct BackOverview: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
-            selectedDetail = nil
+            selectDetail(nil, animated: false)
             writeState = .idle
             activityRefreshing = false
             activityRefreshError = nil
@@ -120,9 +134,12 @@ struct BackOverview: View {
     }
 
     private var authorityContent: some View {
-        ZStack(alignment: .top) {
-            if let overview, let selectedDetail {
-                switch selectedDetail {
+        YoshDetailStack(navigation: availableNavigation, reduceMotion: reduceMotion,
+            parent: { $0.parent }) {
+            overviewContent
+        } destination: { detail in
+            if let overview {
+                switch detail {
                 case .daily:
                     AuthoritySettingsDetail(
                         overview: overview,
@@ -130,7 +147,8 @@ struct BackOverview: View {
                         isSaving: writeState.isSaving || isRefreshing,
                         writeMessage: writeState.message,
                         writeFailed: writeState.isFailure,
-                        onBack: { self.selectedDetail = nil },
+                        onBack: { selectDetail(nil) },
+                        isActive: selectedDetail == .daily,
                         onSave: { limit in await write(.dailyLimit(limit)) }
                     )
                 case .grant:
@@ -139,7 +157,7 @@ struct BackOverview: View {
                         isSaving: writeState.isSaving || isRefreshing,
                         writeMessage: writeState.message,
                         writeFailed: writeState.isFailure,
-                        onBack: { self.selectedDetail = nil },
+                        onBack: { selectDetail(nil) },
                         onConnection: { open(.connection) },
                         onCreate: { total, single, expiration in
                             await write(.createGrant(totalLimit: total, singleLimit: single, expiresAt: expiration))
@@ -147,38 +165,38 @@ struct BackOverview: View {
                         onRevoke: { await write(.revokeGrant) }
                     )
                 case .connection:
-                    connectionPage(overview, onBack: { self.selectedDetail = nil })
+                    connectionPage(overview, onBack: { selectDetail(nil) })
                 case .activity:
                     ActivityDetail(
                         purchases: overview.purchases,
                         agentName: agentName,
                         isRefreshing: activityRefreshing,
                         refreshError: activityRefreshError,
-                        onBack: { self.selectedDetail = nil },
+                        onBack: { selectDetail(nil) },
                         onRefresh: { await refreshActivity() },
-                        onSelect: { self.selectedDetail = .purchase($0, from: .activity) }
+                        onSelect: { selectDetail(.purchase($0, from: .activity)) }
                     )
                 case .purchase(let id, let origin):
                     if let purchase = overview.purchases.first(where: { $0.purchaseId == id }) {
                         PurchaseDetail(purchase: purchase, agentName: agentName,
                             backTitle: origin == .activity ? "Activity" : "Authority",
-                            onBack: { self.selectedDetail = origin == .activity ? .activity : nil })
+                            onBack: { selectDetail(origin == .activity ? .activity : nil) })
                     } else {
                         ActivityDetail(
                             purchases: overview.purchases,
                             agentName: agentName,
                             isRefreshing: activityRefreshing,
                             refreshError: activityRefreshError,
-                            onBack: { self.selectedDetail = nil },
+                            onBack: { selectDetail(nil) },
                             onRefresh: { await refreshActivity() },
-                            onSelect: { self.selectedDetail = .purchase($0, from: .activity) }
+                            onSelect: { selectDetail(.purchase($0, from: .activity)) }
                         )
                     }
                 }
-            } else {
-                overviewContent
             }
         }
+        // Loading/error changes retain their existing immediate presentation.
+        .transaction(value: overview != nil) { $0.disablesAnimations = true }
     }
 
     private func connectionPage(_ overview: AppOverview, onBack: (() -> Void)?) -> AgentConnectionDetail {
@@ -375,7 +393,13 @@ struct BackOverview: View {
         guard overview != nil, !writeState.isSaving, !isRefreshing else { return }
         writeState = .idle
         activityRefreshError = nil
-        selectedDetail = detail
+        selectDetail(detail)
+    }
+
+    private func selectDetail(_ detail: Detail?, animated: Bool = true) {
+        // Connection navigation is intentionally outside this motion pass.
+        detailNavigation.show(detail, parent: { $0.parent },
+            animated: animated && detail != .connection && selectedDetail != .connection)
     }
 
     @MainActor
@@ -506,7 +530,7 @@ struct BackOverview: View {
                 state = .loaded(try await loadSelectedOverview())
                 await onMemberChanged()
             } catch {
-                selectedDetail = nil
+                selectDetail(nil, animated: false)
                 state = .failed((error as? OverviewLoadError) ?? .invalidResponse)
             }
             writeState = .failure(failure)
@@ -518,7 +542,7 @@ struct BackOverview: View {
             await onMemberChanged()
             writeState = .success(success)
         } catch {
-            selectedDetail = nil
+            selectDetail(nil, animated: false)
             state = .failed((error as? OverviewLoadError) ?? .invalidResponse)
             writeState = .failure("Saved, but current status could not be loaded")
         }

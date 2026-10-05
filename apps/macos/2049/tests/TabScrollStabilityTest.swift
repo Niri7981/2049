@@ -161,9 +161,12 @@ struct TabScrollStabilityTest {
         return view.subviews.flatMap { scrollViews(in: $0) }
     }
     @MainActor private static func scroll(_ view: NSScrollView, by pixels: Int32) {
-        let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
-            wheel1: -pixels, wheel2: 0, wheel3: 0)!
-        view.scrollWheel(with: NSEvent(cgEvent: event)!)
+        // An invisible fixture has no reliable physical wheel target. Exercise retained
+        // scroll state at the native boundary with a valid, deliberately chosen position.
+        let origin = view.contentView.bounds.origin
+        let maximum = max(0, (view.documentView?.bounds.height ?? 0) - view.contentView.bounds.height)
+        view.contentView.scroll(to: NSPoint(x: origin.x, y: min(maximum, max(0, origin.y + CGFloat(pixels)))))
+        view.reflectScrolledClipView(view.contentView)
     }
     @MainActor private static func pause(_ duration: TimeInterval) {
         RunLoop.current.run(until: .now.addingTimeInterval(duration))

@@ -10,22 +10,20 @@ struct SpendGrantDetail: View {
     let onCreate: (String, String, Int64) async -> Void
     let onRevoke: () async -> Void
 
-    @State private var totalInput: String
-    @State private var singleInput: String
-    @State private var expiration: Date
+    @State private var draft: SpendGrantDraft
     @State private var inputError: String?
     @State private var showingRevokeConfirmation = false
+    @FocusState private var focusedAmount: AmountField?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(
-        overview: AppOverview,
-        isSaving: Bool,
-        writeMessage: String?,
-        writeFailed: Bool,
-        onBack: @escaping () -> Void,
-        onConnection: @escaping () -> Void,
-        onCreate: @escaping (String, String, Int64) async -> Void,
-        onRevoke: @escaping () async -> Void
-    ) {
+    private enum AmountField { case total, perTransaction }
+    private let ink = Color(red: 0.07, green: 0.10, blue: 0.15)
+    private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
+    private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
+
+    init(overview: AppOverview, isSaving: Bool, writeMessage: String?, writeFailed: Bool,
+        onBack: @escaping () -> Void, onConnection: @escaping () -> Void,
+        onCreate: @escaping (String, String, Int64) async -> Void, onRevoke: @escaping () async -> Void) {
         self.overview = overview
         self.isSaving = isSaving
         self.writeMessage = writeMessage
@@ -34,92 +32,36 @@ struct SpendGrantDetail: View {
         self.onConnection = onConnection
         self.onCreate = onCreate
         self.onRevoke = onRevoke
-        _totalInput = State(initialValue: Self.editable(overview.grant?.totalLimit.value))
-        _singleInput = State(initialValue: Self.editable(overview.grant?.singleLimit.value))
-        let savedExpiration = overview.grant.map { Date(timeIntervalSince1970: TimeInterval($0.expiresAt) / 1_000) }
-        _expiration = State(initialValue: savedExpiration.flatMap { $0 > .now ? $0 : nil } ?? .now.addingTimeInterval(8 * 60 * 60))
+        _draft = State(initialValue: SpendGrantDraft(grant: overview.grant))
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Button("Authority", systemImage: "chevron.left", action: onBack)
-                    .buttonStyle(.plain)
-                    .disabled(isSaving)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Spend Grant")
-                        .font(.title2)
-                    Text(status)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text("One grant for the current Agent · Devnet test USDC")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 0) {
+                Button(action: onBack) {
+                    Label("Authority", systemImage: "chevron.left")
+                        .font(.system(size: 13))
+                        .frame(minHeight: 24, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(secondaryInk)
+                .disabled(isSaving)
+                .accessibilityLabel("Back to Authority")
 
-                if let grant = overview.grant {
-                    VStack(alignment: .leading, spacing: 7) {
-                        fact("Total authorized", amount(grant.totalLimit, decimals: grant.assetDecimals))
-                        fact(grant.status == .active ? "Remaining" : "Unspent, unavailable", amount(grant.remaining, decimals: grant.assetDecimals))
-                        fact("Per transaction", amount(grant.singleLimit, decimals: grant.assetDecimals))
-                        fact("Expires", Date(timeIntervalSince1970: TimeInterval(grant.expiresAt) / 1_000).formatted(date: .abbreviated, time: .shortened))
-                    }
-                } else {
-                    Text("No grant has been created.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 9) {
-                    Text(overview.grant?.status == .active ? "Replace grant" : "Create grant")
-                        .font(.headline)
-                    amountField("Total authorized", text: $totalInput)
-                    amountField("Per transaction", text: $singleInput)
-                    DatePicker("Expires", selection: $expiration, displayedComponents: [.date, .hourAndMinute])
-                        .disabled(isSaving)
-                    Text("Per-transaction amount must fit within the total. Expiry must be more than 1 minute and at most 7 days away.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text("Saving a grant rotates the Agent credential. Reconnect the MCP host afterward.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    if !overview.connection.enabled {
-                        Button("Enable Agent connection first", action: onConnection)
-                            .buttonStyle(.link)
-                    }
-                    HStack(spacing: 12) {
-                        Button(overview.grant?.status == .active ? "Replace grant" : "Create grant", action: saveGrant)
-                            .disabled(isSaving || !overview.connection.enabled)
-                        if overview.grant?.status == .active {
-                            Button("Revoke grant", role: .destructive) { showingRevokeConfirmation = true }
-                                .disabled(isSaving)
-                        }
-                        if isSaving { ProgressView("Saving").controlSize(.small) }
-                    }
-                    if let inputError {
-                        Text(inputError)
-                            .font(.subheadline)
-                            .foregroundStyle(.red)
-                    } else if let writeMessage {
-                        Text(writeMessage)
-                            .font(.subheadline)
-                            .foregroundStyle(writeFailed ? Color.red : Color.secondary)
-                    }
-                }
+                titleArea.padding(.top, 10).padding(.bottom, 18)
+                currentGrant.padding(.bottom, 18)
+                hairline
+                createGrant.padding(.top, 16)
             }
             .padding(.horizontal, 26)
             .padding(.top, 24)
-            .padding(.bottom, 16)
+            .padding(.bottom, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .foregroundStyle(ink)
         .onChange(of: overview.grant?.id) { _, _ in
-            totalInput = Self.editable(overview.grant?.totalLimit.value)
-            singleInput = Self.editable(overview.grant?.singleLimit.value)
-            if let expiresAt = overview.grant?.expiresAt {
-                expiration = Date(timeIntervalSince1970: TimeInterval(expiresAt) / 1_000)
-            }
+            draft = SpendGrantDraft(grant: overview.grant)
             inputError = nil
         }
         .confirmationDialog("Revoke this Spend Grant?", isPresented: $showingRevokeConfirmation) {
@@ -129,6 +71,132 @@ struct SpendGrantDetail: View {
         }
     }
 
+    private var titleArea: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text("Spend Grant")
+                .font(.system(size: 34, weight: .regular, design: .serif))
+                .tracking(-0.8)
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 0)
+            VStack(alignment: .trailing, spacing: 5) {
+                Text(status)
+                    .foregroundStyle(overview.grant?.status == .expired
+                        ? Color(red: 0.56, green: 0.32, blue: 0.36) : secondaryInk)
+                Text(isDevnet ? "Devnet test USDC" : "Asset unavailable")
+                    .foregroundStyle(secondaryInk)
+            }
+            .font(.system(size: 10))
+            .fixedSize()
+        }
+    }
+
+    private var currentGrant: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            eyebrow("CURRENT GRANT")
+            if let grant = overview.grant {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(SpendGrantDraft.decimal(grant.totalLimit.value, decimals: grant.assetDecimals))
+                        .font(.system(size: 27, weight: .regular, design: .serif))
+                        .monospacedDigit()
+                    Text(isDevnet ? "test USDC" : "Unknown asset")
+                        .font(.system(size: 12)).foregroundStyle(secondaryInk)
+                }
+                .padding(.top, 8)
+                .accessibilityElement(children: .combine)
+                HStack(alignment: .top, spacing: 16) {
+                    summary("Per transaction", value: SpendGrantDraft.decimal(grant.singleLimit.value, decimals: grant.assetDecimals))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    summary("Unspent", value: grant.status == .active
+                        ? SpendGrantDraft.decimal(grant.remaining.value, decimals: grant.assetDecimals) : "—")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityHint(grant.status == .active ? "Within this grant" : "Unavailable for an inactive grant")
+                    let expiry = Date(timeIntervalSince1970: TimeInterval(grant.expiresAt) / 1_000)
+                    summary("Expires", value: expiry.formatted(.dateTime.month(.abbreviated).day()),
+                        detail: expiry.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityValue(expiry.formatted(date: .complete, time: .shortened))
+                }
+                .padding(.top, 13)
+            } else {
+                Text("No grant yet")
+                    .font(.system(size: 14)).foregroundStyle(secondaryInk)
+                    .padding(.top, 12)
+            }
+        }
+    }
+
+    private var createGrant: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Create Grant")
+                .font(.system(size: 29, weight: .regular, design: .serif))
+                .tracking(-0.5)
+                .accessibilityAddTraits(.isHeader)
+            HStack(alignment: .top, spacing: 24) {
+                amountField("Total authorized", text: $draft.total, field: .total)
+                amountField("Per transaction", text: $draft.perTransaction, field: .perTransaction)
+            }
+            .padding(.top, 16)
+            SpendGrantExpiryPicker(selection: $draft.expiration, reduceMotion: reduceMotion)
+                .disabled(isSaving)
+                .padding(.top, 16)
+
+            if !overview.connection.enabled {
+                Button(action: onConnection) {
+                    HStack(spacing: 6) {
+                        Circle().fill(secondaryInk).frame(width: 4, height: 4)
+                        Text("Connection required")
+                        Image(systemName: "arrow.up.right").font(.system(size: 9))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11)).foregroundStyle(secondaryInk)
+                .disabled(isSaving)
+                .accessibilityHint("Open Connection to enable this agent")
+                .padding(.top, 12)
+            }
+            Button(action: saveGrant) {
+                Text(isSaving ? "Saving…" : isReplacing ? "Replace Grant" : "Create Grant")
+                    .font(.system(size: 13))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 35)
+                    .contentShape(Capsule())
+                    .overlay { Capsule().strokeBorder(secondaryInk.opacity(0.45), lineWidth: 1) }
+            }
+            .buttonStyle(.plain)
+            .disabled(isSaving || !overview.connection.enabled || !isDevnet)
+            .accessibilityIdentifier("grant-create")
+            .padding(.top, 12)
+
+            if overview.connection.enabled {
+                Text(isReplacing ? "Replaces current grant · reconnect afterward" : "Reconnect your agent after creating a grant")
+                    .font(.system(size: 10)).foregroundStyle(secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 9)
+            }
+            if isReplacing {
+                Button("Revoke grant", role: .destructive) { showingRevokeConfirmation = true }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(red: 0.56, green: 0.32, blue: 0.36))
+                    .disabled(isSaving)
+                    .padding(.top, 14)
+            }
+            if let message = inputError ?? writeMessage {
+                Text(message)
+                    .font(.system(size: 12))
+                    .foregroundStyle(inputError != nil || writeFailed
+                        ? Color(red: 0.58, green: 0.28, blue: 0.31) : secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.updatesFrequently)
+                    .padding(.top, 12)
+            }
+        }
+    }
+
+    private var isReplacing: Bool { overview.grant?.status == .active }
+    private var isDevnet: Bool { overview.service.network == "Solana Devnet" }
     private var status: String {
         switch overview.grant?.status {
         case .active: "Active"
@@ -138,70 +206,62 @@ struct SpendGrantDetail: View {
         }
     }
 
-    private func fact(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label).foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            Text(value).monospacedDigit()
-        }
-        .font(.subheadline)
+    private var hairline: some View {
+        Rectangle().fill(rule).frame(height: 1).accessibilityHidden(true)
     }
 
-    private func amountField(_ label: String, text: Binding<String>) -> some View {
-        HStack {
-            Text(label)
-                .frame(width: 112, alignment: .leading)
-            TextField("Amount", text: text)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel("\(label) in test USDC")
-                .disabled(isSaving)
-            Text("USDC")
-                .foregroundStyle(.secondary)
+    private func eyebrow(_ title: String) -> some View {
+        Text(title).font(.system(size: 9, weight: .medium)).tracking(1.8)
+            .foregroundStyle(secondaryInk)
+    }
+
+    private func summary(_ label: String, value: String, detail: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label).font(.system(size: 10)).foregroundStyle(secondaryInk)
+            Text(value).font(.system(size: 13)).monospacedDigit()
+            if let detail { Text(detail).font(.system(size: 10)).foregroundStyle(secondaryInk) }
         }
-        .font(.subheadline)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func amountField(_ label: String, text: Binding<String>, field: AmountField) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label).font(.system(size: 11)).foregroundStyle(secondaryInk)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                TextField("0.00", text: text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 23, weight: .regular, design: .serif))
+                    .monospacedDigit()
+                    .focused($focusedAmount, equals: field)
+                    .disabled(isSaving || !isDevnet)
+                    .accessibilityLabel("\(label) in test USDC")
+                    .accessibilityIdentifier(field == .total ? "grant-total" : "grant-per-transaction")
+                Text("USDC").font(.system(size: 10)).foregroundStyle(secondaryInk)
+            }
+            Rectangle().fill(focusedAmount == field ? secondaryInk : rule).frame(height: 1)
+                .accessibilityHidden(true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func saveGrant() {
-        guard let total = Self.minorUnits(totalInput), total != "0",
-              let single = Self.minorUnits(singleInput), single != "0",
-              expiration > .now else {
-            inputError = "Enter positive test USDC amounts and a future expiration."
+        guard !isSaving, overview.connection.enabled, isDevnet else { return }
+        guard let total = SpendGrantDraft.minorUnits(draft.total), total != "0",
+              let single = SpendGrantDraft.minorUnits(draft.perTransaction), single != "0" else {
+            inputError = "Enter positive amounts with up to 6 decimal places."
+            return
+        }
+        guard let totalValue = Int64(total), let singleValue = Int64(single), singleValue <= totalValue else {
+            inputError = "Per transaction must fit within total authorized."
+            return
+        }
+        let now = Date.now
+        guard draft.expiration > now.addingTimeInterval(60), draft.expiration <= now.addingTimeInterval(7 * 24 * 60 * 60) else {
+            inputError = "Choose an expiry more than 1 minute and up to 7 days away."
             return
         }
         inputError = nil
-        let expiresAt = Int64(expiration.timeIntervalSince1970 * 1_000)
+        let expiresAt = Int64(draft.expiration.timeIntervalSince1970 * 1_000)
         Task { await onCreate(total, single, expiresAt) }
-    }
-
-    // This only converts editor text. Grant validity and spending policy stay in the backend.
-    private static func minorUnits(_ input: String) -> String? {
-        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.range(of: #"^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$"#, options: .regularExpression) != nil else { return nil }
-        let parts = value.split(separator: ".", omittingEmptySubsequences: false)
-        let fraction = parts.count == 2 ? String(parts[1]) : ""
-        let raw = String(parts[0]) + fraction.padding(toLength: 6, withPad: "0", startingAt: 0)
-        let normalized = String(raw.drop(while: { $0 == "0" }))
-        let amount = normalized.isEmpty ? "0" : normalized
-        return amount.count <= 15 ? amount : nil
-    }
-
-    private static func editable(_ amount: Int64?) -> String {
-        guard let amount else { return "" }
-        return decimalString(amount, decimals: 6) ?? ""
-    }
-
-    private func amount(_ value: MinorUnits, decimals: Int) -> String {
-        guard let exact = Self.decimalString(value.value, decimals: decimals) else { return "—" }
-        return "\(exact) test USDC"
-    }
-
-    private static func decimalString(_ amount: Int64, decimals: Int) -> String? {
-        guard (0...18).contains(decimals) else { return nil }
-        let digits = String(amount)
-        if decimals == 0 { return digits }
-        let padded = String(repeating: "0", count: max(0, decimals + 1 - digits.count)) + digits
-        let whole = String(padded.dropLast(decimals))
-        let fractional = String(padded.suffix(decimals)).replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
-        return fractional.isEmpty ? whole : "\(whole).\(fractional)"
     }
 }

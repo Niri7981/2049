@@ -4,7 +4,8 @@ struct MembersView: View {
     let session: CardMemberSession
     var isActive = true
 
-    @State private var showingDetail = false
+    @State private var detailNavigation = YoshDetailNavigation<UUID>()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var editor: Editor?
     @State private var nameInput = ""
     @State private var isSaving = false
@@ -14,23 +15,39 @@ struct MembersView: View {
 
     private enum Editor: Equatable { case create, rename(UUID) }
 
-    private var showsSecondaryPage: Bool {
-        editor != nil || (showingDetail && session.selectedMember != nil)
+    private var availableNavigation: YoshDetailNavigation<UUID> {
+        var navigation = detailNavigation
+        if navigation.selection != nil && navigation.selection != session.selectedMemberID {
+            navigation.show(session.selectedMemberID, animated: false)
+        }
+        return navigation
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        ZStack(alignment: .top) {
+            YoshDetailStack(navigation: availableNavigation, reduceMotion: reduceMotion) {
+                listContent
+                    .padding(.horizontal, CardPageHeader.Layout.contentInset)
+                    .padding(.top, CardPageHeader.Layout.topSpacing)
+                    .padding(.bottom, 12)
+            } destination: { id in
+                if let member = session.activeMembers.first(where: { $0.member.id == id })?.member {
+                    detailContent(member)
+                        .padding(.horizontal, CardPageHeader.Layout.contentInset)
+                        .padding(.top, 24).padding(.bottom, 12)
+                }
+            }
+            // Editors keep their current immediate presentation; only list/detail uses depth.
+            .opacity(editor == nil ? 1 : 0)
+            .disabled(editor != nil)
+            .allowsHitTesting(editor == nil)
+            .accessibilityHidden(editor != nil)
             if let editor {
                 editorContent(editor)
-            } else if showingDetail, let member = session.selectedMember {
-                detailContent(member)
-            } else {
-                listContent
+                    .padding(.horizontal, CardPageHeader.Layout.contentInset)
+                    .padding(.top, 24).padding(.bottom, 12)
             }
         }
-        .padding(.horizontal, CardPageHeader.Layout.contentInset)
-        .padding(.top, showsSecondaryPage ? 24 : CardPageHeader.Layout.topSpacing)
-        .padding(.bottom, 12)
         .confirmationDialog("Revoke this agent?", isPresented: $showingRevokeConfirmation) {
             Button("Revoke agent", role: .destructive) {
                 if let id = revokeTargetID { Task { await revoke(id) } }
@@ -44,6 +61,10 @@ struct MembersView: View {
             showingRevokeConfirmation = false
             revokeTargetID = nil
             message = nil
+            if detailNavigation.selection != nil && detailNavigation.selection != session.selectedMemberID {
+                // Switching identity is not a detail push, and must never show the old member.
+                detailNavigation.show(session.selectedMemberID, animated: false)
+            }
         }
         .task(id: isActive) {
             guard isActive else { return }
@@ -77,7 +98,7 @@ struct MembersView: View {
     private func selectMember(_ id: UUID) {
         guard session.activeMembers.contains(where: { $0.member.id == id }) else { return }
         session.select(id)
-        showingDetail = true
+        detailNavigation.show(id)
         message = nil
     }
 
@@ -87,7 +108,7 @@ struct MembersView: View {
 
     private func detailContent(_ member: CardMemberSnapshot.Member) -> some View {
         VStack(alignment: .leading, spacing: 18) {
-            Button("Members", systemImage: "chevron.left") { showingDetail = false }
+            Button("Members", systemImage: "chevron.left") { detailNavigation.show(nil) }
                 .buttonStyle(.plain)
             Text(member.label)
                 .font(.title2)
@@ -176,7 +197,7 @@ struct MembersView: View {
             switch editor {
             case .create:
                 try await session.create(label: name)
-                showingDetail = false // Creating an agent keeps the current selection.
+                detailNavigation.show(nil, animated: false) // Creating keeps the current selection.
             case .rename(let id):
                 guard session.selectedMemberID == id else { return }
                 try await session.rename(id, label: name)
@@ -195,7 +216,7 @@ struct MembersView: View {
         defer { isSaving = false }
         do {
             try await session.revoke(id)
-            showingDetail = false
+            detailNavigation.show(nil, animated: false)
             message = "Agent revoked"
         } catch {
             message = (error as? OverviewLoadError)?.message ?? "Agent could not be revoked"
