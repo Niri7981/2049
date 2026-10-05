@@ -16,6 +16,8 @@ struct BackOverview: View {
     @State private var activityRefreshError: String?
     @State private var isRefreshing = false
     @State private var connectionFailure: ConnectionFailure?
+    @State private var connectionMotion = ConnectionMotionObservation()
+    @State private var connectionReadRevision = 0
 
     private struct ConnectionFailure {
         let enabled: Bool
@@ -125,12 +127,15 @@ struct BackOverview: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
+            connectionReadRevision += 1
+            connectionMotion = ConnectionMotionObservation()
             selectDetail(nil, animated: false)
             writeState = .idle
             activityRefreshing = false
             activityRefreshError = nil
             state = .failed(.serviceExited)
         }
+        .onDisappear { connectionReadRevision += 1 }
     }
 
     private var authorityContent: some View {
@@ -207,7 +212,7 @@ struct BackOverview: View {
             writeMessage: connectionFailure?.message,
             writeFailed: connectionFailure != nil,
             onBack: onBack,
-            onSetEnabled: { enabled in await write(.connection(enabled)) },
+            onSetEnabled: { enabled in await write(.connection(enabled), preparesConnection: enabled) },
             onRetry: {
                 if let connectionFailure {
                     await write(.connection(connectionFailure.enabled))
@@ -215,7 +220,10 @@ struct BackOverview: View {
                     await reload(retry: true)
                 }
             },
-            retryTitle: connectionFailure.map { $0.enabled ? "Retry setup" : "Retry disconnect" } ?? "Retry"
+            retryTitle: connectionFailure.map { $0.enabled ? "Retry setup" : "Retry disconnect" } ?? "Retry",
+            motionObservation: connectionMotion,
+            isActive: onBack == nil ? section == .connection
+                : section == .authority && selectedDetail == .connection
         )
     }
 
@@ -462,14 +470,22 @@ struct BackOverview: View {
     @MainActor
     private func refreshConnection() async {
         guard section == .connection, !writeState.isSaving, !isRefreshing, let current = overview else { return }
+        connectionReadRevision += 1
+        let revision = connectionReadRevision
         do {
             let member = try await overviewClient.loadMember(memberID)
-            guard !Task.isCancelled, section == .connection, !writeState.isSaving, !isRefreshing else { return }
-            state = .loaded(AppOverview(shared: current, member: member))
+            guard !Task.isCancelled, revision == connectionReadRevision,
+                  section == .connection, !writeState.isSaving, !isRefreshing else { return }
+            guard member.member.id == memberID else { throw OverviewLoadError.invalidResponse }
+            guard member.member.status == .active else { throw OverviewLoadError.memberInactive }
+            let result = AppOverview(shared: current, member: member)
+            observeConnection(result)
+            state = .loaded(result)
         } catch is CancellationError {
             return
         } catch {
-            guard !Task.isCancelled, section == .connection, !writeState.isSaving, !isRefreshing else { return }
+            guard !Task.isCancelled, revision == connectionReadRevision,
+                  section == .connection, !writeState.isSaving, !isRefreshing else { return }
             state = .failed((error as? OverviewLoadError) ?? .invalidResponse)
         }
     }
@@ -494,10 +510,20 @@ struct BackOverview: View {
     }
 
     @MainActor
-    private func write(_ change: SettingsChange) async {
+    private func write(_ change: SettingsChange, preparesConnection: Bool = false) async {
         guard overview != nil, !writeState.isSaving, !isRefreshing else { return }
         writeState = .saving
+        // A poll started before this request cannot overwrite its resulting member facts.
+        connectionReadRevision += 1
         if case .connection = change { connectionFailure = nil }
+        if preparesConnection, case .connection(true) = change {
+            connectionMotion.beginPreparation(memberID: memberID)
+        }
+        defer {
+            if preparesConnection, case .connection(true) = change {
+                connectionMotion.endPreparation(memberID: memberID)
+            }
+        }
         let success: String
         do {
             switch change {
@@ -548,19 +574,31 @@ struct BackOverview: View {
         }
     }
 
+    @MainActor
     private func loadSelectedOverview(retry: Bool = false) async throws -> AppOverview {
+        connectionReadRevision += 1
+        let revision = connectionReadRevision
         do {
             async let shared = overviewClient.load(retry: retry)
             async let member = overviewClient.loadMember(memberID, retry: retry)
             let (sharedOverview, snapshot) = try await (shared, member)
+            guard !Task.isCancelled, revision == connectionReadRevision else { throw CancellationError() }
+            guard snapshot.member.id == memberID else { throw OverviewLoadError.invalidResponse }
             guard snapshot.member.status == .active else {
                 await onMemberChanged()
                 throw OverviewLoadError.memberInactive
             }
-            return AppOverview(shared: sharedOverview, member: snapshot)
+            let result = AppOverview(shared: sharedOverview, member: snapshot)
+            observeConnection(result)
+            return result
         } catch OverviewLoadError.memberNotFound {
             await onMemberChanged()
             throw OverviewLoadError.memberNotFound
         }
+    }
+
+    private func observeConnection(_ overview: AppOverview) {
+        connectionMotion.observe(ConnectionMotionFact(memberID: memberID,
+            connection: overview.connection, service: overview.service))
     }
 }

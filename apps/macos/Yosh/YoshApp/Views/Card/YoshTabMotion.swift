@@ -37,6 +37,30 @@ enum YoshTabMotion {
         static var selection: Animation { .smooth(duration: 0.16, extraBounce: 0) }
     }
 
+    enum Connection {
+        static let acknowledgementDuration = 0.06
+        static let entryLead = 0.04
+        static let entryTravel = 0.23
+        static let exitLead = 0.03
+        static let exitTravel = 0.16
+        static let exitSettle = 0.07
+        static let textDuration = 0.10
+        static let reducedDuration = 0.10
+        static let connectedDuration = 0.12
+        static let waitingEndpoint: CGFloat = 0.5
+        static let idleNodeOpacity = 0.55
+        static let waitingNodeTint = 0.55
+        static let pressOpacity = 0.68
+        static let pressScale: CGFloat = 0.985
+
+        static func physical(_ duration: Double) -> Animation {
+            .smooth(duration: duration, extraBounce: 0)
+        }
+        static var text: Animation { .easeOut(duration: textDuration) }
+        static var reduced: Animation { .easeOut(duration: reducedDuration) }
+        static var connected: Animation { .easeOut(duration: connectedDuration) }
+    }
+
     enum Detail {
         static let parentTravel: CGFloat = -10
         static let forwardTravel: CGFloat = 34

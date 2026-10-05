@@ -37,9 +37,10 @@ Bottom navigation changes content inside the card; a shared indicator may move c
 
 ### Connection Bridge
 
-The bridge is `Agent node ─────────── Yosh node`. Use one quiet sequence per connection transition; polling or reopening does not replay a handshake:
+The bridge is `Agent node ─────────── Yosh node`. Use one quiet sequence per new confirmed state transition; polling or reopening does not replay preparation or a handshake:
 
-- **Connect:** left Agent node acknowledges input → line grows toward the right → one small blue pulse crosses → right Yosh node activates → settle.
+- **Connect preparation:** acknowledge the press immediately; after the backend prepares the path, reveal the endpoints and advance a light / dashed bridge to the midpoint. Settle into `Waiting for Codex`; saved configuration does not prove a host connection.
+- **Codex connected:** only a genuine live backend handshake completes the remaining bridge quietly into a stable connected state. Do not replay preparation; returning to an already connected page shows the final state immediately.
 - **Disconnect:** reverse the direction and activation sequence with a shorter exit than the connecting entrance.
 - Input feedback may precede a response; final node state and `Connected` require a verified connection fact. Enabled access, saved credentials, animation completion, or historical last-seen alone cannot prove current connection.
 - Keep pending, failed, unknown, and confirmed results explicit. Stop/retarget when the authoritative result changes; never finish success after failure/disconnect or delay known results for choreography.

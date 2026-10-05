@@ -9,8 +9,12 @@ struct AgentConnectionDetail: View {
     let onSetEnabled: (Bool) async -> Void
     let onRetry: (() async -> Void)?
     let retryTitle: String
+    let motionObservation: ConnectionMotionObservation?
+    let isActive: Bool
 
     @State private var showingRevokeConfirmation = false
+    @State private var requestActive = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let signal = Color(red: 0.24, green: 0.49, blue: 0.81)
     private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
@@ -18,7 +22,8 @@ struct AgentConnectionDetail: View {
 
     init(presentation: ConnectionPresentation, isSaving: Bool, writeMessage: String?, writeFailed: Bool,
          onBack: (() -> Void)?, onSetEnabled: @escaping (Bool) async -> Void,
-         onRetry: (() async -> Void)? = nil, retryTitle: String = "Retry setup") {
+         onRetry: (() async -> Void)? = nil, retryTitle: String = "Retry setup",
+         motionObservation: ConnectionMotionObservation? = nil, isActive: Bool = true) {
         self.presentation = presentation
         self.isSaving = isSaving
         self.writeMessage = writeMessage
@@ -27,6 +32,13 @@ struct AgentConnectionDetail: View {
         self.onSetEnabled = onSetEnabled
         self.onRetry = onRetry
         self.retryTitle = retryTitle
+        self.motionObservation = motionObservation
+        self.isActive = isActive
+    }
+
+    private var updating: Bool { isSaving || requestActive }
+    private var textAnimation: Animation? {
+        presentation.state == .connectionIssue ? nil : YoshTabMotion.Connection.text
     }
 
     var body: some View {
@@ -36,11 +48,13 @@ struct AgentConnectionDetail: View {
                     .font(.system(size: 12))
                     .foregroundStyle(secondaryInk)
                     .buttonStyle(.plain)
-                    .disabled(isSaving)
+                    .disabled(updating)
                     .padding(.bottom, 20)
             }
 
             CardPageHeader(title: presentation.title, style: .hero(eyebrow: "CONNECTION"))
+                .contentTransition(.opacity)
+                .animation(textAnimation, value: presentation.title)
 
             connectionBridge
                 .padding(.top, CardPageHeader.Layout.firstSectionSpacing)
@@ -51,6 +65,8 @@ struct AgentConnectionDetail: View {
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 20)
+                .contentTransition(.opacity)
+                .animation(textAnimation, value: presentation.description)
 
             if presentation.network != "—" {
                 hairline.padding(.top, 24)
@@ -68,11 +84,11 @@ struct AgentConnectionDetail: View {
             hairline
 
             if presentation.state == .connectionIssue, let onRetry {
-                Button(retryTitle) { Task { await onRetry() } }
-                    .buttonStyle(.plain)
+                Button(retryTitle) { request { await onRetry() } }
+                    .buttonStyle(ConnectionRequestButtonStyle())
                     .font(.system(size: 16))
                     .foregroundStyle(signal)
-                    .disabled(isSaving)
+                    .disabled(updating)
                     .padding(.top, 12)
             }
             if presentation.canDisconnect || presentation.state != .connectionIssue {
@@ -89,8 +105,8 @@ struct AgentConnectionDetail: View {
                     .frame(minHeight: 34, alignment: .leading)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .disabled(isSaving)
+                .buttonStyle(ConnectionRequestButtonStyle())
+                .disabled(updating)
                 .popover(isPresented: $showingRevokeConfirmation, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
                     disconnectConfirmation
                 }
@@ -100,8 +116,8 @@ struct AgentConnectionDetail: View {
                 .padding(.top, 12)
             }
 
-            if isSaving || (writeMessage != nil && !(writeFailed && presentation.state == .connectionIssue)) {
-                Text(isSaving ? "Updating…" : (writeMessage ?? ""))
+            if updating || (writeMessage != nil && !(writeFailed && presentation.state == .connectionIssue)) {
+                Text(updating ? "Updating…" : (writeMessage ?? ""))
                     .font(.system(size: 12))
                     .foregroundStyle(writeFailed ? Color.red : secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
@@ -113,6 +129,12 @@ struct AgentConnectionDetail: View {
         .padding(.top, onBack == nil ? CardPageHeader.Layout.topSpacing : 18)
         .padding(.bottom, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .disabled(!isActive)
+        .allowsHitTesting(isActive)
+        .accessibilityHidden(!isActive)
+        .onChange(of: isActive) { _, active in
+            if !active { showingRevokeConfirmation = false }
+        }
     }
 
     private var disconnectConfirmation: some View {
@@ -129,7 +151,7 @@ struct AgentConnectionDetail: View {
                 Button("Cancel") { showingRevokeConfirmation = false }
                     .keyboardShortcut(.cancelAction)
                 Button("Disconnect", role: .destructive, action: confirmDisconnect)
-                    .disabled(isSaving || !presentation.canDisconnect)
+                    .disabled(updating || !presentation.canDisconnect)
             }
             .buttonStyle(.bordered)
             .padding(.top, 4)
@@ -140,57 +162,15 @@ struct AgentConnectionDetail: View {
 
     private func confirmDisconnect() {
         showingRevokeConfirmation = false
-        guard !isSaving, presentation.canDisconnect else { return }
-        Task { await onSetEnabled(false) }
+        guard presentation.canDisconnect else { return }
+        request { await onSetEnabled(false) }
     }
 
     private var connectionBridge: some View {
-        VStack(spacing: 10) {
-            // This is a static relationship diagram, not a connection test or control.
-            GeometryReader { geometry in
-                ZStack(alignment: .topLeading) {
-                    Path { path in
-                        path.move(to: CGPoint(x: 5, y: 5))
-                        path.addLine(to: CGPoint(x: geometry.size.width - 5, y: 5))
-                    }
-                    .stroke(
-                        presentation.isConnected ? signal.opacity(0.45) : rule,
-                        style: StrokeStyle(lineWidth: 1.5, dash: presentation.isConnected ? [] : [3, 3])
-                    )
-
-                    bridgeNode
-                    bridgeNode
-                        .offset(x: geometry.size.width - 10)
-
-                    if presentation.isConnected {
-                        Circle()
-                            .fill(signal)
-                            .frame(width: 6, height: 6)
-                            .offset(x: geometry.size.width / 2 - 3, y: 2)
-                    }
-                }
-            }
-            .frame(height: 10)
-
-            HStack {
-                Text(presentation.agentName)
-                    .lineLimit(1)
-                Spacer(minLength: 12)
-                Text("Yosh")
-            }
-            .font(.system(size: 12))
-            .foregroundStyle(secondaryInk)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(presentation.agentName) to Yosh")
-        .accessibilityValue(presentation.title)
-    }
-
-    private var bridgeNode: some View {
-        Circle()
-            .fill(presentation.isConnected ? signal : Color.clear)
-            .overlay { Circle().strokeBorder(presentation.isConnected ? signal : secondaryInk, lineWidth: 1.5) }
-            .frame(width: 10, height: 10)
+        ConnectionBridge(agentName: presentation.agentName, status: presentation.title,
+            input: ConnectionBridge.Input(observation: motionObservation,
+                isConnected: presentation.isConnected, isWaiting: presentation.state == .waitingForCodex, isActive: isActive,
+                hasIssue: presentation.state == .connectionIssue, reduceMotion: reduceMotion))
     }
 
     private var hairline: some View {
@@ -199,10 +179,20 @@ struct AgentConnectionDetail: View {
     }
 
     private func setConnection() {
+        guard isActive, !updating else { return }
         if presentation.canDisconnect {
             showingRevokeConfirmation = true
         } else {
-            Task { await onSetEnabled(true) }
+            request { await onSetEnabled(true) }
+        }
+    }
+
+    private func request(_ action: @escaping @MainActor () async -> Void) {
+        guard isActive, !updating else { return }
+        requestActive = true
+        Task { @MainActor in
+            await action()
+            requestActive = false
         }
     }
 }
