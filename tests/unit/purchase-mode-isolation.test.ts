@@ -1,3 +1,4 @@
+import { resolvePaymentEnvironment } from '../../src/modules/payment/payment-environment';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,7 +14,7 @@ import { createStaticResourceRegistry } from '../../src/modules/resources/static
 import { hash } from '../../src/modules/purchases/spending-policy';
 import { demoSnapshot } from '../../src/modules/paid-market-api/paid-market-api';
 
-const config: PaymentConfig = {
+const config: PaymentConfig = { ...resolvePaymentEnvironment({}, 'live_devnet'),
   cluster: 'devnet', rpcUrl: 'https://rpc.invalid', network: DEVNET_NETWORK, mint: DEVNET_USDC_MINT,
   buyer: 'BSEDrH4umjwCKUL5TqYm69ffsSjwWcV2BXQkczVp1F52',
   merchant: '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs', facilitatorUrl: 'https://facilitator.invalid',
@@ -48,6 +49,19 @@ function seedVerifiedLivePurchase(ledger: PurchaseLedger, id: string) {
   ledger.finish(reserved.approvalId, { transaction, data: demoSnapshot }, now);
   return reserved;
 }
+
+it('rejects Mainnet reservation before any write without changing the ledger schema or existing rows', () => {
+  const ledger = new PurchaseLedger(':memory:');
+  seedVerifiedLivePurchase(ledger, 'original-devnet');
+  const before = ledger.list();
+  const quote = liveQuote('mainnet-disabled');
+  try {
+    expect(() => ledger.reserve(reserveIntent('mainnet-disabled', quote), quote, Date.now(), 'live_mainnet'))
+      .toThrow('MAINNET_EXECUTION_DISABLED');
+    expect(ledger.list()).toEqual(before);
+    expect(ledger.get('mainnet-disabled')).toBeUndefined();
+  } finally { ledger.close(); }
+});
 
 it('replays simulated PAID in simulated mode and rejects it in live mode before side effects', async () => {
   const ledger = new PurchaseLedger(':memory:');

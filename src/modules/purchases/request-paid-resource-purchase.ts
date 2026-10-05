@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { SpendIntentSchema } from '../authority/spend-intent';
 import { PAID_RESOURCE_PURCHASE_OPERATION, SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
-import { type PaymentConfig } from '../payment/payment-config';
+import { assertPaymentConfigExecutionEnabled, type PaymentConfig } from '../payment/payment-config';
 import { PAID_RESOURCE_SCOPE_ID, PaidResourceIdSchema, paidResource, parsePaidResourceDelivery } from '../resources/paid-resources';
 import { executeApprovedPayment, paymentBinding, paymentEndpointForIntent, recoverApprovedPayment } from './approved-payment';
 import { displayAmount, fetchPaidResourceQuote } from './paid-resource-quote';
@@ -49,12 +49,14 @@ export async function requestPaidResourcePurchase(raw: unknown, options: {
   fetcher?: typeof fetch; now?: () => number; execute?: boolean;
   pay?: typeof executeApprovedPayment; recover?: typeof recoverApprovedPayment;
 }): Promise<PurchaseRequestResult> {
+  if (options.config.mode === 'live_mainnet') throw new Error('MAINNET_EXECUTION_DISABLED');
+  if (options.execute === true) assertPaymentConfigExecutionEnabled(options.config);
   const input = PurchaseRequestInputSchema.parse(raw);
   const principal = SpendPrincipalSchema.parse(options.principal);
   options.ledger.assertCardMemberActive(principal.cardMemberId);
   const clock = options.now ?? Date.now;
   const requestStartedAt = clock();
-  const executionMode: PurchaseExecutionMode = options.execute === false ? 'simulated' : 'live_devnet';
+  const executionMode: PurchaseExecutionMode = options.execute === false ? 'simulated' : options.config.mode;
   const requestHash = hash({ resourceId: input.resourceId, reason: input.reason });
   async function complete(record: SpendReservation, reused: boolean) {
     options.ledger.assertReplayAllowed(record, executionMode);

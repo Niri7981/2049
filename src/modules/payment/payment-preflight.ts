@@ -1,5 +1,5 @@
 import { address, getAddressEncoder, getProgramDerivedAddress } from "@solana/kit";
-import { DEVNET_GENESIS, PAYMENT_AMOUNT, TOKEN_PROGRAM, type PaymentConfig } from "./payment-config";
+import { assertPaymentConfigExecutionEnabled, DEVNET_GENESIS, PAYMENT_AMOUNT, TOKEN_PROGRAM, type PaymentConfig } from "./payment-config";
 
 const ASSOCIATED_TOKEN_PROGRAM = address("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -34,6 +34,8 @@ export async function runPaymentPreflight(
   config: PaymentConfig,
   dependencies: { fetch?: typeof fetch; amount?: string } = {},
 ): Promise<PaymentPreflightSummary> {
+  // Read-only readiness is not available for disabled production or simulation execution.
+  assertPaymentConfigExecutionEnabled(config);
   const amount = dependencies.amount ?? PAYMENT_AMOUNT;
   if (!/^[1-9]\d*$/.test(amount)) throw new Error("Invalid payment amount");
   const fetcher = dependencies.fetch || fetch;
@@ -56,11 +58,12 @@ export async function runPaymentPreflight(
   }
 
   const genesis = await rpc("getGenesisHash");
-  if (typeof genesis !== "string" || (config.cluster === "devnet" && genesis !== DEVNET_GENESIS)) {
+  if (typeof genesis !== "string" || (config.cluster === "devnet" && genesis !== config.genesisHash)) {
     throw new Error("RPC genesis hash does not match Solana Devnet");
   }
   if (config.cluster === "localnet" && (genesis === DEVNET_GENESIS
     || genesis.startsWith("5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")
+    || (config.genesisHash !== null && genesis !== config.genesisHash)
     || (config.network !== "solana:localnet" && config.network !== `solana:${genesis.slice(0, 32)}`))) {
     throw new Error("RPC genesis hash does not match the configured local test chain");
   }

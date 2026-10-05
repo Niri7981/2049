@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { address } from '@solana/kit';
 import { executeApprovedPayment, paymentBinding, paymentEndpoint, recoverApprovedPayment } from './approved-payment';
 import { LEGACY_MARKET_SNAPSHOT_OPERATION, SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
-import { DEVNET_NETWORK, DEVNET_USDC_MINT, type PaymentConfig } from '../payment/payment-config';
+import { assertPaymentConfigExecutionEnabled, DEVNET_NETWORK, DEVNET_USDC_MINT, type PaymentConfig } from '../payment/payment-config';
 import { readPaymentRequiredHeader } from '../payment/x402-client';
 import { MarketOfferIdSchema, marketOffer, marketOfferResource } from '../resources/market-offers';
 import { createMarketSnapshotSpendIntent } from '../resources/market-spend-adapter';
@@ -69,7 +69,9 @@ export async function requestMarketPurchase(raw: unknown, options: {
   options.ledger.assertCardMemberActive(principal.cardMemberId);
   const clock = options.now ?? Date.now;
   const requestStartedAt = clock();
-  const executionMode: PurchaseExecutionMode = options.execute === false ? 'simulated' : 'live_devnet';
+  if (options.config.mode === 'live_mainnet') throw new Error('MAINNET_EXECUTION_DISABLED');
+  if (options.execute === true) assertPaymentConfigExecutionEnabled(options.config);
+  const executionMode: PurchaseExecutionMode = options.execute === false ? 'simulated' : options.config.mode;
   const requestHash = hash({ offerId: input.offerId, reason: input.reason });
   async function complete(record: SpendReservation, reused: boolean) {
     options.ledger.assertReplayAllowed(record, executionMode);

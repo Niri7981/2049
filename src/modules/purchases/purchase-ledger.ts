@@ -12,10 +12,10 @@ import { LEGACY_MARKET_SNAPSHOT_OPERATION, PAID_RESOURCE_PURCHASE_OPERATION, Spe
 import { PAID_RESOURCE_SCOPE_ID, PaidResourceIdSchema, paidResource } from '../resources/paid-resources';
 import { PREMIUM_SOL_MARKET_SNAPSHOT_ID } from '../resources/static-resource-registry';
 import { hash, nextSpendingDayBoundary, spendingDay } from './spending-policy';
+import { PurchaseExecutionModeSchema, type PurchaseExecutionMode } from '../payment/payment-environment';
 
 export type DeliveryStatus = 'NOT_PAID' | 'PENDING' | 'COMPLETE';
-export const PurchaseExecutionModeSchema = z.enum(['simulated', 'live_devnet']);
-export type PurchaseExecutionMode = z.infer<typeof PurchaseExecutionModeSchema>;
+export { PurchaseExecutionModeSchema, type PurchaseExecutionMode } from '../payment/payment-environment';
 export type StoredPurchaseExecutionMode = PurchaseExecutionMode | 'UNKNOWN';
 const PaymentEvidenceFields = {
   payloadHash: z.string().regex(/^[a-f0-9]{64}$/), messageHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -460,6 +460,8 @@ export class PurchaseLedger {
     }
   }
   reserve(intent: SpendIntent, quote: PaymentRequirements, now = Date.now(), mode: StoredPurchaseExecutionMode = 'UNKNOWN', ownerCardMemberId?: string): SpendReservation {
+    // Mainnet storage/accounting migration is a later step; reject before touching history.
+    if (mode === 'live_mainnet') throw new Error('MAINNET_EXECUTION_DISABLED');
     if (mode !== 'UNKNOWN') PurchaseExecutionModeSchema.parse(mode);
     if (ownerCardMemberId && intent.authority && ownerCardMemberId !== intent.authority.cardMemberId) throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');
     return this.atomic(() => {

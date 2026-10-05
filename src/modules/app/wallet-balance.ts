@@ -1,12 +1,16 @@
 import { getStandardTokenAccount } from '../payment/payment-preflight';
-import { DEVNET_USDC_MINT, TOKEN_PROGRAM } from '../payment/payment-config';
+import { resolvePaymentEnvironment } from '../payment/payment-environment';
 
 /** Wallet balance is best-effort network data, separate from local spending authority. */
 export async function readWalletBalance(address: string, fetcher: typeof fetch = fetch) {
   try {
-    const rpcUrl = new URL(process.env.SOLANA_DEVNET_RPC_URL || 'https://api.devnet.solana.com');
+    const environment = resolvePaymentEnvironment();
+    // This step does not add a production wallet or production balance UI.
+    if (environment.cluster !== 'devnet') throw new Error();
+    const asset = environment.asset;
+    const rpcUrl = new URL(environment.rpcUrl);
     if (rpcUrl.protocol !== 'https:' || rpcUrl.username || rpcUrl.password) throw new Error();
-    const ata = await getStandardTokenAccount(address, DEVNET_USDC_MINT);
+    const ata = await getStandardTokenAccount(address, asset.mint);
     const response = await fetcher(rpcUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getAccountInfo', params: [ata, { encoding: 'jsonParsed', commitment: 'confirmed' }] }),
       signal: AbortSignal.timeout(6_000), redirect: 'error' });
@@ -18,7 +22,7 @@ export async function readWalletBalance(address: string, fetcher: typeof fetch =
     if (account === null) return { amount: '0', display: '0.00 test USDC', available: true as const };
     const parsed = account && typeof account === 'object' ? account as { owner?: unknown; data?: { parsed?: { info?: { owner?: unknown; mint?: unknown; tokenAmount?: { amount?: unknown; decimals?: unknown } } } } } : undefined;
     const info = parsed?.data?.parsed?.info; const token = info?.tokenAmount; const amount = token?.amount;
-    if (parsed?.owner !== TOKEN_PROGRAM || info?.owner !== address || info?.mint !== DEVNET_USDC_MINT || token?.decimals !== 6 || typeof amount !== 'string' || !/^\d+$/.test(amount)) throw new Error();
+    if (parsed?.owner !== asset.tokenProgram || info?.owner !== address || info?.mint !== asset.mint || token?.decimals !== asset.decimals || typeof amount !== 'string' || !/^\d+$/.test(amount)) throw new Error();
     return { amount, display: `${(Number(amount) / 1_000_000).toFixed(2)} test USDC`, available: true as const };
   } catch {
     return { amount: null, display: '暂时无法读取', available: false as const };

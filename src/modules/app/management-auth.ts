@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import { LocalRequestError, RequestBodyError, requireLocalRequest } from '../http/local-request';
 import { DataDirectoryInUseError } from './data-directory-owner';
 import { resolveYoshConfiguration, YoshConfigurationError } from './yosh-configuration';
+import { PaymentEnvironmentError } from '../payment/payment-environment';
 
 export class ManagementApiError extends Error {
   constructor(readonly code: string, readonly status: number, readonly safeMessage: string) { super(code); }
@@ -85,6 +86,8 @@ export function managementError(error: unknown) {
   else if (error instanceof DataDirectoryInUseError)
     failure = new ManagementApiError('DATA_DIRECTORY_IN_USE', 503, 'Yosh 数据已由另一服务使用。');
   else if (error instanceof YoshConfigurationError)
+    failure = new ManagementApiError(error.code, 503, error.message);
+  else if (error instanceof PaymentEnvironmentError)
     failure = new ManagementApiError(error.code, 503, error.message);
   else failure = new ManagementApiError('INTERNAL_ERROR', 500, '本地服务暂时无法完成请求。');
   return Response.json({ code: failure.code, error: failure.safeMessage }, { status: failure.status, headers: { 'cache-control': 'no-store' } });

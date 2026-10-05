@@ -4,6 +4,7 @@ const settingNames = [
   'PORT', 'REPOSITORY_ROOT', 'NODE_PATH', 'DATA_DIR', 'MANAGEMENT_TOKEN',
   'CODEX_PATH', 'CARD_MEMBER_ID', 'MCP_PROVIDER', 'ENABLE_DEVNET_PURCHASES',
   'USE_PRODUCT_WALLET', 'ENABLE_LEGACY_DEMO_TASKS',
+  'EXECUTION_MODE',
 ] as const;
 type SettingName = typeof settingNames[number];
 
@@ -60,6 +61,7 @@ export function resolveYoshConfiguration(env: YoshEnvironment = process.env) {
     cardMemberId: values.CARD_MEMBER_ID,
     mcpProvider: values.MCP_PROVIDER,
     enableDevnetPurchases: enabled(values.ENABLE_DEVNET_PURCHASES, 'ENABLE_DEVNET_PURCHASES'),
+    executionMode: values.EXECUTION_MODE,
     useProductWallet: enabled(values.USE_PRODUCT_WALLET, 'USE_PRODUCT_WALLET'),
     enableLegacyDemoTasks: enabled(values.ENABLE_LEGACY_DEMO_TASKS, 'ENABLE_LEGACY_DEMO_TASKS'),
   };

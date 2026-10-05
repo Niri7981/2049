@@ -1,6 +1,6 @@
 import type { Trace } from '../demo/trace';
 import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
-import type { PaymentConfig } from '../payment/payment-config';
+import { assertPaymentConfigExecutionEnabled, type PaymentConfig } from '../payment/payment-config';
 import { prepareSolanaPayment, confirmSolanaTransaction, MARKET_RESOURCE } from '../payment/solana-payment';
 import { inspectOriginalTransaction, transactionMessageHash } from '../payment/reconcile-transaction';
 import { loadBuyerSigner } from '../payment/wallet';
@@ -90,6 +90,7 @@ async function receivePayment(ledger: PurchaseLedger, record: PurchaseRecord, co
 }
 /** Internal approval ID is the only caller-supplied payment parameter. */
 export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId: string, config: PaymentConfig, endpoint: string, trace: Trace = () => {}) {
+  assertPaymentConfigExecutionEnabled(config);
   const validate = (record: PurchaseRecord) => checkPaymentBinding(record, config, endpoint);
   const record = ledger.claim(approvalId, undefined, validate, 'live_devnet');
   const beforeSign = () => ledger.assertCanSign(approvalId, undefined, validate);

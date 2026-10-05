@@ -20,6 +20,7 @@ import { acquireDataDirectoryOwnership } from './data-directory-owner';
 import { readWalletBalance } from './wallet-balance';
 import { assembleAuthorityOverview } from './authority-overview';
 import { resolveYoshConfiguration } from './yosh-configuration';
+import { PaymentEnvironmentError, resolvePaymentEnvironment } from '../payment/payment-environment';
 
 type RuntimeState = { runtime?: AppRuntime };
 export type TestPurchaseResult = { purchaseId: string; status: string; deliveryStatus: string; policy: { decision: string; reason: string }; transaction: string | null; simulated: boolean; warning?: string };
@@ -31,7 +32,10 @@ function dataDirectory() {
   return configured || join(homedir(), 'Library', 'Application Support', '2049');
 }
 function purchaseExecutionMode() {
-  return resolveYoshConfiguration().enableDevnetPurchases ? 'live_devnet' as const : 'simulated' as const;
+  const environment = resolvePaymentEnvironment();
+  if (environment.mode === 'live_mainnet') throw new PaymentEnvironmentError('MAINNET_EXECUTION_DISABLED', 'mainnet is disabled');
+  if (environment.cluster !== 'devnet') throw new PaymentEnvironmentError('INVALID_PAYMENT_ENVIRONMENT', 'App requires Devnet test environment');
+  return environment.mode;
 }
 
 function localTimeZone() {
@@ -53,6 +57,7 @@ export class AppRuntime {
   private walletAddress?: string;
   constructor(readonly directory = dataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number; fetcher?: typeof fetch; codex?: CodexIntegrationOptions } = {}) {
     resolveYoshConfiguration();
+    purchaseExecutionMode();
     this.owner = acquireDataDirectoryOwnership(directory);
     let ledger: PurchaseLedger | undefined;
     try {
@@ -83,6 +88,7 @@ export class AppRuntime {
   }
   async initializeWallet() {
     resolveYoshConfiguration();
+    purchaseExecutionMode();
     this.wallet ??= (this.dependencies.initializeWallet ?? initializeProductWallet)().then(wallet => {
       this.walletAddress = wallet.address;
       process.env.DEMO_BUYER_PUBLIC_KEY = wallet.address;
@@ -99,6 +105,7 @@ export class AppRuntime {
   }
   start(origin: string): Promise<void> {
     resolveYoshConfiguration();
+    purchaseExecutionMode();
     if (this.startup) return this.startup;
     if (!this.accepting) return Promise.resolve();
     this.startup = this.track(this.recoverOnStartup(origin));
@@ -112,7 +119,7 @@ export class AppRuntime {
       const pending = this.ledger.pendingRecovery();
       if (pending.length) {
         const wallet = await this.initializeWallet();
-        const config = loadPaymentConfig();
+        const config = loadPaymentConfig(process.env, 'simulated');
         if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Recovery wallet mismatch');
         for (const item of pending) {
           if (!this.accepting) break;
@@ -147,7 +154,7 @@ export class AppRuntime {
   }
   async quotePaidResources(origin: string) {
     const wallet = await this.initializeWallet();
-    const config = loadPaymentConfig();
+    const config = loadPaymentConfig(process.env, 'simulated');
     if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Devnet 钱包配置不匹配。');
     return readPaidResourceQuotes(origin, config, this.dependencies.fetcher);
   }
@@ -281,7 +288,7 @@ export class AppRuntime {
     // denied path away from Keychain and all signer construction.
     const buyer = this.walletAddress;
     if (!buyer) throw new Error('产品钱包尚未初始化。');
-    const config = loadPaymentConfig();
+    const config = loadPaymentConfig(process.env, 'simulated');
     if (config.cluster !== 'devnet' || config.buyer !== buyer) throw new Error('Devnet 钱包配置不匹配。');
     await this.start(origin);
     if (!this.accepting) throw new Error('服务正在退出，不能创建购买请求。');
@@ -301,7 +308,7 @@ export class AppRuntime {
     const mode = purchaseExecutionMode();
     const config = mode === 'live_devnet'
       ? loadPaymentConfig()
-      : loadPaymentConfig({ ...process.env, SOLANA_CLUSTER: 'devnet', DEMO_BUYER_PUBLIC_KEY: wallet.address, DEMO_MERCHANT_PUBLIC_KEY: merchant });
+      : loadPaymentConfig({ ...process.env, DEMO_BUYER_PUBLIC_KEY: wallet.address, DEMO_MERCHANT_PUBLIC_KEY: merchant }, 'simulated');
     if (config.cluster !== 'devnet' || config.buyer !== wallet.address) throw new Error('Devnet 钱包配置不匹配。');
     const authority = this.ledger.get(id) ? undefined : this.authority();
     // This legacy intent is a persisted request-hash input; branding must not break replay.

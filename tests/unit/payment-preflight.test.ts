@@ -43,7 +43,7 @@ describe("Payment network and wallet configuration", () => {
   });
 
   it.each(["mainnet", "mainnet-beta", "testnet", "unknown"])("rejects cluster %s", (cluster) => {
-    expect(() => loadPaymentConfig({ ...env, SOLANA_CLUSTER: cluster })).toThrow("mainnet is disabled");
+    expect(() => loadPaymentConfig({ ...env, SOLANA_CLUSTER: cluster })).toThrow("INVALID_PAYMENT_ENVIRONMENT");
   });
 
   it("rejects invalid, missing, and identical wallet addresses", () => {

@@ -1,7 +1,7 @@
 import type { PaymentRequirements } from '@x402/core/types';
 import type { Trace } from '../demo/trace';
 import { demoSnapshot } from '../paid-market-api/paid-market-api';
-import { DEVNET_NETWORK, DEVNET_USDC_MINT, PAYMENT_AMOUNT, type PaymentConfig } from '../payment/payment-config';
+import { assertPaymentConfigExecutionEnabled, DEVNET_NETWORK, DEVNET_USDC_MINT, PAYMENT_AMOUNT, type PaymentConfig } from '../payment/payment-config';
 import { runPaymentPreflight } from '../payment/payment-preflight';
 import { selectPaymentQuote } from '../payment/solana-payment';
 import { createStaticResourceRegistry } from '../resources/static-resource-registry';
@@ -38,6 +38,8 @@ export async function purchaseMarketSnapshot(
 ): Promise<MarketSnapshotPurchaseResult> {
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(input.purchaseId) || !input.intent.trim()) throw new Error('Invalid purchase request');
   const { config, ledger } = options;
+  if (options.mode === 'live_mainnet' || config.mode === 'live_mainnet') throw new Error('MAINNET_EXECUTION_DISABLED');
+  if (options.mode !== 'simulated') assertPaymentConfigExecutionEnabled(config);
   if (config.cluster !== 'devnet' || config.network !== DEVNET_NETWORK || config.mint !== DEVNET_USDC_MINT) {
     throw new Error('Purchase service only supports Circle USDC on Devnet');
   }

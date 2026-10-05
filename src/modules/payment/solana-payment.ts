@@ -3,7 +3,7 @@ import { x402Client } from "@x402/core/client";
 import { getBase64EncodedWireTransaction, type TransactionSigner } from "@solana/kit";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { isDeepStrictEqual } from "node:util";
-import { DEVNET_NETWORK, PAYMENT_AMOUNT, type PaymentConfig } from "./payment-config";
+import { assertPaymentConfigExecutionEnabled, DEVNET_NETWORK, PAYMENT_AMOUNT, type PaymentConfig } from "./payment-config";
 import { readPaymentRequiredHeader } from "./x402-client";
 
 export const MARKET_RESOURCE = "/api/paid/market-snapshot?asset=SOL";
@@ -44,6 +44,7 @@ export async function prepareSolanaPayment(
   onSimulation: () => void = () => {},
   authorized: { amount: string; resource: string } = { amount: PAYMENT_AMOUNT, resource: MARKET_RESOURCE },
 ): Promise<PaymentPayload> {
+  assertPaymentConfigExecutionEnabled(config);
   if (requirement.scheme !== "exact" || requirement.network !== config.network || requirement.asset !== config.mint ||
       requirement.payTo !== config.merchant || requirement.amount !== authorized.amount || !/^[1-9]\d*$/.test(authorized.amount)) {
     throw new Error("Signer rejected a payment outside the fixed payment configuration");

@@ -1,3 +1,4 @@
+import { resolvePaymentEnvironment } from '../../src/modules/payment/payment-environment';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,7 +20,7 @@ import { DEMO_MARKET_DATA_PROVIDER_ID, SOL_MARKET_SNAPSHOT_RESOURCE_ID } from '.
 const buyer = Keypair.generate().publicKey.toBase58();
 const merchant = Keypair.generate().publicKey.toBase58();
 const feePayer = Keypair.generate().publicKey.toBase58();
-const config: PaymentConfig = { cluster: 'devnet', rpcUrl: 'https://api.devnet.solana.com', network: DEVNET_NETWORK,
+const config: PaymentConfig = { ...resolvePaymentEnvironment({}, 'live_devnet'), cluster: 'devnet', rpcUrl: 'https://api.devnet.solana.com', network: DEVNET_NETWORK,
   mint: DEVNET_USDC_MINT, buyer, merchant, facilitatorUrl: 'https://facilitator.invalid' };
 const cardMemberId = '11111111-1111-4111-8111-111111111111';
 const principal = { cardMemberId, connectionId: '2c187121-f6f1-49a3-aea4-821c4bc0a662', connectionGeneration: 2 };

@@ -1,3 +1,4 @@
+import { resolvePaymentEnvironment } from '../../src/modules/payment/payment-environment';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -34,7 +35,7 @@ const buyer = Keypair.generate().publicKey.toBase58();
 const merchant = Keypair.generate().publicKey.toBase58();
 const feePayer = Keypair.generate().publicKey.toBase58();
 const fixedNow = Date.parse('2026-09-24T03:00:00Z');
-const config: PaymentConfig = { cluster: 'devnet', rpcUrl: 'https://api.devnet.solana.com', network: DEVNET_NETWORK,
+const config: PaymentConfig = { ...resolvePaymentEnvironment({}, 'live_devnet'), cluster: 'devnet', rpcUrl: 'https://api.devnet.solana.com', network: DEVNET_NETWORK,
   mint: DEVNET_USDC_MINT, buyer, merchant, facilitatorUrl: 'https://facilitator.invalid' };
 
 function purchaseRequest(origin: string, token: string, requestId: string) {

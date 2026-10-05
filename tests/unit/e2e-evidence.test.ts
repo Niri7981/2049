@@ -1,3 +1,4 @@
+import { resolvePaymentEnvironment } from '../../src/modules/payment/payment-environment';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,7 +13,7 @@ const directories: string[] = [];
 afterEach(() => directories.splice(0).forEach(directory => rmSync(directory, { recursive: true, force: true })));
 
 const historicalPayer = 'Hr937hUNE1yHzjDLhZngWn8rHUWGTuTRLMJoTzi9BUeH';
-const config: PaymentConfig = {
+const config: PaymentConfig = { ...resolvePaymentEnvironment({}, 'live_devnet'),
   cluster: 'devnet', rpcUrl: 'https://rpc.invalid', network: DEVNET_NETWORK, mint: DEVNET_USDC_MINT,
   buyer: 'HXvqH3weDKJaVnvwVkN5MRPB28LGgoGYAmB5h4f6c9FU', merchant: '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs',
   facilitatorUrl: 'https://facilitator.invalid',

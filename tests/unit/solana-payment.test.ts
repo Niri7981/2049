@@ -1,3 +1,4 @@
+import { resolvePaymentEnvironment } from '../../src/modules/payment/payment-environment';
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { address, type TransactionSigner } from "@solana/kit";
 import type { PaymentRequirements } from "@x402/core/types";
@@ -19,7 +20,7 @@ vi.mock("@solana/kit", async importOriginal => ({
   getBase64EncodedWireTransaction: vi.fn(() => "unsigned-test-transaction"),
 }));
 
-const config: PaymentConfig = {
+const config: PaymentConfig = { ...resolvePaymentEnvironment({}, 'live_devnet'),
   cluster: "devnet",
   rpcUrl: "https://rpc.example.test",
   network: DEVNET_NETWORK,
