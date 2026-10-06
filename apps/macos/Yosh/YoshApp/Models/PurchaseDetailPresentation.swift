@@ -7,7 +7,7 @@ struct PurchaseDetailPresentation {
     struct Stage: Identifiable {
         enum Kind {
             case approved, denied, needsApproval, expired, paid, paying, paymentUnknown, failed
-            case simulatedPayment, paymentUnverified, delivered, deliveryPending, simulatedDelivery, unavailable
+            case simulatedPayment, paymentUnverified, delivered, deliveryPending, deliveryExhausted, deliveryUnavailable, simulatedDelivery, unavailable
         }
         let id: Kind
         let title: String
@@ -31,16 +31,19 @@ struct PurchaseDetailPresentation {
     let authorityTitle: String
     let authorityReason: String
     let resourceID: String?
+    let providerName: String
     let resourceContext: String?
+    let facts: [Receipt]
     let receipts: [Receipt]
+    let explorerURL: URL?
 
-    init(_ purchase: AppOverview.Purchase) {
+    init(_ purchase: AppOverview.Purchase, agentName: String = "Agent unavailable") {
         let item = ActivityPurchasePresentation(purchase)
         title = item.title
         status = item.status
         tone = switch purchase.status {
         case "APPROVED": .success
-        case "PAID" where purchase.executionMode == .liveDevnet: .success
+        case "PAID" where (purchase.executionMode == .liveDevnet || purchase.executionMode == .liveMainnet): .success
         case "PAYING", "PAYMENT_UNKNOWN", "REQUIRES_APPROVAL": .pending
         case "DENIED", "FAILED": .negative
         default: .neutral
@@ -88,7 +91,7 @@ struct PurchaseDetailPresentation {
             case .unknown:
                 observed.append(Stage(id: .paymentUnverified, title: "Payment unverified",
                     detail: "\(item.amount) · Execution mode unavailable", tone: .neutral))
-            case .liveDevnet:
+            case .liveDevnet, .liveMainnet:
                 observed.append(Stage(id: .paid, title: "Paid", detail: paymentContext, tone: .success))
             }
             if purchase.deliveryStatus == "COMPLETE" {
@@ -99,11 +102,17 @@ struct PurchaseDetailPresentation {
                     observed.append(Stage(id: .delivered,
                         title: purchase.executionMode == .unknown ? "Resource returned" : "Delivered",
                         detail: "Resource returned successfully.",
-                        tone: purchase.executionMode == .liveDevnet ? .success : .neutral))
+                        tone: (purchase.executionMode == .liveDevnet || purchase.executionMode == .liveMainnet) ? .success : .neutral))
                 }
-            } else if purchase.deliveryStatus == "PENDING" {
+            } else if purchase.deliveryStatus == "PENDING" || purchase.deliveryStatus == "DELIVERING" {
                 observed.append(Stage(id: .deliveryPending, title: "Delivery pending",
                     detail: "Resource not yet returned.", tone: .pending))
+            } else if purchase.deliveryStatus == "EXHAUSTED" {
+                observed.append(Stage(id: .deliveryExhausted, title: "Delivery exhausted",
+                    detail: "Payment confirmed; delivery retries ended.", tone: .negative))
+            } else if purchase.deliveryStatus == "UNSUPPORTED" {
+                observed.append(Stage(id: .deliveryUnavailable, title: "Delivery unavailable",
+                    detail: "Payment confirmed; this resource cannot be recovered automatically.", tone: .pending))
             }
         default:
             observed.append(Stage(id: .unavailable, title: "Status unavailable",
@@ -113,11 +122,30 @@ struct PurchaseDetailPresentation {
 
         // Merchant, URL, pay-to address, and payment channel are not exposed by this summary.
         resourceID = Self.nonempty(purchase.resourceId) ?? Self.nonempty(purchase.offerId)
+        providerName = switch Self.nonempty(purchase.providerId)?.lowercased() {
+        case "openai", "openai-api": "OpenAI"
+        case "vercel": "Vercel"
+        case "notion": "Notion"
+        case "demo-market-data-provider", "market-data": "Market Data"
+        case .some(let provider): provider
+        case .none: "Provider not provided"
+        }
         resourceContext = Self.nonempty(purchase.reason)
+        facts = [
+            Receipt(label: "Agent", value: agentName, copyValue: nil),
+            Receipt(label: "Resource", value: title, copyValue: nil),
+            Receipt(label: "Amount", value: item.amount, copyValue: nil),
+            Receipt(label: "Environment", value: item.mode, copyValue: nil),
+            Receipt(label: "Network", value: network.map(Self.receiptNetwork) ?? "Unavailable", copyValue: nil),
+            Receipt(label: "Payment", value: item.payment, copyValue: nil),
+            Receipt(label: "Delivery", value: item.delivery, copyValue: nil),
+        ]
+        explorerURL = Self.explorerURL(transaction: purchase.transaction, network: network,
+            environment: purchase.monetaryEnvironment)
         var fields: [Receipt] = []
         // A simulated transaction string is not a chain receipt.
         if purchase.executionMode != .simulated, let transaction = Self.nonempty(purchase.transaction) {
-            fields.append(Receipt(label: "Transaction ID", value: transaction, copyValue: transaction))
+            fields.append(Receipt(label: "Signature", value: transaction, copyValue: transaction))
         }
         fields.append(Receipt(label: "Request ID", value: purchase.purchaseId, copyValue: purchase.purchaseId))
         if let network {
@@ -138,11 +166,29 @@ struct PurchaseDetailPresentation {
     }
 
     private static func shortNetwork(_ value: String) -> String {
-        ["solana:devnet", "Solana Devnet"].contains(value) ? "Devnet" : value
+        switch value {
+        case "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", "solana:devnet", "Solana Devnet": "Devnet · Solana"
+        case "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", "Solana Mainnet": "Mainnet · Solana"
+        default: value
+        }
     }
 
     private static func receiptNetwork(_ value: String) -> String {
-        ["solana:devnet", "Solana Devnet"].contains(value) ? "Devnet (Solana)" : value
+        shortNetwork(value)
+    }
+
+    private static func explorerURL(transaction: String?, network: String?, environment: String?) -> URL? {
+        guard let transaction = nonempty(transaction), (64...100).contains(transaction.count),
+              transaction.utf8.allSatisfy({ (49...57).contains($0) || (65...72).contains($0)
+                  || (74...78).contains($0) || (80...90).contains($0)
+                  || (97...107).contains($0) || (109...122).contains($0) }) else { return nil }
+        switch (environment, network) {
+        case ("live_mainnet", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"):
+            return URL(string: "https://explorer.solana.com/tx/\(transaction)")
+        case ("live_devnet", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"):
+            return URL(string: "https://explorer.solana.com/tx/\(transaction)?cluster=devnet")
+        default: return nil
+        }
     }
 
     private static func policyReason(_ code: String?, approved: Bool) -> String {

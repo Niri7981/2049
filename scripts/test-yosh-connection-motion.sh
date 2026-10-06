@@ -5,6 +5,8 @@ fixture_directory="$(mktemp -d "${TMPDIR:-/tmp}/yosh-connection-motion.XXXXXX")"
 trap 'rm -rf "$fixture_directory"' EXIT
 cd "$repository_root"
 sources=(
+  apps/macos/Yosh/YoshApp/Models/AuthoritySurface.swift
+  apps/macos/Yosh/YoshApp/Models/ExecutionEnvironment.swift
   apps/macos/Yosh/YoshApp/Models/AppOverview.swift
   apps/macos/Yosh/YoshApp/Models/ConnectionPresentation.swift
   apps/macos/Yosh/YoshApp/Models/ConnectionMotionFact.swift

@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A000000000000000000000F5 /* AuthoritySurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000000F4 /* AuthoritySurface.swift */; };
+		A000000000000000000000F3 /* ExecutionDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000000F2 /* ExecutionDetail.swift */; };
+		A000000000000000000000F1 /* ExecutionEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000000F0 /* ExecutionEnvironment.swift */; };
 		B84900000000000000000042 /* ConnectionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000043 /* ConnectionBridge.swift */; };
 		B84900000000000000000040 /* ConnectionMotionFact.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000041 /* ConnectionMotionFact.swift */; };
 		B84900000000000000000034 /* SpendGrantWheelColumn.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000035 /* SpendGrantWheelColumn.swift */; };
@@ -82,6 +85,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		A000000000000000000000F4 /* AuthoritySurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthoritySurface.swift; sourceTree = "<group>"; };
+		A000000000000000000000F2 /* ExecutionDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionDetail.swift; sourceTree = "<group>"; };
+		A000000000000000000000F0 /* ExecutionEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionEnvironment.swift; sourceTree = "<group>"; };
 		B84900000000000000000043 /* ConnectionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionBridge.swift; sourceTree = "<group>"; };
 		B84900000000000000000041 /* ConnectionMotionFact.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionMotionFact.swift; sourceTree = "<group>"; };
 		B84900000000000000000035 /* SpendGrantWheelColumn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpendGrantWheelColumn.swift; sourceTree = "<group>"; };
@@ -217,6 +223,8 @@
 				A00000000000000000000017 /* AgentIdentity.swift */,
 				A00000000000000000000100 /* YoshAppLock.swift */,
 				A0000000000000000000003C /* AppOverview.swift */,
+				A000000000000000000000F4 /* AuthoritySurface.swift */,
+				A000000000000000000000F0 /* ExecutionEnvironment.swift */,
 				A0000000000000000000003E /* AuthorityOverviewPresentation.swift */,
 				A00000000000000000000051 /* PurchasePresentation.swift */,
 				A00000000000000000000057 /* CardMemberSession.swift */,
@@ -286,6 +294,7 @@
 				A0000000000000000000006F /* MembersRoster.swift */,
 				A0000000000000000000006D /* MembersRosterRow.swift */,
 				A00000000000000000000030 /* BackControls.swift */,
+				A000000000000000000000F2 /* ExecutionDetail.swift */,
 				A00000000000000000000032 /* BackLatestPurchase.swift */,
 				A00000000000000000000034 /* BackNavigation.swift */,
 				B84900000000000000000013 /* YoshTabPage.swift */,
@@ -433,6 +442,7 @@
 				A0000000000000000000007A /* DailyAuthorityContent.swift in Sources */,
 				A0000000000000000000007C /* CardPageHeader.swift in Sources */,
 				A00000000000000000000031 /* BackControls.swift in Sources */,
+				A000000000000000000000F3 /* ExecutionDetail.swift in Sources */,
 				A00000000000000000000033 /* BackLatestPurchase.swift in Sources */,
 				A00000000000000000000035 /* BackNavigation.swift in Sources */,
 				B84900000000000000000012 /* YoshTabPage.swift in Sources */,
@@ -443,6 +453,8 @@
 				A00000000000000000000039 /* AgentsMenu.swift in Sources */,
 				A0000000000000000000003B /* BackFlipButton.swift in Sources */,
 				A0000000000000000000003D /* AppOverview.swift in Sources */,
+				A000000000000000000000F5 /* AuthoritySurface.swift in Sources */,
+				A000000000000000000000F1 /* ExecutionEnvironment.swift in Sources */,
 				A0000000000000000000003F /* AuthorityOverviewPresentation.swift in Sources */,
 				A00000000000000000000041 /* OverviewClient.swift in Sources */,
 				A00000000000000000000044 /* NativeServiceRuntime.swift in Sources */,

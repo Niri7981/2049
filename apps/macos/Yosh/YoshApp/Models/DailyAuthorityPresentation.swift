@@ -2,21 +2,40 @@ import Foundation
 
 struct DailyAuthorityPresentation {
     let currency: String?
+    private var network: String? = nil
+    private var assetId: String? = nil
+    private var decimals: Int? = nil
 
     init(network: String) {
         currency = switch network.lowercased() {
-        case "solana devnet", "devnet": "test USDC"
+        case "solana devnet", "devnet": "Test USDC"
         case "solana mainnet", "solana mainnet-beta", "mainnet", "mainnet-beta": "USDC"
         default: nil
         }
     }
 
-    /// Keep the backend's displayed numeric precision; only the network-dependent unit changes.
+    init(overview: AppOverview) {
+        self.init(network: overview.service.network)
+        if let scope = overview.selectedAuthority {
+            self = DailyAuthorityPresentation(currency: scope.assetLabel, network: scope.network, assetId: scope.assetId, decimals: scope.assetDecimals)
+        } else if let environment = overview.service.execution {
+            self = DailyAuthorityPresentation(currency: environment.mode == .liveMainnet ? (environment.asset.symbol ?? "USDC") : "Test \(environment.asset.symbol ?? "USDC")",
+                network: environment.network, assetId: environment.asset.mint, decimals: environment.asset.decimals)
+        }
+    }
+
+    private init(currency: String?, network: String, assetId: String, decimals: Int) {
+        self.currency = currency; self.network = network; self.assetId = assetId; self.decimals = decimals
+    }
+
+    /// Never relabel a test or stale-network balance as Mainnet money.
     func balanceDisplay(_ balance: AppBalance) -> String? {
-        guard balance.available, let currency,
-              balance.display.range(of: #"^[0-9]+(?:\.[0-9]+)? (?:test )?USDC$"#, options: .regularExpression) != nil,
-              let amount = balance.display.split(separator: " ").first else { return nil }
-        return "\(amount) \(currency)"
+        guard balance.available, let currency else { return nil }
+        if let network {
+            guard balance.network == network, balance.assetId == assetId, balance.assetDecimals == decimals else { return nil }
+        }
+        let components = balance.display.split(separator: " ", maxSplits: 1)
+        return components.count == 2 && String(components[1]) == currency ? balance.display : nil
     }
 
     // Editor conversion only. The existing management API independently validates the shared limit.

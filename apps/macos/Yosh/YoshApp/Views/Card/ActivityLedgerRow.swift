@@ -29,11 +29,7 @@ struct ActivityLedgerRow: View {
     var body: some View {
         Button(action: selectPurchase) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: row.item.symbol)
-                    .font(.system(size: 20))
-                    .foregroundStyle(secondaryInk)
-                    .frame(width: 24, height: 24)
-                    .accessibilityHidden(true)
+                resourceIcon
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(row.item.title)
@@ -90,6 +86,32 @@ struct ActivityLedgerRow: View {
         .onHover { isHovered = $0 }
         .accessibilityLabel("\(row.item.title), \(row.context), \(row.purpose ?? ""), requested amount \(row.item.amount), \(row.item.status), \(row.item.timestamp)")
         .accessibilityHint("Opens purchase details, including the separate payment and delivery states.")
+    }
+
+    private var resourceIcon: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Group {
+                switch row.item.icon {
+                case .asset(let name):
+                    Image(name).resizable().scaledToFit().frame(width: 22, height: 22)
+                case .symbol(let name):
+                    Image(systemName: name).font(.system(size: 19, weight: .regular))
+                }
+            }
+            .foregroundStyle(secondaryInk)
+            .frame(width: 25, height: 25)
+            if row.solanaBadge {
+                Text("S")
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundStyle(secondaryInk)
+                    .frame(width: 11, height: 11)
+                    .background(Color(red: 0.95, green: 0.97, blue: 0.985), in: Circle())
+                    .overlay(Circle().stroke(secondaryInk.opacity(0.55), lineWidth: 0.6))
+                    .offset(x: 4, y: 4)
+            }
+        }
+        .frame(width: 29, height: 29)
+        .accessibilityHidden(true)
     }
 
     private func selectPurchase() {

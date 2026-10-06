@@ -14,12 +14,13 @@ struct PurchasePresentation {
         mode = switch purchase.executionMode {
         case .simulated: "Simulated"
         case .liveDevnet: "Live · Devnet"
+        case .liveMainnet: "Live · Mainnet"
         case .unknown: "Mode unknown"
         }
         status = switch purchase.status {
         case "PAID": switch purchase.executionMode {
             case .simulated: "Simulated payment"
-            case .liveDevnet: "Paid"
+            case .liveDevnet, .liveMainnet: "Paid"
             case .unknown: "Recorded as paid"
         }
         case "APPROVED": "Approved"
@@ -56,12 +57,26 @@ struct PurchasePresentation {
             let fractional = trimmed.padding(toLength: max(trimmed.count, min(decimals, minimumFractionDigits)), withPad: "0", startingAt: 0)
             value = fractional.isEmpty ? whole : "\(whole).\(fractional)"
         }
-        return "\(value) \(purchase.currency ?? "units")"
+        return "\(value) \(assetLabel(purchase))"
+    }
+
+    static func assetLabel(_ purchase: AppOverview.Purchase) -> String {
+        guard let symbol = purchase.currency?.trimmingCharacters(in: .whitespacesAndNewlines),
+              (2...10).contains(symbol.count),
+              symbol.utf8.allSatisfy({ (65...90).contains($0) || (48...57).contains($0) }) else {
+            return "asset units"
+        }
+        // The immutable monetary scope determines whether the symbol represents test funds.
+        // Unknown or inconsistent scope cannot be presented as a production asset.
+        let mainnet = purchase.monetaryEnvironment == "live_mainnet"
+            && purchase.network == "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+        return mainnet ? symbol : "Test \(symbol)"
     }
 }
 
 /// Activity-only wording. The Authority overview continues to use PurchasePresentation unchanged.
 struct ActivityPurchasePresentation {
+    enum Icon: Equatable { case asset(String), symbol(String) }
     enum Section: String, CaseIterable {
         case paid = "Paid"
         case notPaid = "Not Paid"
@@ -72,6 +87,7 @@ struct ActivityPurchasePresentation {
     let section: Section
     let title: String
     let symbol: String
+    let icon: Icon
     let status: String
     let supportingStatus: String?
     let policy: String
@@ -86,7 +102,7 @@ struct ActivityPurchasePresentation {
     init(_ purchase: AppOverview.Purchase) {
         section = switch purchase.status {
         case "PAID": switch purchase.executionMode {
-            case .liveDevnet: .paid
+            case .liveDevnet, .liveMainnet: .paid
             case .simulated: .simulated
             case .unknown: .needsAttention
         }
@@ -107,8 +123,9 @@ struct ActivityPurchasePresentation {
             symbol = "doc.text"
         default:
             title = purchase.resourceId ?? purchase.offerId ?? "Purchase"
-            symbol = "doc.text"
+            symbol = "chevron.left.forwardslash.chevron.right"
         }
+        icon = Self.resourceIcon(resourceId: purchase.resourceId ?? purchase.offerId, providerId: purchase.providerId)
 
         let simulated = purchase.executionMode == .simulated
         // A legacy simulated PAID record is not evidence that money changed hands.
@@ -119,6 +136,10 @@ struct ActivityPurchasePresentation {
             status = "Payment unverified"
         case "PAID" where purchase.deliveryStatus == "COMPLETE":
             status = "Delivered"
+        case "PAID" where purchase.deliveryStatus == "EXHAUSTED":
+            status = "Paid · delivery exhausted"
+        case "PAID" where purchase.deliveryStatus == "PENDING" || purchase.deliveryStatus == "DELIVERING":
+            status = "Paid · delivery pending"
         case "PAID":
             status = "Paid"
         case "PAYING":
@@ -139,7 +160,7 @@ struct ActivityPurchasePresentation {
             status = "Status unavailable"
         }
 
-        supportingStatus = purchase.status == "APPROVED" ? "No payment made" : nil
+        supportingStatus = purchase.status == "APPROVED" ? "No payment made" : purchase.status == "PAID" ? "Paid" : nil
         policy = switch purchase.status {
         case "DENIED": "Denied"
         case "REQUIRES_APPROVAL": "Needs approval"
@@ -161,18 +182,40 @@ struct ActivityPurchasePresentation {
         }
         delivery = switch purchase.deliveryStatus {
         case "COMPLETE": simulated ? "Simulated delivery" : "Delivered"
-        case "PENDING": "Pending"
+        case "PENDING", "DELIVERING": "Pending"
+        case "EXHAUSTED": "Exhausted"
+        case "UNSUPPORTED": "Unavailable"
         default: "Not delivered"
         }
-        mode = switch purchase.executionMode {
-        case .simulated: "Simulated"
-        case .liveDevnet: "Live · Devnet"
-        case .unknown: "Unknown"
+        mode = switch purchase.monetaryEnvironment {
+        case "live_mainnet" where purchase.network == "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "Mainnet"
+        case "live_devnet" where purchase.network == "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "Devnet · Developer"
+        case "legacy_test" where purchase.network == "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "Devnet · Developer"
+        case "simulated": "Simulation"
+        default: purchase.executionMode == .simulated ? "Simulation" : "Network unavailable"
         }
         amount = PurchasePresentation.amount(purchase, minimumFractionDigits: 2)
         let date = Date(timeIntervalSince1970: TimeInterval(purchase.createdAt) / 1_000)
         time = date.formatted(date: .omitted, time: .shortened)
         timestamp = date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private static func resourceIcon(resourceId: String?, providerId: String?) -> Icon {
+        switch providerId?.lowercased() {
+        case "openai", "openai-api": return .asset("ProviderOpenAI")
+        case "vercel": return .symbol("server.rack")
+        case "notion": return .symbol("note.text")
+        case "demo-market-data-provider", "market-data": return .symbol("waveform.path")
+        default: break
+        }
+        let key = resourceId?.lowercased() ?? ""
+        if key.contains("market") || key.contains("price") || key.contains("snapshot") {
+            return .symbol("waveform.path")
+        }
+        if key.contains("risk") || key.contains("report") { return .symbol("doc.text.magnifyingglass") }
+        if key.contains("host") || key.contains("deploy") || key.contains("build") { return .symbol("server.rack") }
+        if key.contains("note") || key.contains("document") { return .symbol("note.text") }
+        return .symbol("chevron.left.forwardslash.chevron.right")
     }
 
     private static func reason(_ code: String?) -> String? {

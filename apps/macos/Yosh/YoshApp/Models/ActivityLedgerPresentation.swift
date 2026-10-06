@@ -10,17 +10,21 @@ struct ActivityLedgerPresentation {
         let id: String
         let item: ActivityPurchasePresentation
         let context: String
+        let solanaBadge: Bool
         let purpose: String?
         let tone: Tone
 
         init(_ purchase: AppOverview.Purchase, agentName: String) {
             id = purchase.purchaseId
             item = ActivityPurchasePresentation(purchase)
-            context = "\(agentName) · \(item.mode)"
+            let solana = purchase.network?.hasPrefix("solana:") == true
+                || purchase.network == "Solana Devnet" || purchase.network == "Solana Mainnet"
+            context = "\(agentName) · \(item.mode)\(solana ? " · Solana" : "")"
+            solanaBadge = solana && purchase.executionMode != .simulated
             let reason = purchase.reason?.trimmingCharacters(in: .whitespacesAndNewlines)
             purpose = reason?.isEmpty == false ? reason : item.denialReason
             tone = switch purchase.status {
-            case "PAID": purchase.executionMode == .liveDevnet ? .positive : .neutral
+            case "PAID": (purchase.executionMode == .liveDevnet || purchase.executionMode == .liveMainnet) ? .positive : .neutral
             case "APPROVED": .positive
             case "PAYING", "PAYMENT_UNKNOWN", "REQUIRES_APPROVAL": .pending
             case "DENIED", "FAILED": .negative

@@ -8,9 +8,11 @@ struct AppOverview: Decodable {
     let grant: Grant?
     let connection: Connection
     let purchases: [Purchase]
+    var authority: AuthoritySurface? = nil
 
     /// Shared controls come from the card overview; member facts come only from that member's endpoint.
     init(shared: AppOverview, member: CardMemberSnapshot) {
+        authority = member.authority
         service = shared.service
         wallet = shared.wallet
         budget = shared.budget
@@ -23,13 +25,35 @@ struct AppOverview: Decodable {
         let status: Status
         let purchaseMode: PurchaseMode
         let network: String
+        var paymentEnabled: Bool? = nil
+        var registeredResources: [RegisteredResource]? = nil
+        var execution: ExecutionEnvironment? = nil
+
+        struct RegisteredResource: Decodable, Identifiable {
+            var id: String { resourceId }
+            let resourceId: String
+            let providerId: String
+            let url: String
+            let recipient: String
+            let network: String
+            let assetId: String
+            let assetDecimals: Int
+        }
 
         enum Status: String, Decodable {
             case running, stopping
         }
 
-        enum PurchaseMode: String, Decodable {
-            case simulated, liveDevnet = "live_devnet"
+        enum PurchaseMode: String, Codable, CaseIterable {
+            case simulated, liveDevnet = "live_devnet", liveMainnet = "live_mainnet"
+
+            var title: String {
+                switch self {
+                case .simulated: "Simulated"
+                case .liveDevnet: "Live · Devnet"
+                case .liveMainnet: "Live · Mainnet"
+                }
+            }
         }
     }
 
@@ -67,6 +91,9 @@ struct AppOverview: Decodable {
 
     struct Grant: Decodable {
         let id: String
+        let resourceId: String?
+        var network: String? = nil
+        var assetId: String? = nil
         let status: Status
         let totalLimit: MinorUnits
         let remaining: MinorUnits
@@ -118,14 +145,16 @@ struct AppOverview: Decodable {
         let decisionReason: String?
         let transaction: String?
         let executionMode: ExecutionMode
+        var monetaryEnvironment: String? = nil
         let network: String?
         let currency: String?
         let assetId: String?
         let assetDecimals: Int?
         let grantId: String?
+        var providerId: String? = nil
 
         enum ExecutionMode: String, Decodable {
-            case simulated, liveDevnet = "live_devnet", unknown = "UNKNOWN"
+            case simulated, liveDevnet = "live_devnet", liveMainnet = "live_mainnet", unknown = "UNKNOWN"
         }
     }
 }
@@ -148,10 +177,14 @@ struct AppBalance: Decodable {
     let amount: String?
     let display: String
     let available: Bool
+    var network: String? = nil
+    var assetId: String? = nil
+    var assetDecimals: Int? = nil
 }
 
 /// Backend-owned member state. The budget is shared; grant, connection and purchases belong to one member.
 struct CardMemberSnapshot: Decodable {
+    var authority: AuthoritySurface? = nil
     let member: Member
     let connection: AppOverview.Connection
     let grant: AppOverview.Grant?

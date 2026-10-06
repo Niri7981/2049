@@ -8,9 +8,9 @@ struct PurchaseDetailPresentationTest {
             "purchaseId": "fixture-request-with-a-long-stable-identifier",
             "status": "PAID", "deliveryStatus": "COMPLETE", "amount": "200000",
             "createdAt": 1_790_694_299_718 as Int64, "resourceId": "market-snapshot",
-            "reason": "  Live devnet acceptance test  ", "executionMode": "live_devnet",
-            "currency": "USDC", "assetDecimals": 6, "network": "solana:devnet",
-            "decisionReason": "AUTHORITY_BUDGET_AND_GRANT_PASSED", "transaction": "fixture-transaction",
+            "reason": "  Live devnet acceptance test  ", "executionMode": "live_devnet", "monetaryEnvironment": "live_devnet",
+            "currency": "USDC", "assetDecimals": 6, "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+            "decisionReason": "AUTHORITY_BUDGET_AND_GRANT_PASSED", "transaction": String(repeating: "3", count: 88),
         ]
         fields.merge(changes) { _, value in value }
         return try JSONDecoder().decode(AppOverview.Purchase.self,
@@ -19,20 +19,25 @@ struct PurchaseDetailPresentationTest {
 
     static func main() throws {
         func detail(_ changes: [String: Any] = [:]) throws -> PurchaseDetailPresentation {
-            PurchaseDetailPresentation(try purchase(changes))
+            PurchaseDetailPresentation(try purchase(changes), agentName: "Codex")
         }
         let delivered = try detail()
         precondition(delivered.title == "Market Snapshot" && delivered.status == "Delivered")
         precondition(delivered.stages.map(\.id) == [.approved, .paid, .delivered])
-        precondition(delivered.stages[1].detail == "0.20 USDC · Devnet")
-        precondition(delivered.stages.filter { $0.detail.contains("0.20 USDC") }.count == 1)
+        precondition(delivered.stages[1].detail == "0.20 Test USDC · Devnet · Solana")
+        precondition(delivered.stages.filter { $0.detail.contains("0.20 Test USDC") }.count == 1)
         precondition(delivered.stages.allSatisfy { $0.time == nil }, "Request creation is not a stage timestamp")
         precondition(!delivered.stages.map(\.title).contains("Reserved"), "The summary exposes no reservation event")
         precondition(delivered.authorityTitle == "Approved automatically")
         precondition(delivered.authorityReason.contains("at approval"), "Historical approval must not assert a currently active grant")
         precondition(delivered.resourceID == "market-snapshot" && delivered.resourceContext == "Live devnet acceptance test")
-        precondition(delivered.receipts.map(\.label) == ["Transaction ID", "Request ID", "Network", "Request time"])
-        precondition(delivered.receipts[0].copyValue == "fixture-transaction")
+        precondition(delivered.providerName == "Provider not provided")
+        let openAIProvider = try detail(["providerId": "openai"])
+        precondition(openAIProvider.providerName == "OpenAI")
+        precondition(delivered.receipts.map(\.label) == ["Signature", "Request ID", "Network", "Request time"])
+        precondition(delivered.receipts[0].copyValue == String(repeating: "3", count: 88))
+        precondition(delivered.facts.map(\.value) == ["Codex", "Market Snapshot", "0.20 Test USDC", "Devnet · Developer", "Devnet · Solana", "Paid", "Delivered"])
+        precondition(delivered.explorerURL?.absoluteString == "https://explorer.solana.com/tx/\(String(repeating: "3", count: 88))?cluster=devnet")
         precondition(delivered.receipts[1].copyValue == "fixture-request-with-a-long-stable-identifier")
         precondition(!delivered.receipts.contains { $0.label == "Channel" }, "Architecture does not prove a record's payment channel")
 
@@ -48,8 +53,19 @@ struct PurchaseDetailPresentationTest {
         let unknown = try detail(["status": "PAYMENT_UNKNOWN", "deliveryStatus": "NOT_PAID"])
         precondition(unknown.stages.map(\.id) == [.approved, .paymentUnknown])
         precondition(unknown.stages.last?.tone == .pending)
+        precondition(unknown.status == "Payment unknown" && unknown.facts.first { $0.label == "Payment" }?.value == "Outcome unknown")
         let pendingDelivery = try detail(["deliveryStatus": "PENDING"])
         precondition(pendingDelivery.stages.map(\.id) == [.approved, .paid, .deliveryPending])
+        precondition(pendingDelivery.status == "Paid · delivery pending" && pendingDelivery.facts.first { $0.label == "Payment" }?.value == "Paid")
+        let exhausted = try detail(["deliveryStatus": "EXHAUSTED"])
+        precondition(exhausted.stages.map(\.id) == [.approved, .paid, .deliveryExhausted])
+        precondition(exhausted.status == "Paid · delivery exhausted")
+        let mainnet = try detail(["executionMode": "live_mainnet", "monetaryEnvironment": "live_mainnet",
+            "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"])
+        precondition(mainnet.facts.first { $0.label == "Amount" }?.value == "0.20 USDC")
+        precondition(mainnet.explorerURL?.absoluteString == "https://explorer.solana.com/tx/\(String(repeating: "3", count: 88))")
+        let mismatched = try detail(["monetaryEnvironment": "live_mainnet"])
+        precondition(mismatched.explorerURL == nil && mismatched.facts.first { $0.label == "Amount" }?.value == "0.20 Test USDC")
         let requiresApproval = try detail(["status": "REQUIRES_APPROVAL", "deliveryStatus": "NOT_PAID", "decisionReason": "SINGLE_LIMIT_EXCEEDED"])
         precondition(requiresApproval.stages.map(\.id) == [.needsApproval])
         precondition(requiresApproval.authorityReason == "The per-transaction limit requires your approval.")

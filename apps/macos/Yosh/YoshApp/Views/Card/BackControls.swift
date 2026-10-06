@@ -6,6 +6,7 @@ struct BackControls: View {
     let paymentsUpdating: Bool
     let onPaymentsChange: (Bool) -> Void
     let execution: String
+    var onExecution: () -> Void = {}
 
     private var paymentsBinding: Binding<Bool> {
         Binding(get: { paymentsEnabled ?? false }, set: { enabled in onPaymentsChange(enabled) })
@@ -47,34 +48,41 @@ struct BackControls: View {
 
             hairline
 
-            HStack(spacing: 13) {
-                Image(systemName: "square.stack.3d.up")
-                    .font(.system(size: 22, weight: .regular))
-                    .frame(width: 28)
-                    .accessibilityHidden(true)
+            Button(action: onExecution) {
+                HStack(spacing: 13) {
+                    Image(systemName: "square.stack.3d.up")
+                        .font(.system(size: 22, weight: .regular))
+                        .frame(width: 28)
+                        .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Execution")
-                        .font(.system(size: 15, weight: .medium))
-                    Text("Purchase environment")
-                        .font(.system(size: 11))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Execution")
+                            .font(.system(size: 15, weight: .medium))
+                        Text("Purchase environment")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Text(execution)
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                 }
-
-                Spacer(minLength: 8)
-
-                Text(execution)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.trailing)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
+                .frame(minHeight: 57)
+                .contentShape(Rectangle())
             }
-            .frame(minHeight: 57)
-            .accessibilityElement(children: .combine)
+            .buttonStyle(.plain)
+            .disabled(paymentsUpdating)
+            .accessibilityLabel("Execution")
+            .accessibilityValue(execution)
+            .accessibilityHint("Choose the purchase execution environment")
 
             hairline
         }

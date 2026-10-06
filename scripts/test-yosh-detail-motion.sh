@@ -21,7 +21,7 @@ app_sources=()
 while IFS= read -r source; do
   app_sources+=("$source")
 done < <(rg --files apps/macos/Yosh/YoshApp -g '*.swift' -g '!YoshApp.swift')
-for fixture in DetailScrollStabilityTest AuthorityDetailViewTest PurchaseDetailViewTest ActivityLedgerViewTest MembersRosterViewTest; do
+for fixture in AuthoritySurfaceTest ExecutionDetailViewTest DetailScrollStabilityTest AuthorityDetailViewTest PurchaseDetailViewTest ActivityLedgerViewTest MembersRosterViewTest; do
   xcrun swiftc -parse-as-library -swift-version 6 "${app_sources[@]}" \
     "apps/macos/Yosh/tests/$fixture.swift" -o "$fixture_directory/$fixture"
   "$fixture_directory/$fixture"

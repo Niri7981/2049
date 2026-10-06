@@ -3,6 +3,11 @@ import Foundation
 /// Formats backend facts for the approved Authority card without making spending decisions.
 struct AuthorityOverviewPresentation {
     let remaining: String
+    let reserved: String
+    let paid: String
+    let asset: String
+    let dailyState: String?
+    let blockedReason: String?
     let dailyLimit: String
     let progress: Double
     let grantRemaining: String
@@ -31,32 +36,38 @@ struct AuthorityOverviewPresentation {
 
     init(_ overview: AppOverview, now: Date = .now) {
         let budget = overview.budget
-        remaining = budget.remaining.map { Self.money($0, decimals: 6) } ?? "—"
-        dailyLimit = budget.dailyLimit.map { "of \(Self.money($0, decimals: 6)) daily" } ?? "daily limit not set"
-        if let limit = budget.dailyLimit?.value, let available = budget.remaining?.value, limit > 0 {
+        let scope = overview.selectedAuthority
+        let legacyTest = overview.service.purchaseMode != .liveMainnet
+        remaining = scope?.availableDisplay ?? (legacyTest ? budget.remaining.map { Self.money($0, decimals: 6) } ?? "—" : "—")
+        reserved = scope?.reservedDisplay ?? (legacyTest ? Self.money(budget.reserved, decimals: 6) : "—")
+        paid = scope?.paidDisplay ?? (legacyTest ? Self.money(budget.paid, decimals: 6) : "—")
+        asset = DailyAuthorityPresentation(overview: overview).currency ?? "Asset unavailable"
+        dailyState = scope?.dailyState.label
+        blockedReason = scope?.blockers.first
+        dailyLimit = scope?.dailyLimitDisplay ?? (legacyTest ? budget.dailyLimit.map { "of \(Self.money($0, decimals: 6)) daily" } ?? "daily limit not set" : "Mainnet Daily Authority required")
+        if let limit = (scope?.dailyLimit ?? (legacyTest ? budget.dailyLimit : nil))?.value, let available = (scope?.available ?? (legacyTest ? budget.remaining : nil))?.value, limit > 0 {
             progress = min(1, Double(available) / Double(limit))
         } else {
             progress = 0
         }
 
-        if let grant = overview.grant, grant.status == .active {
-            grantRemaining = Self.money(grant.remaining, decimals: grant.assetDecimals)
+        if let grant = overview.scopedGrant, grant.status == .active, scope?.grant?.usable ?? legacyTest {
+            grantRemaining = scope?.grant?.remainingDisplay ?? Self.money(grant.remaining, decimals: grant.assetDecimals)
             grantDetail = "remaining"
-            perTransaction = Self.money(grant.singleLimit, decimals: grant.assetDecimals)
+            perTransaction = scope?.grant?.singleDisplay ?? Self.money(grant.singleLimit, decimals: grant.assetDecimals)
         } else {
             grantRemaining = "—"
-            switch overview.grant?.status {
+            switch overview.scopedGrant?.status {
             case .revoked: grantDetail = "revoked"
             case .expired: grantDetail = "expired"
-            case .active, nil: grantDetail = "not set"
+            case .active: grantDetail = scope?.blockers.first(where: { $0.hasPrefix("Spend Grant") }) ?? "not usable"
+            case nil: grantDetail = "not set"
             }
             perTransaction = "—"
         }
 
         payments = overview.service.status == .stopping ? "Unavailable" : (budget.paused ? "Paused" : "On")
-        let mode = overview.service.purchaseMode == .liveDevnet ? "Live" : "Simulated"
-        let network = overview.service.network == "Solana Devnet" ? "Devnet" : overview.service.network
-        execution = "\(mode) · \(network.isEmpty ? "Network unavailable" : network)"
+        execution = overview.service.purchaseMode.title
 
         if let purchase = overview.purchases.first {
             let formatted = PurchasePresentation(purchase)
@@ -92,7 +103,7 @@ struct AuthorityOverviewPresentation {
             }
             // Policy approval survives payment failure, but unresolved and simulated
             // payments must never inherit a paid/success appearance.
-            let paymentConfirmed = purchase.status == "PAID" && purchase.executionMode == .liveDevnet
+            let paymentConfirmed = purchase.status == "PAID" && (purchase.executionMode == .liveDevnet || purchase.executionMode == .liveMainnet)
             let tone: Latest.DecisionTone = switch purchase.status {
             case "DENIED": .denied
             case "APPROVED": .approved

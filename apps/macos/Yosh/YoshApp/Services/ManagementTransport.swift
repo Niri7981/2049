@@ -7,9 +7,11 @@ enum ServiceEndpoint {
     case health
     case overview
     case balance
+    case execution
+    case setExecution(AppOverview.Service.PurchaseMode)
     case setPaused(Bool)
     case setDailyLimit(String)
-    case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64)
+    case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil)
     case revokeGrant
     case setConnection(Bool)
     case members
@@ -18,7 +20,7 @@ enum ServiceEndpoint {
     case renameMember(UUID, String)
     case revokeMember(UUID)
     case setMemberConnection(UUID, Bool)
-    case createMemberGrant(UUID, totalLimit: String, singleLimit: String, expiresAt: Int64)
+    case createMemberGrant(UUID, totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil)
     case revokeMemberGrant(UUID)
     case prepareQuit
     case shutdown
@@ -28,44 +30,47 @@ enum ServiceEndpoint {
         case .health: "/api/app/health"
         case .overview: "/api/app/overview"
         case .balance: "/api/app/balance"
+        case .execution, .setExecution: "/api/app/execution"
         case .setPaused, .setDailyLimit: "/api/app/settings"
         case .createGrant, .revokeGrant: "/api/app/grant"
         case .setConnection: "/api/app/connection"
         case .members, .createMember: "/api/app/members"
         case .member(let id), .renameMember(let id, _), .revokeMember(let id): "/api/app/members/\(id.uuidString.lowercased())"
         case .setMemberConnection(let id, _): "/api/app/members/\(id.uuidString.lowercased())/connection"
-        case .createMemberGrant(let id, _, _, _), .revokeMemberGrant(let id): "/api/app/members/\(id.uuidString.lowercased())/grant"
+        case .createMemberGrant(let id, _, _, _, _), .revokeMemberGrant(let id): "/api/app/members/\(id.uuidString.lowercased())/grant"
         case .prepareQuit, .shutdown: "/api/app/lifecycle"
         }
     }
 
     var isMutation: Bool {
         switch self {
-        case .health, .overview, .balance, .members, .member: false
-        case .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection, .createMember,
+        case .health, .overview, .balance, .execution, .members, .member: false
+        case .setExecution, .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection, .createMember,
              .renameMember, .revokeMember, .setMemberConnection, .createMemberGrant, .revokeMemberGrant, .prepareQuit, .shutdown: true
         }
     }
 
     var method: String {
         switch self {
-        case .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection,
+        case .setExecution, .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection,
              .renameMember, .setMemberConnection, .createMemberGrant, .revokeMemberGrant: "PUT"
         case .createMember: "POST"
         case .revokeMember: "DELETE"
         case .prepareQuit, .shutdown: "POST"
-        case .health, .overview, .balance, .members, .member: "GET"
+        case .health, .overview, .balance, .execution, .members, .member: "GET"
         }
     }
 
     func body() throws -> Data? {
         switch self {
+        case .setExecution(let mode):
+            try JSONEncoder().encode(["mode": mode.rawValue])
         case .setPaused(let paused):
             try JSONEncoder().encode(["paused": paused])
         case .setDailyLimit(let limit):
             try JSONEncoder().encode(["dailyLimit": limit])
-        case .createGrant(let totalLimit, let singleLimit, let expiresAt):
-            try JSONEncoder().encode(GrantCreateRequest(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt))
+        case .createGrant(let totalLimit, let singleLimit, let expiresAt, let resourceId):
+            try JSONEncoder().encode(GrantCreateRequest(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId))
         case .revokeGrant:
             Data(#"{"action":"revoke"}"#.utf8)
         case .setConnection(let enabled):
@@ -74,15 +79,15 @@ enum ServiceEndpoint {
             try JSONEncoder().encode(["label": label])
         case .setMemberConnection(_, let enabled):
             try JSONEncoder().encode(["enabled": enabled])
-        case .createMemberGrant(_, let totalLimit, let singleLimit, let expiresAt):
-            try JSONEncoder().encode(GrantCreateRequest(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt))
+        case .createMemberGrant(_, let totalLimit, let singleLimit, let expiresAt, let resourceId):
+            try JSONEncoder().encode(GrantCreateRequest(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId))
         case .revokeMemberGrant:
             Data(#"{"action":"revoke"}"#.utf8)
         case .prepareQuit:
             Data(#"{"action":"prepareQuit"}"#.utf8)
         case .shutdown:
             Data(#"{"action":"shutdown"}"#.utf8)
-        case .health, .overview, .balance, .members, .member, .revokeMember:
+        case .health, .overview, .balance, .execution, .members, .member, .revokeMember:
             nil
         }
     }
@@ -93,6 +98,7 @@ private struct GrantCreateRequest: Encodable {
     let totalLimit: String
     let singleLimit: String
     let expiresAt: Int64
+    let resourceId: String?
 }
 
 /// Delegate callbacks, cancellation and the absolute timer share only lock-protected state.

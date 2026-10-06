@@ -127,3 +127,25 @@ check(ServiceEndpoint.revokeMemberGrant(memberUUID).path == "\(memberPath)/grant
 let renameBody = (try JSONSerialization.jsonObject(with: ServiceEndpoint.renameMember(memberUUID, "Buyer").body()!)) as? [String: String]
 check(renameBody?["label"] == "Buyer", "member rename body")
 print("Native member and settings tests passed")
+
+var mainnetPayload = overviewPayload
+mainnetPayload["service"] = ["status": "running", "purchaseMode": "live_mainnet", "network": "Solana Mainnet", "paymentEnabled": false,
+    "registeredResources": [["resourceId": "production-data", "providerId": "provider", "url": "https://provider.example/data", "recipient": "recipient",
+        "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", "assetId": "mainnet-mint", "assetDecimals": 6]]]
+var mainnetPurchase = purchase("mainnet-fixture")
+mainnetPurchase["executionMode"] = "live_mainnet"
+mainnetPurchase["network"] = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+mainnetPurchase["assetDecimals"] = 6
+mainnetPurchase["currency"] = "USDC"
+mainnetPayload["purchases"] = [mainnetPurchase]
+let mainnetOverview = try decode(AppOverview.self, mainnetPayload)
+check(mainnetOverview.service.purchaseMode == .liveMainnet && mainnetOverview.service.paymentEnabled == false, "Mainnet disabled state decodes")
+check(mainnetOverview.service.registeredResources?.first?.resourceId == "production-data", "Native grant scope comes from backend registration")
+check(PurchasePresentation(mainnetOverview.purchases[0]).mode == "Live · Mainnet", "Mainnet purchase is not shown as a Devnet payment")
+check(ActivityPurchasePresentation(mainnetOverview.purchases[0]).section == .paid, "Mainnet paid history remains readable")
+check(AuthorityOverviewPresentation(mainnetOverview).execution == "Live · Mainnet", "Selection is separate from production enablement")
+let scopedGrant = ServiceEndpoint.createMemberGrant(memberUUID, totalLimit: "200000", singleLimit: "100000", expiresAt: 2_000_000_000_000, resourceId: "production-data")
+let scopedBody = try JSONSerialization.jsonObject(with: scopedGrant.body()!) as? [String: Any]
+check(scopedBody?["resourceId"] as? String == "production-data", "Native management request carries only registered scope ID")
+check(scopedBody?["network"] == nil && scopedBody?["recipient"] == nil && scopedBody?["wallet"] == nil, "Backend owns all payment facts")
+print("Native Mainnet projections and scoped management transport passed")

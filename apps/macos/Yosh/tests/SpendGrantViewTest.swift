@@ -29,7 +29,7 @@ struct SpendGrantViewTest {
         func page(_ overview: AppOverview, saving: Bool = false, id: Int = 0) -> some View {
             SpendGrantDetail(overview: overview, isSaving: saving, writeMessage: nil, writeFailed: false,
                 onBack: { backs += 1 }, onConnection: { connections += 1 },
-                onCreate: { submissions.append(($0, $1, $2)) }, onRevoke: {})
+                onCreate: { total, single, expiresAt, _ in submissions.append((total, single, expiresAt)) }, onRevoke: {})
                 .id(id).frame(width: 420, height: 526)
                 .background(Color(red: 0.95, green: 0.97, blue: 0.985))
                 .environment(\.colorScheme, .light)

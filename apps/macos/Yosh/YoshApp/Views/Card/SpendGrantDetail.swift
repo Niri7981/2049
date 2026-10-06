@@ -7,10 +7,11 @@ struct SpendGrantDetail: View {
     let writeFailed: Bool
     let onBack: () -> Void
     let onConnection: () -> Void
-    let onCreate: (String, String, Int64) async -> Void
+    let onCreate: (String, String, Int64, String?) async -> Void
     let onRevoke: () async -> Void
 
     @State private var draft: SpendGrantDraft
+    @State private var selectedResourceID = ""
     @State private var inputError: String?
     @State private var showingRevokeConfirmation = false
     @FocusState private var focusedAmount: AmountField?
@@ -23,7 +24,7 @@ struct SpendGrantDetail: View {
 
     init(overview: AppOverview, isSaving: Bool, writeMessage: String?, writeFailed: Bool,
         onBack: @escaping () -> Void, onConnection: @escaping () -> Void,
-        onCreate: @escaping (String, String, Int64) async -> Void, onRevoke: @escaping () async -> Void) {
+        onCreate: @escaping (String, String, Int64, String?) async -> Void, onRevoke: @escaping () async -> Void) {
         self.overview = overview
         self.isSaving = isSaving
         self.writeMessage = writeMessage
@@ -32,7 +33,7 @@ struct SpendGrantDetail: View {
         self.onConnection = onConnection
         self.onCreate = onCreate
         self.onRevoke = onRevoke
-        _draft = State(initialValue: SpendGrantDraft(grant: overview.grant))
+        _draft = State(initialValue: SpendGrantDraft(grant: overview.scopedGrant))
     }
 
     var body: some View {
@@ -60,8 +61,8 @@ struct SpendGrantDetail: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .foregroundStyle(ink)
-        .onChange(of: overview.grant?.id) { _, _ in
-            draft = SpendGrantDraft(grant: overview.grant)
+        .onChange(of: overview.scopedGrant?.id) { _, _ in
+            draft = SpendGrantDraft(grant: overview.scopedGrant)
             inputError = nil
         }
         .confirmationDialog("Revoke this Spend Grant?", isPresented: $showingRevokeConfirmation) {
@@ -81,9 +82,9 @@ struct SpendGrantDetail: View {
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: 5) {
                 Text(status)
-                    .foregroundStyle(overview.grant?.status == .expired
+                    .foregroundStyle(overview.scopedGrant?.status == .expired
                         ? Color(red: 0.56, green: 0.32, blue: 0.36) : secondaryInk)
-                Text(isDevnet ? "Devnet test USDC" : "Asset unavailable")
+                Text("\(overview.service.network) · \(currency ?? "Asset unavailable")")
                     .foregroundStyle(secondaryInk)
             }
             .font(.system(size: 10))
@@ -94,12 +95,19 @@ struct SpendGrantDetail: View {
     private var currentGrant: some View {
         VStack(alignment: .leading, spacing: 0) {
             eyebrow("CURRENT GRANT")
-            if let grant = overview.grant {
+            if let grant = overview.scopedGrant {
+                if isMainnet, let resourceID = grant.resourceId {
+                    Text(resourceID).font(.system(size: 11)).padding(.top, 6)
+                    if let api = overview.selectedAuthority?.grant?.api {
+                        Text(api).font(.system(size: 10)).foregroundStyle(secondaryInk)
+                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true).padding(.top, 4)
+                    }
+                }
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Text(SpendGrantDraft.decimal(grant.totalLimit.value, decimals: grant.assetDecimals))
+                    Text(overview.selectedAuthority?.grant?.totalDisplay ?? SpendGrantDraft.decimal(grant.totalLimit.value, decimals: grant.assetDecimals))
                         .font(.system(size: 27, weight: .regular, design: .serif))
                         .monospacedDigit()
-                    Text(isDevnet ? "test USDC" : "Unknown asset")
+                    Text(currency ?? "Unknown asset")
                         .font(.system(size: 12)).foregroundStyle(secondaryInk)
                 }
                 .padding(.top, 8)
@@ -107,8 +115,8 @@ struct SpendGrantDetail: View {
                 HStack(alignment: .top, spacing: 16) {
                     summary("Per transaction", value: SpendGrantDraft.decimal(grant.singleLimit.value, decimals: grant.assetDecimals))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    summary("Unspent", value: grant.status == .active
-                        ? SpendGrantDraft.decimal(grant.remaining.value, decimals: grant.assetDecimals) : "—")
+                    summary("Remaining", value: overview.selectedAuthority?.grant?.remainingDisplay ?? (grant.status == .active
+                        ? SpendGrantDraft.decimal(grant.remaining.value, decimals: grant.assetDecimals) : "—"))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityHint(grant.status == .active ? "Within this grant" : "Unavailable for an inactive grant")
                     let expiry = Date(timeIntervalSince1970: TimeInterval(grant.expiresAt) / 1_000)
@@ -118,6 +126,10 @@ struct SpendGrantDetail: View {
                         .accessibilityValue(expiry.formatted(date: .complete, time: .shortened))
                 }
                 .padding(.top, 13)
+                if let scoped = overview.selectedAuthority?.grant {
+                    Text("Committed \(scoped.committedDisplay) \(scoped.assetLabel)")
+                        .font(.system(size: 10)).foregroundStyle(secondaryInk).padding(.top, 9)
+                }
             } else {
                 Text("No grant yet")
                     .font(.system(size: 14)).foregroundStyle(secondaryInk)
@@ -132,6 +144,22 @@ struct SpendGrantDetail: View {
                 .font(.system(size: 29, weight: .regular, design: .serif))
                 .tracking(-0.5)
                 .accessibilityAddTraits(.isHeader)
+            if isMainnet {
+                Picker("Registered API", selection: $selectedResourceID) {
+                    Text("Choose an API").tag("")
+                    ForEach(overview.service.registeredResources ?? []) { resource in
+                        Text(resource.resourceId).tag(resource.resourceId)
+                    }
+                }
+                .disabled(isSaving)
+                .padding(.top, 12)
+                if let resource = overview.service.registeredResources?.first(where: { $0.resourceId == selectedResourceID }) {
+                    Text("\(resource.url)\nRecipient: \(resource.recipient)")
+                        .font(.system(size: 10)).foregroundStyle(secondaryInk)
+                        .textSelection(.enabled)
+                        .padding(.top, 6)
+                }
+            }
             HStack(alignment: .top, spacing: 24) {
                 amountField("Total authorized", text: $draft.total, field: .total)
                 amountField("Per transaction", text: $draft.perTransaction, field: .perTransaction)
@@ -165,7 +193,7 @@ struct SpendGrantDetail: View {
                     .overlay { Capsule().strokeBorder(secondaryInk.opacity(0.45), lineWidth: 1) }
             }
             .buttonStyle(.plain)
-            .disabled(isSaving || !overview.connection.enabled || !isDevnet)
+            .disabled(isSaving || !overview.connection.enabled || currency == nil || (isMainnet && selectedResourceID.isEmpty))
             .accessibilityIdentifier("grant-create")
             .padding(.top, 12)
 
@@ -195,10 +223,11 @@ struct SpendGrantDetail: View {
         }
     }
 
-    private var isReplacing: Bool { overview.grant?.status == .active }
-    private var isDevnet: Bool { overview.service.network == "Solana Devnet" }
+    private var isReplacing: Bool { overview.scopedGrant?.status == .active }
+    private var isMainnet: Bool { overview.service.purchaseMode == .liveMainnet }
+    private var currency: String? { DailyAuthorityPresentation(overview: overview).currency }
     private var status: String {
-        switch overview.grant?.status {
+        switch overview.scopedGrant?.status {
         case .active: "Active"
         case .revoked: "Revoked"
         case .expired: "Expired"
@@ -233,10 +262,10 @@ struct SpendGrantDetail: View {
                     .font(.system(size: 23, weight: .regular, design: .serif))
                     .monospacedDigit()
                     .focused($focusedAmount, equals: field)
-                    .disabled(isSaving || !isDevnet)
-                    .accessibilityLabel("\(label) in test USDC")
+                    .disabled(isSaving || currency == nil)
+                    .accessibilityLabel("\(label) in \(currency ?? "units")")
                     .accessibilityIdentifier(field == .total ? "grant-total" : "grant-per-transaction")
-                Text("USDC").font(.system(size: 10)).foregroundStyle(secondaryInk)
+                Text(currency ?? "—").font(.system(size: 10)).foregroundStyle(secondaryInk)
             }
             Rectangle().fill(focusedAmount == field ? secondaryInk : rule).frame(height: 1)
                 .accessibilityHidden(true)
@@ -245,7 +274,7 @@ struct SpendGrantDetail: View {
     }
 
     private func saveGrant() {
-        guard !isSaving, overview.connection.enabled, isDevnet else { return }
+        guard !isSaving, overview.connection.enabled, currency != nil, !isMainnet || !selectedResourceID.isEmpty else { return }
         guard let total = SpendGrantDraft.minorUnits(draft.total), total != "0",
               let single = SpendGrantDraft.minorUnits(draft.perTransaction), single != "0" else {
             inputError = "Enter positive amounts with up to 6 decimal places."
@@ -262,6 +291,6 @@ struct SpendGrantDetail: View {
         }
         inputError = nil
         let expiresAt = Int64(draft.expiration.timeIntervalSince1970 * 1_000)
-        Task { await onCreate(total, single, expiresAt) }
+        Task { await onCreate(total, single, expiresAt, isMainnet ? selectedResourceID : nil) }
     }
 }

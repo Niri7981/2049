@@ -9,6 +9,7 @@ struct AuthoritySettingsDetail: View {
     let onBack: () -> Void
     var isActive: Bool = true
     let onSave: (String) async -> Void
+    var onWalletRead: () async -> Void = {}
 
     @State private var dailyLimitInput: String
     @State private var inputError: String?
@@ -28,7 +29,8 @@ struct AuthoritySettingsDetail: View {
         writeFailed: Bool,
         onBack: @escaping () -> Void,
         isActive: Bool = true,
-        onSave: @escaping (String) async -> Void
+        onSave: @escaping (String) async -> Void,
+        onWalletRead: @escaping () async -> Void = {}
     ) {
         self.overview = overview
         self.overviewClient = overviewClient
@@ -38,11 +40,12 @@ struct AuthoritySettingsDetail: View {
         self.onBack = onBack
         self.isActive = isActive
         self.onSave = onSave
-        _dailyLimitInput = State(initialValue: DailyAuthorityPresentation.editableLimit(overview.budget.dailyLimit?.value))
+        self.onWalletRead = onWalletRead
+        _dailyLimitInput = State(initialValue: DailyAuthorityPresentation.editableLimit(overview.selectedAuthority?.dailyLimit?.value ?? (overview.service.purchaseMode == .liveMainnet ? nil : overview.budget.dailyLimit?.value)))
     }
 
     private var presentation: DailyAuthorityPresentation {
-        DailyAuthorityPresentation(network: overview.service.network)
+        DailyAuthorityPresentation(overview: overview)
     }
 
     private var balanceDisplay: String? {
@@ -73,12 +76,14 @@ struct AuthoritySettingsDetail: View {
             isSaving: isSaving, message: inputError ?? writeMessage,
             messageFailed: inputError != nil || writeFailed, balanceDisplay: balanceDisplay,
             balanceIsLoading: balanceIsLoading, balanceMessage: balanceMessage, canRetryBalance: canRetryBalance,
-            onBack: onBack, onSave: saveLimit, onRetryBalance: { Task { await readBalance() } })
+            onBack: onBack, onSave: saveLimit, onRetryBalance: { Task { await readBalance() } },
+            wallet: overview.selectedAuthority?.wallet, dailyState: overview.selectedAuthority?.dailyState.label,
+            blockers: overview.selectedAuthority?.blockers ?? [])
             // Retaining the surface must not add background reads; re-entry still refreshes.
             .task(id: isActive ? overview.service.network : nil) {
                 if isActive { await readBalance() }
             }
-            .onChange(of: overview.budget.dailyLimit?.value) { _, newValue in
+            .onChange(of: overview.selectedAuthority?.dailyLimit?.value ?? (overview.service.purchaseMode == .liveMainnet ? nil : overview.budget.dailyLimit?.value)) { _, newValue in
                 dailyLimitInput = DailyAuthorityPresentation.editableLimit(newValue)
                 inputError = nil
             }
@@ -101,6 +106,7 @@ struct AuthoritySettingsDetail: View {
             let balance = try await overviewClient.loadBalance()
             guard !Task.isCancelled else { return }
             balanceState = .loaded(balance)
+            await onWalletRead()
         } catch is CancellationError {
             return
         } catch {

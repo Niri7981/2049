@@ -25,7 +25,7 @@ struct BackOverview: View {
     }
 
     private enum Detail: Hashable {
-        case daily, grant, connection, activity
+        case daily, grant, connection, activity, execution
         case purchase(String, from: PurchaseOrigin)
 
         var parent: Detail? {
@@ -45,9 +45,10 @@ struct BackOverview: View {
     }
 
     private enum SettingsChange {
+        case execution(AppOverview.Service.PurchaseMode)
         case paused(Bool)
         case dailyLimit(String)
-        case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64)
+        case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String?)
         case revokeGrant
         case connection(Bool)
     }
@@ -145,6 +146,12 @@ struct BackOverview: View {
         } destination: { detail in
             if let overview {
                 switch detail {
+                case .execution:
+                    ExecutionDetail(environment: overview.service.execution,
+                        isSaving: writeState.isSaving || isRefreshing,
+                        message: writeState.message, messageFailed: writeState.isFailure,
+                        onBack: { selectDetail(nil) },
+                        onSelect: { mode in await write(.execution(mode)) })
                 case .daily:
                     AuthoritySettingsDetail(
                         overview: overview,
@@ -154,7 +161,8 @@ struct BackOverview: View {
                         writeFailed: writeState.isFailure,
                         onBack: { selectDetail(nil) },
                         isActive: selectedDetail == .daily,
-                        onSave: { limit in await write(.dailyLimit(limit)) }
+                        onSave: { limit in await write(.dailyLimit(limit)) },
+                        onWalletRead: { await reload(preservingContent: true) }
                     )
                 case .grant:
                     SpendGrantDetail(
@@ -164,8 +172,8 @@ struct BackOverview: View {
                         writeFailed: writeState.isFailure,
                         onBack: { selectDetail(nil) },
                         onConnection: { open(.connection) },
-                        onCreate: { total, single, expiration in
-                            await write(.createGrant(totalLimit: total, singleLimit: single, expiresAt: expiration))
+                        onCreate: { total, single, expiration, resourceID in
+                            await write(.createGrant(totalLimit: total, singleLimit: single, expiresAt: expiration, resourceId: resourceID))
                         },
                         onRevoke: { await write(.revokeGrant) }
                     )
@@ -268,7 +276,8 @@ struct BackOverview: View {
                 paymentsEnabled: !isRefreshing && overview?.service.status == .running ? overview.map { !$0.budget.paused } : nil,
                 paymentsUpdating: writeState.isSaving,
                 onPaymentsChange: { enabled in Task { await write(.paused(!enabled)) } },
-                execution: presentation?.execution ?? "—"
+                execution: presentation?.execution ?? "—",
+                onExecution: { open(.execution) }
             )
             .padding(.top, 18)
 
@@ -300,13 +309,16 @@ struct BackOverview: View {
         } label: {
             VStack(alignment: .leading, spacing: 0) {
                 CardPageHeader(title: presentation?.remaining ?? "—",
-                    style: .hero(eyebrow: "REMAINING TODAY", isAmount: true))
+                    style: .hero(eyebrow: "AVAILABLE · \(presentation?.asset ?? "—")", isAmount: true))
 
                 authorityLine
                     .padding(.top, 10)
 
-                HStack(spacing: 6) {
-                    Text(presentation?.dailyLimit ?? "of — daily")
+                HStack(spacing: 8) {
+                    Text("Reserved \(presentation?.reserved ?? "—")").font(.system(size: 10))
+                    Text("Paid \(presentation?.paid ?? "—")").font(.system(size: 10))
+                    Spacer(minLength: 0)
+                    Text(presentation?.dailyLimit ?? "of — daily").font(.system(size: 11)).lineLimit(1).minimumScaleFactor(0.7)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .medium))
                         .accessibilityHidden(true)
@@ -321,7 +333,7 @@ struct BackOverview: View {
         }
         .buttonStyle(.plain)
         .disabled(overview == nil || writeState.isSaving || isRefreshing)
-        .accessibilityLabel("Shared daily Authority, \(presentation?.remaining ?? "unavailable") remaining. \(presentation?.dailyLimit ?? "Daily limit unavailable"). Change daily limit")
+        .accessibilityLabel("Shared daily Authority, \(presentation?.remaining ?? "unavailable") available. Reserved \(presentation?.reserved ?? "unavailable"). Paid \(presentation?.paid ?? "unavailable"). \(presentation?.asset ?? ""). \(presentation?.dailyLimit ?? "Daily limit unavailable"). Change daily limit")
         .accessibilityHint("Shared by all agents. Remaining excludes paid and reserved amounts.")
     }
 
@@ -435,7 +447,7 @@ struct BackOverview: View {
             ProgressView("Saving settings")
                 .controlSize(.small)
         case .success(let message):
-            Text(message)
+            Text(overview?.service.purchaseMode == .liveMainnet ? presentation?.blockedReason ?? message : message)
                 .foregroundStyle(.secondary)
         case .failure(let message):
             HStack(spacing: 8) {
@@ -455,6 +467,8 @@ struct BackOverview: View {
                 if isRefreshing {
                     ProgressView("Refreshing authority")
                         .controlSize(.small)
+                } else if overview?.service.purchaseMode == .liveMainnet, let reason = presentation?.blockedReason {
+                    Text(reason).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
                 }
             case .failed(let error):
                 HStack(spacing: 8) {
@@ -527,14 +541,17 @@ struct BackOverview: View {
         let success: String
         do {
             switch change {
+            case .execution(let mode):
+                try await overviewClient.setExecution(mode)
+                success = "Execution environment saved"
             case .paused(let paused):
                 try await overviewClient.setPaused(paused)
                 success = paused ? "Payments paused" : "Payments resumed"
             case .dailyLimit(let limit):
                 try await overviewClient.setDailyLimit(limit)
                 success = "Daily limit saved"
-            case .createGrant(let total, let single, let expiration):
-                try await overviewClient.createMemberGrant(memberID, totalLimit: total, singleLimit: single, expiresAt: expiration)
+            case .createGrant(let total, let single, let expiration, let resourceID):
+                try await overviewClient.createMemberGrant(memberID, totalLimit: total, singleLimit: single, expiresAt: expiration, resourceId: resourceID)
                 success = "Grant saved. Reconnect the MCP host."
             case .revokeGrant:
                 try await overviewClient.revokeMemberGrant(memberID)

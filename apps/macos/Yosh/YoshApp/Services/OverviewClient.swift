@@ -2,6 +2,7 @@ import Foundation
 
 enum OverviewLoadError: Error {
     case configuration
+    case executionBusy
     case unavailable
     case unauthorized
     case invalidResponse
@@ -22,6 +23,7 @@ enum OverviewLoadError: Error {
 
     var message: String {
         switch self {
+        case .executionBusy: "Finish pending purchases before changing execution."
         case .configuration: "Local service setup unavailable"
         case .unavailable: "Local service unavailable"
         case .unauthorized: "Management access denied"
@@ -59,6 +61,7 @@ extension OverviewLoadError {
         case .memberNotFound, .memberInactive: "This agent's access is no longer available. Choose another agent."
         case .defaultMemberRequired: "The default agent can't be revoked."
         case .invalidRequest: "Check the entered values and try again."
+        case .executionBusy: "Finish pending purchases before changing execution."
         case .writeRejected: "The change wasn't confirmed. Check the current status and try again."
         case .serviceExited: "Yosh stopped unexpectedly. Try again to restore access."
         case .dataDirectoryInUse: "Another copy of Yosh is using your data. Close it, then try again."
@@ -94,6 +97,10 @@ struct OverviewClient {
         return balance
     }
 
+    func setExecution(_ mode: AppOverview.Service.PurchaseMode) async throws {
+        try await write(.setExecution(mode))
+    }
+
     func setPaused(_ paused: Bool) async throws {
         try await write(.setPaused(paused))
     }
@@ -102,8 +109,8 @@ struct OverviewClient {
         try await write(.setDailyLimit(minorUnits))
     }
 
-    func createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64) async throws {
-        try await write(.createGrant(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt))
+    func createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil) async throws {
+        try await write(.createGrant(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId))
     }
 
     func revokeGrant() async throws {
@@ -138,8 +145,8 @@ struct OverviewClient {
         try await write(.setMemberConnection(id, enabled))
     }
 
-    func createMemberGrant(_ id: UUID, totalLimit: String, singleLimit: String, expiresAt: Int64) async throws {
-        try await write(.createMemberGrant(id, totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt))
+    func createMemberGrant(_ id: UUID, totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil) async throws {
+        try await write(.createMemberGrant(id, totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId))
     }
 
     func revokeMemberGrant(_ id: UUID) async throws {

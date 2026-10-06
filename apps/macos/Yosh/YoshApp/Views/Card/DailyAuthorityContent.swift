@@ -13,6 +13,9 @@ struct DailyAuthorityContent: View {
     let onBack: () -> Void
     let onSave: () -> Void
     let onRetryBalance: () -> Void
+    var wallet: AuthoritySurface.Wallet? = nil
+    var dailyState: String? = nil
+    var blockers: [String] = []
 
     @FocusState private var limitIsFocused: Bool
     private let ink = Color(red: 0.07, green: 0.10, blue: 0.15)
@@ -45,6 +48,14 @@ struct DailyAuthorityContent: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     sectionLabel("DAILY LIMIT")
+                    if let dailyState {
+                        Text(dailyState).font(.system(size: 12)).foregroundStyle(secondaryInk).padding(.top, 10)
+                    }
+                    if !blockers.isEmpty {
+                        Text(blockers.joined(separator: "\n"))
+                            .font(.system(size: 11)).foregroundStyle(secondaryInk)
+                            .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
+                    }
                     Text("Limit")
                         .font(.system(size: 14))
                         .padding(.top, 14)
@@ -101,7 +112,18 @@ struct DailyAuthorityContent: View {
                 hairline
 
                 VStack(alignment: .leading, spacing: 0) {
-                    sectionLabel("WALLET BALANCE")
+                    sectionLabel("WALLET")
+                    if let wallet {
+                        Text(wallet.network).font(.system(size: 12)).foregroundStyle(secondaryInk).padding(.top, 12)
+                        if wallet.address.isEmpty {
+                            Text(wallet.network == "Solana Mainnet" ? "Mainnet wallet unavailable" : "Wallet unavailable")
+                                .font(.system(size: 13)).foregroundStyle(secondaryInk).padding(.top, 8)
+                        } else {
+                            Text(wallet.address).font(.system(size: 11)).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
+                                .accessibilityLabel("Wallet address, \(wallet.address)")
+                        }
+                    }
                     if let balanceDisplay {
                         Text(balanceDisplay)
                             .font(.system(size: 26))
@@ -109,12 +131,12 @@ struct DailyAuthorityContent: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 14)
                     } else {
-                        Text(balanceIsLoading ? "Reading balance…" : "Unavailable")
+                        Text(balanceIsLoading ? "Reading balance…" : (balanceMessage ?? "Balance not available"))
                             .font(.system(size: 14))
                             .foregroundStyle(secondaryInk)
                             .padding(.top, 14)
                     }
-                    Text("On Devnet this shows test USDC. On Mainnet it shows USDC.")
+                    Text("\(currency ?? "Wallet") balance is separate from spending authority.")
                         .font(.system(size: 12))
                         .foregroundStyle(secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)

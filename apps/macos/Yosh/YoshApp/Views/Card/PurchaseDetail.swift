@@ -15,7 +15,7 @@ struct PurchaseDetail: View {
     private let ink = Color(red: 0.07, green: 0.10, blue: 0.15)
     private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
     private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
-    private var item: PurchaseDetailPresentation { PurchaseDetailPresentation(purchase) }
+    private var item: PurchaseDetailPresentation { PurchaseDetailPresentation(purchase, agentName: agentName) }
 
     var body: some View {
         ScrollView(.vertical) {
@@ -48,6 +48,8 @@ struct PurchaseDetail: View {
                 authority.padding(.vertical, 18)
                 hairline
                 merchantResource.padding(.vertical, 18)
+                hairline
+                transactionContext.padding(.vertical, 18)
                 hairline
                 receiptDetails.padding(.top, 18)
             }
@@ -157,7 +159,7 @@ struct PurchaseDetail: View {
                     .frame(width: 44, height: 44)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Merchant not provided")
+                    Text(item.providerName)
                         .font(.system(size: 14, weight: .medium))
                     if let resourceID = item.resourceID {
                         Text(resourceID)
@@ -180,10 +182,26 @@ struct PurchaseDetail: View {
     private var receiptDetails: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionLabel("RECEIPT DETAILS")
+            if let explorerURL = item.explorerURL {
+                Link(destination: explorerURL) {
+                    Label("View transaction on Solana Explorer", systemImage: "arrow.up.right.square")
+                        .font(.system(size: 12))
+                }
+                .help("Opens the network recorded for this transaction")
+            }
             VStack(spacing: 7) {
                 ForEach(item.receipts) { receipt in
                     receiptRow(receipt)
                 }
+            }
+        }
+    }
+
+    private var transactionContext: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionLabel("TRANSACTION CONTEXT")
+            VStack(spacing: 7) {
+                ForEach(item.facts) { fact in receiptRow(fact) }
             }
         }
     }
