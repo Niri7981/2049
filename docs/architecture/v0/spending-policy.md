@@ -1,6 +1,6 @@
 # D1-10 Spending Policy
 
-> 本文记录旧 V0 的单一行情 Demo 设计。当前通用权限边界、三种 decision 名称和迁移状态以 [Authority Core（阶段一）](authority-core.md) 为准；下文的 `REJECTED` / `NEEDS_CONFIRMATION` 及固定行情 allowlist 不再是当前 Authority Core 接口。
+> 本文记录旧 V0 的单一行情 Demo 设计。当前通用权限边界、三种 decision 名称和迁移状态以 [Authority Core（阶段一）](../authority-core.md) 为准；下文的 `REJECTED` / `NEEDS_CONFIRMATION` 及固定行情 allowlist 不再是当前 Authority Core 接口。
 
 ## 目标
 
@@ -210,4 +210,4 @@ Wallet Signer：
 
 ## Day 5 实现补充
 
-主要规则已在 `src/modules/purchases/` 落地。为避免并发预算透支，实际可用预算还扣除未完成的预占；`PAYING` / `PAYMENT_UNKNOWN` 会阻止后续付款。预算覆盖此运行时账本，不追踪其他程序的链上转账。过期批准和未知付款目前保守保留，自动对账与释放待后续实现。详见 [Day 5 运行说明](../demo/purchase-runbook.md)。
+主要规则已在 `src/modules/purchases/` 落地。为避免并发预算透支，实际可用预算还扣除未完成的预占；`PAYING` / `PAYMENT_UNKNOWN` 会阻止后续付款。预算覆盖此运行时账本，不追踪其他程序的链上转账。过期批准和未知付款目前保守保留，自动对账与释放待后续实现。详见 [Day 5 运行说明](../../demo/purchase-runbook.md)。
