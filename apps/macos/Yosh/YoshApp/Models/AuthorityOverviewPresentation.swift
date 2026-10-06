@@ -69,7 +69,7 @@ struct AuthorityOverviewPresentation {
         payments = overview.service.status == .stopping ? "Stopping" : (budget.paused ? "Paused" : "On")
         execution = overview.service.purchaseMode.title
 
-        if let purchase = overview.purchases.first {
+        if let purchase = overview.activityPurchases.first {
             let formatted = PurchasePresentation(purchase)
             let date = Date(timeIntervalSince1970: TimeInterval(purchase.createdAt) / 1_000)
             let elapsed = RelativeDateTimeFormatter().localizedString(for: date, relativeTo: now)

@@ -19,7 +19,7 @@ struct AuthorityPresentationTest {
         var record = purchase
         record.merge(changes) { _, new in new }
         let payload: [String: Any] = [
-            "service": ["status": "running", "purchaseMode": "simulated", "network": network],
+            "service": ["status": "running", "purchaseMode": record["monetaryEnvironment"] as? String == "simulated" ? "simulated" : "live_devnet", "network": network],
             "wallet": ["address": "FixturePublicAddress"],
             "budget": [
                 "dailyLimit": remaining == nil ? NSNull() : "1000000",
@@ -59,7 +59,7 @@ struct AuthorityPresentationTest {
         let paid = try presentation(changes: ["status": "PAID", "deliveryStatus": "PENDING"])
         precondition(paid.latest?.payment == "Payment confirmed · retrieving result" && paid.latest?.paymentConfirmed == true
             && paid.latest?.decision == "Allowed")
-        let simulated = try presentation(changes: ["status": "PAID", "deliveryStatus": "COMPLETE", "executionMode": "simulated"])
+        let simulated = try presentation(changes: ["status": "PAID", "deliveryStatus": "COMPLETE", "executionMode": "simulated", "monetaryEnvironment": "simulated"])
         precondition(simulated.latest?.payment == "Simulated payment" && simulated.latest?.paymentConfirmed == false
             && simulated.latest?.decisionTone == .neutral)
         let unverified = try presentation(changes: ["status": "PAID", "executionMode": "UNKNOWN"])
@@ -85,7 +85,7 @@ struct AuthorityPresentationTest {
         let legacy = try presentation(changes: ["resourceId": NSNull(), "offerId": "basic", "reason": "  "])
         precondition(legacy.latest?.title == "Market Snapshot" && legacy.latest?.purpose == nil)
         let network = try presentation(network: "Fixture network")
-        precondition(network.execution == "Simulation")
+        precondition(network.execution == "Devnet · Developer")
         print("Native Authority presentation tests passed")
     }
 }

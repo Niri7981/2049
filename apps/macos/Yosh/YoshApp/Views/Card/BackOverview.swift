@@ -181,7 +181,7 @@ struct BackOverview: View {
                     connectionPage(overview, onBack: { selectDetail(nil) })
                 case .activity:
                     ActivityDetail(
-                        purchases: overview.purchases,
+                        purchases: overview.activityPurchases,
                         agentName: agentName,
                         isRefreshing: activityRefreshing,
                         refreshError: activityRefreshError,
@@ -190,13 +190,13 @@ struct BackOverview: View {
                         onSelect: { selectDetail(.purchase($0, from: .activity)) }
                     )
                 case .purchase(let id, let origin):
-                    if let purchase = overview.purchases.first(where: { $0.purchaseId == id }) {
+                    if let purchase = overview.activityPurchases.first(where: { $0.purchaseId == id }) {
                         PurchaseDetail(purchase: purchase, agentName: agentName,
                             backTitle: origin == .activity ? "Activity" : "Authority",
                             onBack: { selectDetail(origin == .activity ? .activity : nil) })
                     } else {
                         ActivityDetail(
-                            purchases: overview.purchases,
+                            purchases: overview.activityPurchases,
                             agentName: agentName,
                             isRefreshing: activityRefreshing,
                             refreshError: activityRefreshError,

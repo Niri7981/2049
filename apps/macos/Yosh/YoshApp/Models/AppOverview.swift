@@ -10,6 +10,24 @@ struct AppOverview: Decodable {
     let purchases: [Purchase]
     var authority: AuthoritySurface? = nil
 
+    /// Activity follows the selected environment, using each record's persisted monetary scope.
+    /// Missing or conflicting history stays in the ledger but is not attributed to this environment.
+    var activityPurchases: [Purchase] {
+        purchases.filter { purchase in
+            switch service.purchaseMode {
+            case .liveMainnet:
+                purchase.monetaryEnvironment == "live_mainnet"
+                    && purchase.network == "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+            case .liveDevnet:
+                ["live_devnet", "legacy_test"].contains(purchase.monetaryEnvironment ?? "")
+                    && purchase.network == "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+            case .simulated:
+                purchase.monetaryEnvironment == "simulated"
+                    && purchase.network == "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+            }
+        }
+    }
+
     /// Shared controls come from the card overview; member facts come only from that member's endpoint.
     init(shared: AppOverview, member: CardMemberSnapshot) {
         authority = member.authority

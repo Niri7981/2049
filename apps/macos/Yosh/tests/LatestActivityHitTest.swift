@@ -10,14 +10,14 @@ struct LatestActivityHitTest {
         var listOpens = 0
         var detailOpens: [String] = []
         let fields: [String: Any] = [
-            "service": ["status": "running", "purchaseMode": "simulated", "network": "Solana Devnet"],
+            "service": ["status": "running", "purchaseMode": "live_devnet", "network": "Solana Devnet"],
             "wallet": ["address": "FixtureAddress"],
             "budget": ["dailyLimit": "1000000", "dailyLimitDisplay": "Fixture limit", "paid": "200000",
                 "reserved": "0", "remaining": "800000", "remainingDisplay": "Fixture remaining", "paused": false],
             "grant": NSNull(), "connection": ["enabled": true, "lastSeen": NSNull(), "access": "purchase_intent"],
             "purchases": [["purchaseId": "visible-latest", "status": "PAID", "deliveryStatus": "PENDING",
                 "amount": "200000", "createdAt": 1_800_000_000_000 as Int64, "resourceId": "market-snapshot",
-                "reason": "Fixture context", "executionMode": "live_devnet", "currency": "USDC", "assetDecimals": 6]],
+                "reason": "Fixture context", "executionMode": "live_devnet", "monetaryEnvironment": "live_devnet", "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", "currency": "USDC", "assetDecimals": 6]],
         ]
         let overview = try JSONDecoder().decode(AppOverview.self, from: JSONSerialization.data(withJSONObject: fields))
         let latest = AuthorityOverviewPresentation(overview).latest
