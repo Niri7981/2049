@@ -18,7 +18,7 @@ struct MembersRosterRow: View {
                     .buttonStyle(.plain)
                     .disabled(interactionsDisabled)
                     .accessibilityLabel("\(row.name), \(row.provider)")
-                    .accessibilityHint("Selects this member and opens its details.")
+                    .accessibilityHint("Selects this Agent and opens its details.")
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
             } else {
                 identity

@@ -12,9 +12,9 @@ struct CardPageHeaderLayoutTest {
             ("Connected", .hero(eyebrow: "CONNECTION")),
             ("Waiting for Codex", .hero(eyebrow: "CONNECTION")),
             ("Connection Issue", .hero(eyebrow: "CONNECTION")),
-            ("Members", .collection(subtitle: "Agents share one daily budget.")),
+            ("Agents", .collection(subtitle: "Agents share one Daily Authority.")),
             ("Settings", .collection(subtitle: "Manage Yosh on this Mac.")),
-            ("Agent activity", .hero(eyebrow: "LATEST ACTIVITY")),
+            ("Activity", .hero(eyebrow: "ACTIVITY")),
             ("$123,456,789.00", .hero(eyebrow: "REMAINING TODAY", isAmount: true)),
         ]
         var frames: [CGRect] = []

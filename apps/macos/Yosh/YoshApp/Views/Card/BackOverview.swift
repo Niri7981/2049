@@ -316,7 +316,9 @@ struct BackOverview: View {
 
                 HStack(spacing: 8) {
                     Text("Reserved \(presentation?.reserved ?? "—")").font(.system(size: 10))
+                        .help("Funds held for purchases in progress")
                     Text("Paid \(presentation?.paid ?? "—")").font(.system(size: 10))
+                        .help("Payments confirmed today")
                     Spacer(minLength: 0)
                     Text(presentation?.dailyLimit ?? "of — daily").font(.system(size: 11)).lineLimit(1).minimumScaleFactor(0.7)
                     Image(systemName: "chevron.right")
@@ -334,7 +336,8 @@ struct BackOverview: View {
         .buttonStyle(.plain)
         .disabled(overview == nil || writeState.isSaving || isRefreshing)
         .accessibilityLabel("Shared daily Authority, \(presentation?.remaining ?? "unavailable") available. Reserved \(presentation?.reserved ?? "unavailable"). Paid \(presentation?.paid ?? "unavailable"). \(presentation?.asset ?? ""). \(presentation?.dailyLimit ?? "Daily limit unavailable"). Change daily limit")
-        .accessibilityHint("Shared by all agents. Remaining excludes paid and reserved amounts.")
+        .help("Available: funds still available to spend today. Shared by all Agents. Reserved: funds held for purchases in progress. Paid: payments confirmed today.")
+        .accessibilityHint("Available is funds still available to spend today, shared by all Agents. Reserved holds funds for purchases in progress. Paid is payments confirmed today.")
     }
 
     private var authorityLine: some View {
@@ -367,7 +370,7 @@ struct BackOverview: View {
             open(.grant)
         } label: {
             HStack(spacing: 0) {
-                limit(label: "GRANT", amount: presentation?.grantRemaining ?? "—", detail: presentation?.grantDetail ?? "unavailable")
+                limit(label: "SPEND GRANT", amount: presentation?.grantRemaining ?? "—", detail: presentation?.grantDetail ?? "unavailable")
 
                 Rectangle()
                     .fill(Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5))
@@ -381,7 +384,7 @@ struct BackOverview: View {
         }
         .buttonStyle(.plain)
         .disabled(overview == nil || writeState.isSaving || isRefreshing)
-        .accessibilityLabel("\(agentName) spend grant, \(presentation?.grantRemaining ?? "unavailable") remaining, \(presentation?.grantDetail ?? "unavailable"); per transaction \(presentation?.perTransaction ?? "unavailable"). Manage grant")
+        .accessibilityLabel("\(agentName) Spend Grant, \(presentation?.grantRemaining ?? "unavailable") remaining, \(presentation?.grantDetail ?? "unavailable"); per transaction \(presentation?.perTransaction ?? "unavailable"). Manage grant")
     }
 
     private func limit(label: String, amount: String, detail: String) -> some View {
@@ -552,10 +555,10 @@ struct BackOverview: View {
                 success = "Daily limit saved"
             case .createGrant(let total, let single, let expiration, let resourceID):
                 try await overviewClient.createMemberGrant(memberID, totalLimit: total, singleLimit: single, expiresAt: expiration, resourceId: resourceID)
-                success = "Grant saved. Reconnect the MCP host."
+                success = "Spend Grant saved. Reconnect the Agent."
             case .revokeGrant:
                 try await overviewClient.revokeMemberGrant(memberID)
-                success = "Grant revoked. Reconnect the MCP host."
+                success = "Spend Grant revoked. Reconnect the Agent."
             case .connection(let enabled):
                 try await overviewClient.setMemberConnection(memberID, enabled: enabled)
                 success = enabled ? "Access is ready." : "Disconnected. Current spending authorization revoked."

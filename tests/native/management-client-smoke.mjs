@@ -17,11 +17,11 @@ let paused = false;
 let grantVersion = 0;
 const purchases = [
   { purchaseId: 'simulated-activity', status: 'PAID', deliveryStatus: 'COMPLETE', amount: '10000', createdAt: Date.now(),
-    offerId: 'basic', reason: 'Need a price snapshot', transaction: 'simulated-simulated-activity', executionMode: 'simulated',
-    network: 'solana:devnet', currency: 'USDC', assetId: 'test-mint', assetDecimals: 6, grantId: null },
+    offerId: 'basic', reason: 'Need a price snapshot', transaction: 'simulated-simulated-activity', executionMode: 'simulated', monetaryEnvironment: 'simulated',
+    network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1', currency: 'USDC', assetId: 'test-mint', assetDecimals: 6, grantId: null },
   { purchaseId: 'unknown-activity', status: 'PAYMENT_UNKNOWN', deliveryStatus: 'NOT_PAID', amount: '1', createdAt: Date.now() - 1_000,
-    offerId: 'basic', reason: null, transaction: null, executionMode: 'live_devnet',
-    network: 'solana:devnet', currency: 'USDC', assetId: 'test-mint', assetDecimals: 6, grantId: null },
+    offerId: 'basic', reason: null, transaction: null, executionMode: 'live_devnet', monetaryEnvironment: 'live_devnet',
+    network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1', currency: 'USDC', assetId: 'test-mint', assetDecimals: 6, grantId: null },
 ];
 
 const seen = new Set();
@@ -115,6 +115,8 @@ try {
     'apps/macos/Yosh/YoshApp/Services/ManagementTransport.swift',
     'apps/macos/Yosh/YoshApp/Services/NativeServiceRuntime.swift',
     'apps/macos/Yosh/YoshApp/Services/OverviewClient.swift',
+    'apps/macos/Yosh/YoshApp/Models/AuthoritySurface.swift',
+    'apps/macos/Yosh/YoshApp/Models/ExecutionEnvironment.swift',
     'apps/macos/Yosh/YoshApp/Models/AppOverview.swift',
     'apps/macos/Yosh/YoshApp/Models/PurchasePresentation.swift',
     'tests/native/ManagementClientSmoke.swift',

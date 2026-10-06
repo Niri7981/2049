@@ -57,16 +57,17 @@ struct PurchaseDetailPresentation {
         case "REQUIRES_APPROVAL": "Approval required"
         default: if approved {
             ["AUTHORITY_AND_BUDGET_PASSED", "AUTHORITY_BUDGET_AND_GRANT_PASSED"].contains(reason ?? "")
-                ? "Approved automatically" : "Approved by policy"
+                ? "Allowed automatically" : "Allowed by policy"
         } else { "Decision unavailable" }
         }
         authorityReason = Self.policyReason(reason, approved: approved)
 
+        let confirmedPayment = purchase.executionMode == .liveMainnet || purchase.executionMode == .liveDevnet
         let network = Self.nonempty(purchase.network)
         let paymentContext = [item.amount, network.map(Self.shortNetwork)].compactMap { $0 }.joined(separator: " · ")
         var observed: [Stage] = []
         if approved {
-            observed.append(Stage(id: .approved, title: "Approved",
+            observed.append(Stage(id: .approved, title: "Allowed",
                 detail: purchase.status == "APPROVED" ? "No payment made." : "Request allowed by policy.", tone: .success))
         }
         switch purchase.status {
@@ -82,7 +83,7 @@ struct PurchaseDetailPresentation {
         case "PAYING":
             observed.append(Stage(id: .paying, title: "Payment in progress", detail: paymentContext, tone: .pending))
         case "PAYMENT_UNKNOWN":
-            observed.append(Stage(id: .paymentUnknown, title: "Payment outcome unknown", detail: paymentContext, tone: .pending))
+            observed.append(Stage(id: .paymentUnknown, title: "Checking original payment", detail: "Yosh is verifying whether the original payment was submitted. Reserved funds remain held until this is resolved.", tone: .pending))
         case "PAID":
             switch purchase.executionMode {
             case .simulated:
@@ -105,14 +106,14 @@ struct PurchaseDetailPresentation {
                         tone: (purchase.executionMode == .liveDevnet || purchase.executionMode == .liveMainnet) ? .success : .neutral))
                 }
             } else if purchase.deliveryStatus == "PENDING" || purchase.deliveryStatus == "DELIVERING" {
-                observed.append(Stage(id: .deliveryPending, title: "Delivery pending",
-                    detail: "Resource not yet returned.", tone: .pending))
+                observed.append(Stage(id: .deliveryPending, title: confirmedPayment ? "Payment confirmed · retrieving result" : "Retrieving result",
+                    detail: confirmedPayment ? "Retrieving the result using the original payment. No second payment is made." : "Result not yet returned. No confirmed payment is shown.", tone: .pending))
             } else if purchase.deliveryStatus == "EXHAUSTED" {
-                observed.append(Stage(id: .deliveryExhausted, title: "Delivery exhausted",
-                    detail: "Payment confirmed; delivery retries ended.", tone: .negative))
+                observed.append(Stage(id: .deliveryExhausted, title: confirmedPayment ? "Payment confirmed · result not recovered" : "Result not recovered",
+                    detail: confirmedPayment ? "Automatic recovery attempts ended. The original payment remains confirmed." : "Automatic recovery attempts ended. No confirmed payment is shown.", tone: .negative))
             } else if purchase.deliveryStatus == "UNSUPPORTED" {
-                observed.append(Stage(id: .deliveryUnavailable, title: "Delivery unavailable",
-                    detail: "Payment confirmed; this resource cannot be recovered automatically.", tone: .pending))
+                observed.append(Stage(id: .deliveryUnavailable, title: confirmedPayment ? "Payment confirmed · automatic recovery not supported" : "Automatic recovery not supported",
+                    detail: confirmedPayment ? "Payment confirmed; this resource cannot be recovered automatically." : "This resource cannot be recovered automatically. No confirmed payment is shown.", tone: .pending))
             }
         default:
             observed.append(Stage(id: .unavailable, title: "Status unavailable",
@@ -192,32 +193,32 @@ struct PurchaseDetailPresentation {
     }
 
     private static func policyReason(_ code: String?, approved: Bool) -> String {
-        guard let code else { return approved ? "Approval reason not provided." : "Decision reason not provided." }
+        guard let code else { return approved ? "Policy reason not provided." : "Decision reason not provided." }
         return switch code {
         case "AUTHORITY_BUDGET_AND_GRANT_PASSED":
-            "Matched the SpendGrant at approval.\nWithin daily, grant, and per-transaction limits."
+            "Matched the Spend Grant when allowed.\nWithin Daily Authority, Spend Grant, and per-transaction limits."
         case "AUTHORITY_AND_BUDGET_PASSED": "Within daily and per-transaction limits."
         case "SINGLE_LIMIT_EXCEEDED": "The per-transaction limit requires your approval."
-        case "DAILY_BUDGET_EXCEEDED": "The shared daily spending limit was exceeded."
-        case "DAILY_LIMIT_NOT_SET": "The shared daily spending limit is not set."
-        case "DAILY_LIMIT_ZERO": "The shared daily spending limit is zero."
-        case "INVALID_DAILY_LIMIT": "The daily spending limit is invalid."
+        case "DAILY_BUDGET_EXCEEDED": "The shared Daily Authority was exceeded."
+        case "DAILY_LIMIT_NOT_SET": "The shared Daily Authority is not set."
+        case "DAILY_LIMIT_ZERO": "The shared Daily Authority is zero."
+        case "INVALID_DAILY_LIMIT": "The Daily Authority is invalid."
         case "INVALID_SINGLE_LIMIT": "The per-transaction limit is invalid."
         case "PAYMENTS_PAUSED": "Payments are paused."
-        case "SPEND_GRANT_REQUIRED": "A SpendGrant is required."
-        case "SPEND_GRANT_REVOKED": "The SpendGrant was revoked."
-        case "SPEND_GRANT_EXPIRED": "The SpendGrant expired."
-        case "SPEND_GRANT_INACTIVE": "The SpendGrant is inactive."
-        case "SPEND_GRANT_PRINCIPAL_MISMATCH": "The SpendGrant no longer matches this member."
-        case "SPEND_GRANT_SCOPE_MISMATCH": "The request is outside the SpendGrant's scope."
-        case "SPEND_GRANT_SINGLE_LIMIT_EXCEEDED": "The SpendGrant's per-transaction limit was exceeded."
-        case "SPEND_GRANT_TOTAL_LIMIT_EXCEEDED": "The SpendGrant's total limit was exceeded."
-        case "SPEND_GRANT_ACCOUNTING_INVALID": "The SpendGrant's spending could not be verified."
-        case "CARD_MEMBER_REVOKED": "This member's access was revoked."
+        case "SPEND_GRANT_REQUIRED": "A Spend Grant is required."
+        case "SPEND_GRANT_REVOKED": "The Spend Grant was revoked."
+        case "SPEND_GRANT_EXPIRED": "The Spend Grant expired."
+        case "SPEND_GRANT_INACTIVE": "The Spend Grant is inactive."
+        case "SPEND_GRANT_PRINCIPAL_MISMATCH": "The Spend Grant no longer matches this Agent."
+        case "SPEND_GRANT_SCOPE_MISMATCH": "The request is outside the Spend Grant's scope."
+        case "SPEND_GRANT_SINGLE_LIMIT_EXCEEDED": "The Spend Grant's per-transaction limit was exceeded."
+        case "SPEND_GRANT_TOTAL_LIMIT_EXCEEDED": "The Spend Grant's total limit was exceeded."
+        case "SPEND_GRANT_ACCOUNTING_INVALID": "The Spend Grant's spending could not be verified."
+        case "CARD_MEMBER_REVOKED": "This Agent's access was revoked."
         case "INVALID_SPEND_INTENT": "The purchase request is invalid."
         case "SPEND_INTENT_EXPIRED_OR_INVALID": "The purchase request expired or is invalid."
         case "LEDGER_UNRESOLVED": "An unresolved payment prevents a new purchase."
-        default: "Policy reason: \(code)"
+        default: "The request was evaluated against the current spending rules."
         }
     }
 }

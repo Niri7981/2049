@@ -8,7 +8,7 @@ enum BackSection: Int, CaseIterable {
         switch self {
         case .connection: "Connection"
         case .authority: "Authority"
-        case .members: "Members"
+        case .members: "Agents"
         case .settings: "Settings"
         }
     }

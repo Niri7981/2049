@@ -18,11 +18,17 @@ struct ExecutionEnvironment: Decodable {
         let displayLabel: String
     }
 
+    var assetLabel: String? {
+        guard network == asset.network else { return nil }
+        return PurchasePresentation.scopedAssetLabel(symbol: asset.symbol ?? asset.displayLabel,
+            environment: mode.rawValue, network: network)
+    }
+
     var mainnetStatus: String? {
         guard mode == .liveMainnet else { return nil }
-        if !spendingAuthorized { return "Mainnet selected · spending not yet authorized" }
-        if !productionExecutionEnabled { return "Mainnet selected · execution not enabled" }
-        if !configurationReady { return "Mainnet selected · payment setup incomplete" }
-        return "Mainnet selected · purchases remain subject to payment checks"
+        if !productionExecutionEnabled { return "Mainnet execution is disabled" }
+        if !spendingAuthorized { return "Mainnet spending not yet authorized" }
+        if !configurationReady { return "Mainnet payment setup incomplete" }
+        return "Purchases remain subject to payment checks"
     }
 }

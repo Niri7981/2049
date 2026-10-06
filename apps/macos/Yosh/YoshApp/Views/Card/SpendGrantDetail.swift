@@ -66,9 +66,9 @@ struct SpendGrantDetail: View {
             inputError = nil
         }
         .confirmationDialog("Revoke this Spend Grant?", isPresented: $showingRevokeConfirmation) {
-            Button("Revoke grant", role: .destructive) { Task { await onRevoke() } }
+            Button("Revoke Spend Grant", role: .destructive) { Task { await onRevoke() } }
         } message: {
-            Text("New purchases will lose this grant. The MCP host must reconnect afterward.")
+            Text("New purchases will lose this Spend Grant. Reconnect the Agent afterward.")
         }
     }
 
@@ -84,7 +84,7 @@ struct SpendGrantDetail: View {
                 Text(status)
                     .foregroundStyle(overview.scopedGrant?.status == .expired
                         ? Color(red: 0.56, green: 0.32, blue: 0.36) : secondaryInk)
-                Text("\(overview.service.network) · \(currency ?? "Asset unavailable")")
+                Text("\(overview.service.purchaseMode.title) · \(currency ?? "Asset unavailable")")
                     .foregroundStyle(secondaryInk)
             }
             .font(.system(size: 10))
@@ -94,7 +94,7 @@ struct SpendGrantDetail: View {
 
     private var currentGrant: some View {
         VStack(alignment: .leading, spacing: 0) {
-            eyebrow("CURRENT GRANT")
+            eyebrow("CURRENT SPEND GRANT")
             if let grant = overview.scopedGrant {
                 if isMainnet, let resourceID = grant.resourceId {
                     Text(resourceID).font(.system(size: 11)).padding(.top, 6)
@@ -118,7 +118,7 @@ struct SpendGrantDetail: View {
                     summary("Remaining", value: overview.selectedAuthority?.grant?.remainingDisplay ?? (grant.status == .active
                         ? SpendGrantDraft.decimal(grant.remaining.value, decimals: grant.assetDecimals) : "—"))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityHint(grant.status == .active ? "Within this grant" : "Unavailable for an inactive grant")
+                        .accessibilityHint(grant.status == .active ? "Within this Spend Grant" : "Unavailable for an inactive grant")
                     let expiry = Date(timeIntervalSince1970: TimeInterval(grant.expiresAt) / 1_000)
                     summary("Expires", value: expiry.formatted(.dateTime.month(.abbreviated).day()),
                         detail: expiry.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)))
@@ -131,7 +131,7 @@ struct SpendGrantDetail: View {
                         .font(.system(size: 10)).foregroundStyle(secondaryInk).padding(.top, 9)
                 }
             } else {
-                Text("No grant yet")
+                Text("Spend Grant required")
                     .font(.system(size: 14)).foregroundStyle(secondaryInk)
                     .padding(.top, 12)
             }
@@ -140,7 +140,7 @@ struct SpendGrantDetail: View {
 
     private var createGrant: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Create Grant")
+            Text("Create Spend Grant")
                 .font(.system(size: 29, weight: .regular, design: .serif))
                 .tracking(-0.5)
                 .accessibilityAddTraits(.isHeader)
@@ -185,7 +185,7 @@ struct SpendGrantDetail: View {
                 .padding(.top, 12)
             }
             Button(action: saveGrant) {
-                Text(isSaving ? "Saving…" : isReplacing ? "Replace Grant" : "Create Grant")
+                Text(isSaving ? "Saving…" : isReplacing ? "Replace Spend Grant" : "Create Spend Grant")
                     .font(.system(size: 13))
                     .frame(maxWidth: .infinity)
                     .frame(height: 35)
@@ -198,13 +198,13 @@ struct SpendGrantDetail: View {
             .padding(.top, 12)
 
             if overview.connection.enabled {
-                Text(isReplacing ? "Replaces current grant · reconnect afterward" : "Reconnect your agent after creating a grant")
+                Text(isReplacing ? "Replaces current Spend Grant · reconnect afterward" : "Reconnect your Agent after creating a Spend Grant")
                     .font(.system(size: 10)).foregroundStyle(secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 9)
             }
             if isReplacing {
-                Button("Revoke grant", role: .destructive) { showingRevokeConfirmation = true }
+                Button("Revoke Spend Grant", role: .destructive) { showingRevokeConfirmation = true }
                     .buttonStyle(.plain)
                     .font(.system(size: 11))
                     .foregroundStyle(Color(red: 0.56, green: 0.32, blue: 0.36))

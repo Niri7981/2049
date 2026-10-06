@@ -63,7 +63,7 @@ struct PurchaseDetail: View {
     }
 
     private var compactStatus: some View {
-        Text(item.status.uppercased())
+        Text(item.status)
             .font(.system(size: 9, weight: .semibold))
             .tracking(0.7)
             .foregroundStyle(item.tone == .success ? Color(red: 0.14, green: 0.38, blue: 0.37) : signal(item.tone))
@@ -73,12 +73,12 @@ struct PurchaseDetail: View {
             .padding(.vertical, 6)
             .background(signal(item.tone).opacity(0.10), in: Capsule())
             .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel("Final status: \(item.status)")
+            .accessibilityLabel("Purchase status: \(item.status)")
     }
 
     private var lifecycle: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("PAYMENT LIFECYCLE")
+            sectionLabel("PURCHASE LIFECYCLE")
             VStack(spacing: 0) {
                 ForEach(Array(item.stages.enumerated()), id: \.element.id) { index, stage in
                     lifecycleStage(stage, connects: index < item.stages.count - 1)

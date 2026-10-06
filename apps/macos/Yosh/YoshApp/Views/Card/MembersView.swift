@@ -108,7 +108,7 @@ struct MembersView: View {
 
     private func detailContent(_ member: CardMemberSnapshot.Member) -> some View {
         VStack(alignment: .leading, spacing: 18) {
-            Button("Members", systemImage: "chevron.left") { detailNavigation.show(nil) }
+            Button("Agents", systemImage: "chevron.left") { detailNavigation.show(nil) }
                 .buttonStyle(.plain)
             Text(member.label)
                 .font(.title2)
@@ -146,7 +146,7 @@ struct MembersView: View {
 
     private func editorContent(_ editor: Editor) -> some View {
         VStack(alignment: .leading, spacing: 18) {
-            Button("Members", systemImage: "chevron.left") { self.editor = nil }
+            Button("Agents", systemImage: "chevron.left") { self.editor = nil }
                 .buttonStyle(.plain)
                 .disabled(isSaving)
             Text(editor == .create ? "Add custom agent" : "Rename agent")

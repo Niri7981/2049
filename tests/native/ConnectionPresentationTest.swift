@@ -13,7 +13,7 @@ struct ConnectionPresentationTest {
         let connected = ConnectionPresentation(connection: live, service: service, agentName: "Research")
         precondition(connected.state == .connected && connected.isConnected && connected.canDisconnect)
         precondition(connected.description == "Research is ready to use Yosh.")
-        precondition(connected.network == "Solana Devnet")
+        precondition(connected.network == "Simulation")
 
         let staleJSON = liveJSON.replacingOccurrences(of: #""connected":true"#, with: #""connected":false"#)
             .replacingOccurrences(of: #""state":"connected""#, with: #""state":"reconnect_required""#)

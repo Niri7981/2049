@@ -38,7 +38,7 @@ struct ConnectionPresentation {
             state = connection.enabled ? .accessAllowed : .notSetUp
             problem = nil
         }
-        self.init(agentName: agentName, state: state, network: service.network,
+        self.init(agentName: agentName, state: state, network: service.purchaseMode.title,
             canDisconnect: connection.enabled, issueMessage: problem)
     }
 
@@ -47,7 +47,7 @@ struct ConnectionPresentation {
     var title: String {
         switch state {
         case .connected: "Connected"
-        case .notConnected: "Not Connected"
+        case .notConnected: "Codex not connected"
         case .waitingForCodex: "Waiting for Codex"
         case .accessAllowed: "Access allowed"
         case .notSetUp: "Not set up"

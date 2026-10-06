@@ -25,7 +25,7 @@ struct BackControls: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Payments")
                         .font(.system(size: 15, weight: .medium))
-                    Text("Allow agent purchases")
+                    Text("Allow purchases within Authority")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -40,11 +40,12 @@ struct BackControls: View {
                     .toggleStyle(.switch)
                     .tint(Color(red: 0.48, green: 0.64, blue: 0.88))
                     .disabled(paymentsEnabled == nil || paymentsUpdating)
-                    .accessibilityLabel("Allow agent purchases")
+                    .accessibilityLabel("Allow purchases within Authority")
                     .accessibilityValue(paymentsUpdating ? "Saving" : payments)
-                    .accessibilityHint("Shared by all agents. Enabling payments still requires a valid grant and available authority.")
+                    .accessibilityHint("Purchases require a connected Agent, Daily Authority, a Spend Grant, sufficient funds, and a configured resource.")
             }
             .frame(minHeight: 57)
+            .help("On allows purchases only when Connection, Daily Authority, Spend Grant, funds, and resource checks pass.")
 
             hairline
 

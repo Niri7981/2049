@@ -33,7 +33,7 @@ struct BackLatestPurchase: View {
         VStack(alignment: .leading, spacing: 12) {
             Button(action: onActivity) {
                 HStack(spacing: 7) {
-                    Text("LATEST ACTIVITY")
+                    Text("ACTIVITY")
                         .font(.system(size: 10, weight: .medium))
                         .tracking(2.6)
                     Image(systemName: "chevron.right")
@@ -41,13 +41,13 @@ struct BackLatestPurchase: View {
                         .accessibilityHidden(true)
                 }
                 .foregroundStyle(.secondary)
-                .frame(minHeight: 20)
+                .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!activityAvailable)
-            .accessibilityLabel("View all activity")
-            .accessibilityHint("Opens the full purchase history for \(agentName).")
+            .accessibilityLabel("Activity")
+            .accessibilityHint("Opens Activity for \(agentName).")
 
             Button(action: openPurchase) {
                 HStack(alignment: .top, spacing: 12) {
@@ -61,7 +61,7 @@ struct BackLatestPurchase: View {
                         Text(latest?.title ?? (isLoading ? "—" : "No activity yet"))
                             .font(.system(size: 15, weight: .medium))
                             .lineLimit(1)
-                        Text(latest == nil ? (isLoading ? "Activity unavailable" : "\(agentName) purchase history") : context)
+                        Text(latest == nil ? (isLoading ? "Loading Activity…" : "Activity for \(agentName)") : context)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -114,7 +114,7 @@ struct BackLatestPurchase: View {
             }
             .buttonStyle(.plain)
             .disabled(!activityAvailable || latest == nil)
-            .accessibilityLabel(latest.map { "Latest purchase: \($0.title), \(context), \($0.payment), \($0.recency), \($0.amount). Policy decision: \($0.decision)" } ?? "Activity. \(isLoading ? "Unavailable" : "No purchases yet")")
+            .accessibilityLabel(latest.map { "Activity: \($0.title), \(context), \($0.payment), \($0.recency), \($0.amount). Policy decision: \($0.decision)" } ?? "Activity. \(isLoading ? "Loading" : "No purchases yet")")
             .accessibilityHint("Opens this purchase's details. Recency is when the request was created.")
         }
     }

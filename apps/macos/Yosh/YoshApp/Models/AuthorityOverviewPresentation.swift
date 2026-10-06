@@ -44,7 +44,7 @@ struct AuthorityOverviewPresentation {
         asset = DailyAuthorityPresentation(overview: overview).currency ?? "Asset unavailable"
         dailyState = scope?.dailyState.label
         blockedReason = scope?.blockers.first
-        dailyLimit = scope?.dailyLimitDisplay ?? (legacyTest ? budget.dailyLimit.map { "of \(Self.money($0, decimals: 6)) daily" } ?? "daily limit not set" : "Mainnet Daily Authority required")
+        dailyLimit = scope?.dailyLimitDisplay ?? (legacyTest ? budget.dailyLimit.map { "of \(Self.money($0, decimals: 6)) daily" } ?? "Daily Authority required" : "Mainnet Daily Authority required")
         if let limit = (scope?.dailyLimit ?? (legacyTest ? budget.dailyLimit : nil))?.value, let available = (scope?.available ?? (legacyTest ? budget.remaining : nil))?.value, limit > 0 {
             progress = min(1, Double(available) / Double(limit))
         } else {
@@ -66,7 +66,7 @@ struct AuthorityOverviewPresentation {
             perTransaction = "—"
         }
 
-        payments = overview.service.status == .stopping ? "Unavailable" : (budget.paused ? "Paused" : "On")
+        payments = overview.service.status == .stopping ? "Stopping" : (budget.paused ? "Paused" : "On")
         execution = overview.service.purchaseMode.title
 
         if let purchase = overview.purchases.first {
@@ -96,10 +96,10 @@ struct AuthorityOverviewPresentation {
             default: formatted.status
             }
             let decision = switch purchase.status {
-            case "APPROVED", "PAYING", "PAYMENT_UNKNOWN", "PAID", "FAILED", "EXPIRED": "APPROVED"
-            case "DENIED": "DENIED"
-            case "REQUIRES_APPROVAL": "NEEDS APPROVAL"
-            default: "UNAVAILABLE"
+            case "APPROVED", "PAYING", "PAYMENT_UNKNOWN", "PAID", "FAILED", "EXPIRED": "Allowed"
+            case "DENIED": "Denied"
+            case "REQUIRES_APPROVAL": "Needs approval"
+            default: "Decision not provided"
             }
             // Policy approval survives payment failure, but unresolved and simulated
             // payments must never inherit a paid/success appearance.

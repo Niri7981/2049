@@ -11,31 +11,33 @@ struct PurchasePresentation {
 
     init(_ purchase: AppOverview.Purchase) {
         title = purchase.offerId.map { ["basic", "premium"].contains($0) } == true ? "SOL price snapshot" : (purchase.offerId ?? "Purchase")
-        mode = switch purchase.executionMode {
-        case .simulated: "Simulated"
-        case .liveDevnet: "Live · Devnet"
-        case .liveMainnet: "Live · Mainnet"
-        case .unknown: "Mode unknown"
-        }
+        mode = Self.environmentLabel(purchase)
         status = switch purchase.status {
         case "PAID": switch purchase.executionMode {
             case .simulated: "Simulated payment"
-            case .liveDevnet, .liveMainnet: "Paid"
+            case .liveDevnet, .liveMainnet: switch purchase.deliveryStatus {
+                case "PENDING", "DELIVERING": "Payment confirmed · retrieving result"
+                case "EXHAUSTED": "Payment confirmed · result not recovered"
+                case "UNSUPPORTED": "Payment confirmed · automatic recovery not supported"
+                default: "Paid"
+            }
             case .unknown: "Recorded as paid"
         }
-        case "APPROVED": "Approved"
+        case "APPROVED": "Allowed"
         case "DENIED": "Denied"
         case "REQUIRES_APPROVAL": "Needs approval"
         case "PAYING": "Payment in progress"
-        case "PAYMENT_UNKNOWN": "Payment status unknown"
+        case "PAYMENT_UNKNOWN": "Checking original payment"
         case "FAILED": "Failed"
         case "EXPIRED": "Expired"
         default: "Status unavailable"
         }
         delivery = switch purchase.deliveryStatus {
         case "COMPLETE": "Delivered"
-        case "PENDING": "Delivery pending"
-        default: "Not paid"
+        case "PENDING", "DELIVERING": "Retrieving result"
+        case "EXHAUSTED": "Result not recovered"
+        case "UNSUPPORTED": "Automatic recovery not supported"
+        default: "Not delivered"
         }
         date = Date(timeIntervalSince1970: TimeInterval(purchase.createdAt) / 1_000)
             .formatted(date: .abbreviated, time: .shortened)
@@ -66,22 +68,43 @@ struct PurchasePresentation {
               symbol.utf8.allSatisfy({ (65...90).contains($0) || (48...57).contains($0) }) else {
             return "asset units"
         }
-        // The immutable monetary scope determines whether the symbol represents test funds.
-        // Unknown or inconsistent scope cannot be presented as a production asset.
-        let mainnet = purchase.monetaryEnvironment == "live_mainnet"
-            && purchase.network == "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
-        return mainnet ? symbol : "Test \(symbol)"
+        return scopedAssetLabel(symbol: symbol, environment: purchase.monetaryEnvironment, network: purchase.network) ?? "Asset not verified"
+    }
+
+    static func scopedAssetLabel(symbol: String, environment: String?, network: String?) -> String? {
+        let ticker = symbol.replacingOccurrences(of: "test ", with: "", options: [.caseInsensitive, .anchored])
+            .trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard (2...10).contains(ticker.count), ticker.utf8.allSatisfy({ (65...90).contains($0) || (48...57).contains($0) }) else { return nil }
+        // Only persisted, matching monetary scope may identify production or test funds.
+        switch (environment, network) {
+        case ("live_mainnet", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"): return ticker
+        case ("live_devnet", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
+             ("legacy_test", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
+             ("simulated", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"): return "Test \(ticker)"
+        default: return nil
+        }
+    }
+
+    static func environmentLabel(_ purchase: AppOverview.Purchase) -> String {
+        switch (purchase.monetaryEnvironment, purchase.network) {
+        case ("live_mainnet", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"): "Mainnet"
+        case ("live_devnet", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"),
+             ("legacy_test", "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"): "Devnet · Developer"
+        case ("simulated", _): "Simulation"
+        default: purchase.executionMode == .simulated ? "Simulation" : "Environment not verified"
+        }
+
     }
 }
 
-/// Activity-only wording. The Authority overview continues to use PurchasePresentation unchanged.
+/// Separates policy, payment, and delivery facts in Activity.
 struct ActivityPurchasePresentation {
     enum Icon: Equatable { case asset(String), symbol(String) }
     enum Section: String, CaseIterable {
         case paid = "Paid"
         case notPaid = "Not Paid"
         case needsAttention = "Needs Attention"
-        case simulated = "Simulated"
+        case simulated = "Simulation"
     }
 
     let section: Section
@@ -89,6 +112,14 @@ struct ActivityPurchasePresentation {
     let symbol: String
     let icon: Icon
     let status: String
+    var compactStatus: String {
+        switch status {
+        case "Payment confirmed · retrieving result": "Paid · retrieving"
+        case "Payment confirmed · result not recovered": "Paid · not recovered"
+        case "Payment confirmed · automatic recovery not supported": "Paid · no recovery"
+        default: status
+        }
+    }
     let supportingStatus: String?
     let policy: String
     let denialReason: String?
@@ -137,21 +168,23 @@ struct ActivityPurchasePresentation {
         case "PAID" where purchase.deliveryStatus == "COMPLETE":
             status = "Delivered"
         case "PAID" where purchase.deliveryStatus == "EXHAUSTED":
-            status = "Paid · delivery exhausted"
+            status = "Payment confirmed · result not recovered"
         case "PAID" where purchase.deliveryStatus == "PENDING" || purchase.deliveryStatus == "DELIVERING":
-            status = "Paid · delivery pending"
+            status = "Payment confirmed · retrieving result"
+        case "PAID" where purchase.deliveryStatus == "UNSUPPORTED":
+            status = "Payment confirmed · automatic recovery not supported"
         case "PAID":
             status = "Paid"
         case "PAYING":
             status = "Paying"
         case "PAYMENT_UNKNOWN":
-            status = "Payment unknown"
+            status = "Checking original payment"
         case "DENIED":
             status = "Denied"
         case "EXPIRED":
             status = "Expired"
         case "APPROVED":
-            status = "Approved"
+            status = "Allowed"
         case "FAILED":
             status = "Failed"
         case "REQUIRES_APPROVAL":
@@ -160,11 +193,11 @@ struct ActivityPurchasePresentation {
             status = "Status unavailable"
         }
 
-        supportingStatus = purchase.status == "APPROVED" ? "No payment made" : purchase.status == "PAID" ? "Paid" : nil
+        supportingStatus = purchase.status == "APPROVED" ? "No payment made" : purchase.status == "PAID" && !simulated && purchase.executionMode != .unknown ? "Paid" : nil
         policy = switch purchase.status {
         case "DENIED": "Denied"
         case "REQUIRES_APPROVAL": "Needs approval"
-        case "APPROVED", "PAYING", "PAYMENT_UNKNOWN", "PAID", "FAILED", "EXPIRED": "Approved"
+        case "APPROVED", "PAYING", "PAYMENT_UNKNOWN", "PAID", "FAILED", "EXPIRED": "Allowed"
         default: "Unavailable"
         }
         denialReason = purchase.status == "DENIED" ? Self.reason(purchase.decisionReason) : nil
@@ -175,25 +208,19 @@ struct ActivityPurchasePresentation {
             case "PAID" where purchase.executionMode == .unknown: "Unverified"
             case "PAID": "Paid"
             case "PAYING": "In progress"
-            case "PAYMENT_UNKNOWN": "Outcome unknown"
+            case "PAYMENT_UNKNOWN": "Checking original payment"
             case "FAILED": "Failed"
             default: "Not started"
             }
         }
         delivery = switch purchase.deliveryStatus {
         case "COMPLETE": simulated ? "Simulated delivery" : "Delivered"
-        case "PENDING", "DELIVERING": "Pending"
-        case "EXHAUSTED": "Exhausted"
-        case "UNSUPPORTED": "Unavailable"
+        case "PENDING", "DELIVERING": "Retrieving result"
+        case "EXHAUSTED": "Result not recovered"
+        case "UNSUPPORTED": "Automatic recovery not supported"
         default: "Not delivered"
         }
-        mode = switch purchase.monetaryEnvironment {
-        case "live_mainnet" where purchase.network == "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "Mainnet"
-        case "live_devnet" where purchase.network == "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "Devnet · Developer"
-        case "legacy_test" where purchase.network == "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "Devnet · Developer"
-        case "simulated": "Simulation"
-        default: purchase.executionMode == .simulated ? "Simulation" : "Network unavailable"
-        }
+        mode = PurchasePresentation.environmentLabel(purchase)
         amount = PurchasePresentation.amount(purchase, minimumFractionDigits: 2)
         let date = Date(timeIntervalSince1970: TimeInterval(purchase.createdAt) / 1_000)
         time = date.formatted(date: .omitted, time: .shortened)
@@ -222,12 +249,12 @@ struct ActivityPurchasePresentation {
         guard let code, !code.isEmpty else { return nil }
         return switch code {
         case "PAYMENTS_PAUSED": "Payments are paused"
-        case "SPEND_GRANT_REVOKED": "Grant revoked"
-        case "SPEND_GRANT_EXPIRED": "Grant expired"
-        case "SPEND_GRANT_REQUIRED": "Spend grant required"
+        case "SPEND_GRANT_REVOKED": "Spend Grant revoked"
+        case "SPEND_GRANT_EXPIRED": "Spend Grant expired"
+        case "SPEND_GRANT_REQUIRED": "Spend Grant required"
         case "SPEND_GRANT_SINGLE_LIMIT_EXCEEDED": "Per-transaction limit exceeded"
-        case "SPEND_GRANT_TOTAL_LIMIT_EXCEEDED": "Grant limit exceeded"
-        case "DAILY_BUDGET_EXCEEDED": "Daily authority exceeded"
+        case "SPEND_GRANT_TOTAL_LIMIT_EXCEEDED": "Spend Grant limit exceeded"
+        case "DAILY_BUDGET_EXCEEDED": "Daily Authority exceeded"
         default: "Request did not meet current spending rules"
         }
     }

@@ -39,7 +39,7 @@ struct ActivityLedgerPresentationTest {
         let row = ledger.days[0].rows[0]
         precondition(row.item.title == "Market Snapshot" && row.item.amount == "0.20 Test USDC")
         precondition(row.context == "Research · Devnet · Developer · Solana" && row.purpose == "Live devnet acceptance test")
-        precondition(row.item.status == "Approved" && row.tone == .positive)
+        precondition(row.item.status == "Allowed" && row.tone == .positive)
 
         func status(_ changes: [String: Any]) throws -> ActivityLedgerPresentation.Row {
             ActivityLedgerPresentation.Row(try purchase("status", at: now, changes: changes), agentName: "Codex")
@@ -49,14 +49,14 @@ struct ActivityLedgerPresentationTest {
         let simulated = try status(["status": "PAID", "deliveryStatus": "COMPLETE", "executionMode": "simulated"])
         let unverified = try status(["status": "PAID", "deliveryStatus": "COMPLETE", "executionMode": "UNKNOWN"])
         let unknown = try status(["status": "PAYMENT_UNKNOWN"])
-        precondition(paid.item.status == "Paid · delivery pending" && paid.item.delivery == "Pending")
+        precondition(paid.item.status == "Payment confirmed · retrieving result" && paid.item.delivery == "Retrieving result")
         precondition(paid.item.supportingStatus == "Paid")
         precondition(delivered.item.status == "Delivered" && delivered.tone == .positive)
         precondition(simulated.item.status == "Simulated" && simulated.tone == .neutral)
         precondition(unverified.item.status == "Payment unverified" && unverified.tone == .neutral)
-        precondition(unknown.item.status == "Payment unknown" && unknown.tone == .pending)
+        precondition(unknown.item.status == "Checking original payment" && unknown.tone == .pending)
         let exhausted = try status(["status": "PAID", "deliveryStatus": "EXHAUSTED"])
-        precondition(exhausted.item.status == "Paid · delivery exhausted" && exhausted.tone == .positive)
+        precondition(exhausted.item.status == "Payment confirmed · result not recovered" && exhausted.tone == .positive)
         let mainnet = try status(["monetaryEnvironment": "live_mainnet", "executionMode": "live_mainnet",
             "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"])
         precondition(mainnet.item.amount == "0.20 USDC" && mainnet.context == "Codex · Mainnet · Solana")
@@ -68,12 +68,20 @@ struct ActivityLedgerPresentationTest {
             "monetaryEnvironment": "live_mainnet", "executionMode": "live_mainnet",
             "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"])
         precondition(mainnetSol.item.amount == "0.20 SOL")
+        let mainnetUsdt = try status(["currency": "USDT", "monetaryEnvironment": "live_mainnet", "executionMode": "live_mainnet",
+            "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"])
+        precondition(mainnetUsdt.item.amount == "0.20 USDT")
+        precondition(paid.item.compactStatus == "Paid · retrieving" && exhausted.item.compactStatus == "Paid · not recovered")
+        let unsupported = try status(["status": "PAID", "deliveryStatus": "UNSUPPORTED"])
+        precondition(unsupported.item.payment == "Paid" && unsupported.item.delivery == "Automatic recovery not supported")
+        let mismatched = try status(["monetaryEnvironment": "live_mainnet"])
+        precondition(mismatched.item.amount == "0.20 Asset not verified", "A Devnet network must never be labeled as production funds")
         let unscoped = try status(["monetaryEnvironment": NSNull(), "executionMode": "live_mainnet",
             "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"])
-        precondition(unscoped.item.amount == "0.20 Test USDC" && unscoped.item.mode == "Network unavailable")
+        precondition(unscoped.item.amount == "0.20 Asset not verified" && unscoped.item.mode == "Environment not verified")
         let denied = try status(["status": "DENIED", "reason": " ", "decisionReason": "DAILY_BUDGET_EXCEEDED"])
         precondition(denied.item.status == "Denied" && denied.tone == .negative
-            && denied.purpose == "Daily authority exceeded")
+            && denied.purpose == "Daily Authority exceeded")
         let expired = try status(["status": "EXPIRED"])
         let unrecognized = try status(["status": "NEW_UNKNOWN_STATE"])
         let resource = try status(["resourceId": "actual-resource-id"])

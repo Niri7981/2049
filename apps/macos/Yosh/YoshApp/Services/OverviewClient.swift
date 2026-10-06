@@ -42,9 +42,9 @@ enum OverviewLoadError: Error {
         case .memberInactive: "This agent has been revoked"
         case .defaultMemberRequired: "The default agent cannot be revoked"
         case .codexNotInstalled: "Install Codex Desktop or CLI to connect"
-        case .codexConfigConflict: "This Codex MCP entry was changed outside Yosh. Check it in Codex before reconnecting."
-        case .codexConfigFailed: "Codex MCP configuration could not be confirmed. Check Codex settings and retry."
-        case .codexBridgeUnavailable: "The Yosh MCP launcher is unavailable. Reinstall Yosh."
+        case .codexConfigConflict: "The Yosh connection settings in Codex changed outside Yosh. Check them in Codex before reconnecting."
+        case .codexConfigFailed: "The Yosh connection settings in Codex could not be confirmed. Check Codex settings and retry."
+        case .codexBridgeUnavailable: "The Yosh connection helper is unavailable. Reinstall Yosh."
         }
     }
 }

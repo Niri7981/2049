@@ -127,7 +127,7 @@ struct MembersRosterPresentation {
         case .settingUp: "Setting up access to Yosh."
         case .waiting: "Open or continue a Codex chat to finish connecting."
         case .accessAllowed: "This custom agent is allowed to use Yosh. Its online status cannot be confirmed."
-        case .revoked: "This member's access has been revoked."
+        case .revoked: "This Agent's access has been revoked."
         case .connected: "Codex is ready to use Yosh."
         case .connectionIssue: "Connection setup wasn't confirmed. Retry setup after resolving the problem."
         case .comingSoon: "Support for this integration is coming soon."

@@ -9,7 +9,7 @@ struct AuthorityPresentationTest {
         "purchaseId": "authority-fixture", "status": "APPROVED", "deliveryStatus": "NOT_PAID",
         "amount": "200000", "createdAt": 1_799_913_600_000 as Int64,
         "resourceId": "market-snapshot", "reason": "Research context",
-        "executionMode": "live_devnet", "currency": "USDC", "assetDecimals": 6,
+        "executionMode": "live_devnet", "monetaryEnvironment": "live_devnet", "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1", "currency": "USDC", "assetDecimals": 6,
     ]
 
     private static func presentation(
@@ -45,20 +45,20 @@ struct AuthorityPresentationTest {
         precondition(approved.remaining == "$0.65" && approved.progress == 0.65)
         precondition(approved.grantRemaining == "—" && approved.grantDetail == "expired"
             && approved.perTransaction == "—")
-        precondition(approved.latest?.decision == "APPROVED" && approved.latest?.payment == "Not paid"
+        precondition(approved.latest?.decision == "Allowed" && approved.latest?.payment == "Not paid"
             && approved.latest?.paymentConfirmed == false)
         precondition(approved.latest?.title == "Market Snapshot" && approved.latest?.purpose == "Research context"
-            && approved.latest?.amount == "0.2 USDC" && approved.latest?.recency.isEmpty == false)
+            && approved.latest?.amount == "0.2 Test USDC" && approved.latest?.recency.isEmpty == false)
 
         let unset = try presentation(remaining: nil, hasPurchase: false)
-        precondition(unset.remaining == "—" && unset.dailyLimit == "daily limit not set"
+        precondition(unset.remaining == "—" && unset.dailyLimit == "Daily Authority required"
             && unset.progress == 0 && unset.latest == nil)
         let zero = try presentation(remaining: "0")
         precondition(zero.remaining == "$0.00" && zero.progress == 0)
 
         let paid = try presentation(changes: ["status": "PAID", "deliveryStatus": "PENDING"])
-        precondition(paid.latest?.payment == "Paid" && paid.latest?.paymentConfirmed == true
-            && paid.latest?.decision == "APPROVED")
+        precondition(paid.latest?.payment == "Payment confirmed · retrieving result" && paid.latest?.paymentConfirmed == true
+            && paid.latest?.decision == "Allowed")
         let simulated = try presentation(changes: ["status": "PAID", "deliveryStatus": "COMPLETE", "executionMode": "simulated"])
         precondition(simulated.latest?.payment == "Simulated payment" && simulated.latest?.paymentConfirmed == false
             && simulated.latest?.decisionTone == .neutral)
@@ -66,23 +66,26 @@ struct AuthorityPresentationTest {
         precondition(unverified.latest?.payment == "Recorded as paid" && unverified.latest?.paymentConfirmed == false
             && unverified.latest?.decisionTone == .neutral)
         let unknown = try presentation(changes: ["status": "PAYMENT_UNKNOWN"])
-        precondition(unknown.latest?.payment == "Payment status unknown" && unknown.latest?.paymentConfirmed == false
-            && unknown.latest?.decision == "APPROVED" && unknown.latest?.decisionTone == .neutral)
+        precondition(unknown.latest?.payment == "Checking original payment" && unknown.latest?.paymentConfirmed == false
+            && unknown.latest?.decision == "Allowed" && unknown.latest?.decisionTone == .neutral)
+        let exhausted = try presentation(changes: ["status": "PAID", "deliveryStatus": "EXHAUSTED"])
+        precondition(exhausted.latest?.payment == "Payment confirmed · result not recovered"
+            && exhausted.latest?.paymentConfirmed == true)
         let denied = try presentation(changes: ["status": "DENIED"])
-        precondition(denied.latest?.payment == "Not paid" && denied.latest?.decision == "DENIED")
+        precondition(denied.latest?.payment == "Not paid" && denied.latest?.decision == "Denied")
         let needsApproval = try presentation(changes: ["status": "REQUIRES_APPROVAL"])
-        precondition(needsApproval.latest?.payment == "Awaiting approval" && needsApproval.latest?.decision == "NEEDS APPROVAL")
+        precondition(needsApproval.latest?.payment == "Awaiting approval" && needsApproval.latest?.decision == "Needs approval")
         for status in ["FAILED", "EXPIRED"] {
             let result = try presentation(changes: ["status": status])
             precondition(result.latest?.paymentConfirmed == false && result.latest?.decisionTone == .neutral)
             precondition(result.latest?.payment == (status == "FAILED" ? "Failed" : "Expired"))
         }
         let unavailable = try presentation(changes: ["status": "UNRECOGNIZED", "resourceId": "unknown-resource", "offerId": "basic"])
-        precondition(unavailable.latest?.decision == "UNAVAILABLE" && unavailable.latest?.title == "unknown-resource")
+        precondition(unavailable.latest?.decision == "Decision not provided" && unavailable.latest?.title == "unknown-resource")
         let legacy = try presentation(changes: ["resourceId": NSNull(), "offerId": "basic", "reason": "  "])
         precondition(legacy.latest?.title == "Market Snapshot" && legacy.latest?.purpose == nil)
         let network = try presentation(network: "Fixture network")
-        precondition(network.execution == "Simulated · Fixture network")
+        precondition(network.execution == "Simulation")
         print("Native Authority presentation tests passed")
     }
 }

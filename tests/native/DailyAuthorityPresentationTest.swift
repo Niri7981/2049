@@ -5,9 +5,9 @@ struct DailyAuthorityPresentationTest {
     static func main() {
         let devnet = DailyAuthorityPresentation(network: "Solana Devnet")
         let mainnet = DailyAuthorityPresentation(network: "Solana Mainnet")
-        let balance = AppBalance(amount: "19000000", display: "19.00 test USDC", available: true)
-        precondition(devnet.currency == "test USDC" && devnet.balanceDisplay(balance) == "19.00 test USDC")
-        precondition(mainnet.currency == "USDC" && mainnet.balanceDisplay(balance) == "19.00 USDC")
+        let balance = AppBalance(amount: "19000000", display: "19.00 Test USDC", available: true)
+        precondition(devnet.currency == "Test USDC" && devnet.balanceDisplay(balance) == "19.00 Test USDC")
+        precondition(mainnet.currency == "USDC" && mainnet.balanceDisplay(balance) == nil)
         precondition(DailyAuthorityPresentation(network: "Solana Mainnet-Beta").currency == "USDC")
         let unknown = DailyAuthorityPresentation(network: "Unknown network")
         precondition(unknown.currency == nil && unknown.balanceDisplay(balance) == nil)

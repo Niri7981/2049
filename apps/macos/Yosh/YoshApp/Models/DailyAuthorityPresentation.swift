@@ -17,9 +17,9 @@ struct DailyAuthorityPresentation {
     init(overview: AppOverview) {
         self.init(network: overview.service.network)
         if let scope = overview.selectedAuthority {
-            self = DailyAuthorityPresentation(currency: scope.assetLabel, network: scope.network, assetId: scope.assetId, decimals: scope.assetDecimals)
+            self = DailyAuthorityPresentation(currency: PurchasePresentation.scopedAssetLabel(symbol: scope.assetLabel, environment: scope.mode.rawValue, network: scope.network), network: scope.network, assetId: scope.assetId, decimals: scope.assetDecimals)
         } else if let environment = overview.service.execution {
-            self = DailyAuthorityPresentation(currency: environment.mode == .liveMainnet ? (environment.asset.symbol ?? "USDC") : "Test \(environment.asset.symbol ?? "USDC")",
+            self = DailyAuthorityPresentation(currency: environment.assetLabel,
                 network: environment.network, assetId: environment.asset.mint, decimals: environment.asset.decimals)
         }
     }
@@ -35,7 +35,8 @@ struct DailyAuthorityPresentation {
             guard balance.network == network, balance.assetId == assetId, balance.assetDecimals == decimals else { return nil }
         }
         let components = balance.display.split(separator: " ", maxSplits: 1)
-        return components.count == 2 && String(components[1]) == currency ? balance.display : nil
+        guard components.count == 2, String(components[1]).caseInsensitiveCompare(currency) == .orderedSame else { return nil }
+        return "\(components[0]) \(currency)"
     }
 
     // Editor conversion only. The existing management API independently validates the shared limit.

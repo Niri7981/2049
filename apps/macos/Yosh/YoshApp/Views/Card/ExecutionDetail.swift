@@ -31,7 +31,7 @@ struct ExecutionDetail: View {
                     .tracking(-1.2)
                     .accessibilityAddTraits(.isHeader)
                     .padding(.top, 12)
-                Text("Choose how Yosh executes approved purchases.")
+                Text("Choose the environment for purchases allowed by policy.")
                     .font(.system(size: 13))
                     .foregroundStyle(secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
@@ -78,8 +78,8 @@ struct ExecutionDetail: View {
                 hairline
                 if let environment {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("\(environment.cluster) · \(environment.network)")
-                        Text("\(environment.asset.displayLabel) · \(environment.asset.decimals) decimals")
+                        Text("\(environment.mode.title) · \(environment.network)")
+                        Text("\(environment.assetLabel ?? "Asset not verified") · \(environment.asset.decimals) decimals")
                         Text(environment.asset.mint).textSelection(.enabled)
                     }
                     .font(.system(size: 10))
@@ -112,8 +112,8 @@ struct ExecutionDetail: View {
     private func description(_ mode: AppOverview.Service.PurchaseMode) -> String {
         switch mode {
         case .simulated: "No transaction is submitted."
-        case .liveDevnet: "Uses Solana Devnet and test USDC."
-        case .liveMainnet: "Uses Solana Mainnet and real USDC."
+        case .liveDevnet: "Developer testing with Test assets on Solana Devnet."
+        case .liveMainnet: "Production purchases on Solana Mainnet."
         }
     }
 }

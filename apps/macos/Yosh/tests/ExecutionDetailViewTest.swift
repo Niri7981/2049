@@ -15,7 +15,11 @@ struct ExecutionDetailViewTest {
             return try JSONDecoder().decode(ExecutionEnvironment.self, from: Data(json.utf8))
         }
         let simulated = try environment("simulated"), mainnet = try environment("live_mainnet")
-        precondition(mainnet.mainnetStatus == "Mainnet selected · spending not yet authorized")
+        precondition(mainnet.mainnetStatus == "Mainnet execution is disabled")
+        let verifiedAsset = try JSONDecoder().decode(ExecutionEnvironment.self, from: Data("""
+            {"mode":"live_mainnet","cluster":"mainnet-beta","network":"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp","asset":{"network":"solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1","mint":"fixture","symbol":"USDC","decimals":6,"displayLabel":"USDC"},"productionExecutionEnabled":false,"spendingAuthorized":false,"configurationReady":false}
+            """.utf8))
+        precondition(verifiedAsset.assetLabel == nil, "Mismatched asset network must not identify production funds")
         let wire = ServiceEndpoint.setExecution(.liveMainnet)
         precondition(wire.path == "/api/app/execution" && wire.method == "PUT" && wire.isMutation)
         let body = try JSONSerialization.jsonObject(with: wire.body()!) as? [String: String]

@@ -25,13 +25,13 @@ struct ManagementClientSmoke {
         precondition(!initial.connection.enabled && initial.grant == nil)
         precondition(initial.purchases.count == 2)
         let simulated = PurchasePresentation(initial.purchases[0])
-        precondition(simulated.status == "Simulated payment" && simulated.amount == "0.01 USDC")
+        precondition(simulated.status == "Simulated payment" && simulated.amount == "0.01 Test USDC")
         let unknown = PurchasePresentation(initial.purchases[1])
-        precondition(unknown.status == "Payment status unknown" && unknown.amount == "0.000001 USDC")
+        precondition(unknown.status == "Checking original payment" && unknown.amount == "0.000001 Test USDC")
 
         let activityBase: [String: Any] = ["purchaseId": "activity-fixture", "status": "APPROVED",
             "deliveryStatus": "NOT_DELIVERED", "amount": "200000", "createdAt": 1_000 as Int64,
-            "resourceId": "market-snapshot", "executionMode": "simulated", "currency": "USDC", "assetDecimals": 6]
+            "resourceId": "market-snapshot", "executionMode": "simulated", "currency": "USDC", "assetDecimals": 6, "monetaryEnvironment": "simulated", "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"]
         func activity(_ changes: [String: Any]) throws -> ActivityPurchasePresentation {
             var fields = activityBase
             for (key, value) in changes { fields[key] = value }
@@ -39,24 +39,24 @@ struct ManagementClientSmoke {
             return ActivityPurchasePresentation(try JSONDecoder().decode(AppOverview.Purchase.self, from: data))
         }
         let approved = try activity([:])
-        precondition(approved.title == "Market Snapshot" && approved.status == "Approved"
-            && approved.amount == "0.20 USDC" && approved.payment == "No payment made · Simulated"
+        precondition(approved.title == "Market Snapshot" && approved.status == "Allowed"
+            && approved.amount == "0.20 Test USDC" && approved.payment == "No payment made · Simulated"
             && approved.supportingStatus == "No payment made" && approved.section == .notPaid)
         let denied = try activity(["resourceId": "market-analysis", "status": "DENIED", "amount": "20000000",
             "decisionReason": "SPEND_GRANT_SINGLE_LIMIT_EXCEEDED"])
         precondition(denied.title == "Market Analysis" && denied.status == "Denied"
-            && denied.amount == "20.00 USDC" && denied.denialReason == "Per-transaction limit exceeded"
+            && denied.amount == "20.00 Test USDC" && denied.denialReason == "Per-transaction limit exceeded"
             && denied.section == .notPaid)
         let expired = try activity(["status": "EXPIRED"])
         let paying = try activity(["status": "PAYING", "executionMode": "live_devnet"])
         let paymentUnknown = try activity(["status": "PAYMENT_UNKNOWN", "executionMode": "live_devnet"])
         let failed = try activity(["status": "FAILED", "executionMode": "live_devnet"])
         precondition(expired.status == "Expired" && paying.status == "Paying"
-            && paymentUnknown.status == "Payment unknown" && failed.status == "Failed")
+            && paymentUnknown.status == "Checking original payment" && failed.status == "Failed")
         precondition(expired.section == .notPaid && failed.section == .notPaid
             && paying.section == .needsAttention && paymentUnknown.section == .needsAttention)
         let paid = try activity(["status": "PAID", "deliveryStatus": "PENDING", "executionMode": "live_devnet"])
-        precondition(paid.status == "Paid" && paid.payment == "Paid" && paid.delivery == "Pending"
+        precondition(paid.status == "Payment confirmed · retrieving result" && paid.payment == "Paid" && paid.delivery == "Retrieving result"
             && paid.section == .paid)
         let delivered = try activity(["status": "PAID", "deliveryStatus": "COMPLETE", "executionMode": "live_devnet"])
         let simulatedPaid = try activity(["status": "PAID", "deliveryStatus": "COMPLETE"])

@@ -6,7 +6,7 @@ struct AuthoritySurfaceTest {
         func decode<T: Decodable>(_ type: T.Type, _ payload: [String: Any]) throws -> T {
             try JSONDecoder().decode(type, from: JSONSerialization.data(withJSONObject: payload))
         }
-        let mainNetwork = "solana:mainnet-fixture", testNetwork = "solana:devnet-fixture"
+        let mainNetwork = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", testNetwork = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
         func payload(mainnet: Bool, grant: Bool = false) -> [String: Any] {
             let mode = mainnet ? "live_mainnet" : "live_devnet"
             let network = mainnet ? mainNetwork : testNetwork

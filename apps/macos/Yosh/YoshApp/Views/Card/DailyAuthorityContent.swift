@@ -83,7 +83,7 @@ struct DailyAuthorityContent: View {
                             .strokeBorder(limitIsFocused ? secondaryInk.opacity(0.7) : rule, lineWidth: 1)
                     }
                     .padding(.top, 8)
-                    Text("Enter 0 to stop new purchases. Changes apply to future approvals.")
+                    Text("Enter 0 to stop new purchases. Changes apply to future purchases.")
                         .font(.system(size: 12))
                         .foregroundStyle(secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)
@@ -136,7 +136,7 @@ struct DailyAuthorityContent: View {
                             .foregroundStyle(secondaryInk)
                             .padding(.top, 14)
                     }
-                    Text("\(currency ?? "Wallet") balance is separate from spending authority.")
+                    Text("\(currency ?? "Wallet") balance is separate from Daily Authority.")
                         .font(.system(size: 12))
                         .foregroundStyle(secondaryInk)
                         .fixedSize(horizontal: false, vertical: true)

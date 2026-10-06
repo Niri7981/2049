@@ -18,7 +18,7 @@ struct ActivityDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            CardPageHeader(title: "Agent activity", style: .hero(eyebrow: "LATEST ACTIVITY"))
+            CardPageHeader(title: "Activity", style: .hero(eyebrow: "ACTIVITY"))
                 .overlay(alignment: .topTrailing) {
                     HStack(spacing: 12) {
                         Button("Back to Authority", systemImage: "chevron.left", action: onBack)
@@ -55,8 +55,8 @@ struct ActivityDetail: View {
             }
 
             if purchases.isEmpty {
-                ContentUnavailableView("No activity yet", systemImage: "clock",
-                    description: Text("Requests made by \(agentName) will appear here."))
+                ContentUnavailableView(isRefreshing ? "Loading Activity…" : refreshError == nil ? "No activity yet" : "Activity could not be loaded", systemImage: "clock",
+                    description: Text(isRefreshing ? "Reading Activity for \(agentName)." : refreshError == nil ? "Requests made by \(agentName) will appear here." : "Refresh Activity to try again."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView(.vertical) {

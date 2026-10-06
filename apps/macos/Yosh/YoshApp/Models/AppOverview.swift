@@ -49,9 +49,9 @@ struct AppOverview: Decodable {
 
             var title: String {
                 switch self {
-                case .simulated: "Simulated"
-                case .liveDevnet: "Live · Devnet"
-                case .liveMainnet: "Live · Mainnet"
+                case .simulated: "Simulation"
+                case .liveDevnet: "Devnet · Developer"
+                case .liveMainnet: "Mainnet"
                 }
             }
         }

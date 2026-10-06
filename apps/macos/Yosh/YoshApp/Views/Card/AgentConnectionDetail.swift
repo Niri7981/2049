@@ -71,7 +71,7 @@ struct AgentConnectionDetail: View {
             if presentation.network != "—" {
                 hairline.padding(.top, 24)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Test environment")
+                    Text("Payment environment")
                         .font(.system(size: 12))
                         .foregroundStyle(secondaryInk)
                     Text(presentation.network)

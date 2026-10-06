@@ -90,7 +90,7 @@ struct CardSettingsBody: View {
         HStack(spacing: 12) {
             Text(title).foregroundStyle(Color(red: 0.07, green: 0.10, blue: 0.15))
             Spacer(minLength: 4)
-            Text("Unavailable")
+            Text("Not available yet")
                 .font(.system(size: 11))
                 .foregroundStyle(Color(red: 0.42, green: 0.48, blue: 0.57))
             Toggle(title, isOn: .constant(false))
@@ -114,7 +114,7 @@ struct CardSettingsBody: View {
                 .accessibilityIdentifier("settings.wallet.copy")
                 .help("Copy the full public wallet address")
         } else {
-            SettingsRow(title: "Wallet address", value: unavailableValue)
+            SettingsRow(title: "Wallet address", value: isLoading ? "Checking…" : "Wallet unavailable")
         }
     }
 

@@ -16,7 +16,7 @@ struct MembersRoster: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            CardPageHeader(title: "Members", style: .collection(subtitle: "Agents share one daily budget."))
+            CardPageHeader(title: "Agents", style: .collection(subtitle: "Agents share one Daily Authority."))
                 .foregroundStyle(Color(red: 0.07, green: 0.10, blue: 0.15))
                 .overlay(alignment: .topTrailing) {
                     Button("Add custom agent", systemImage: "plus", action: onAdd)

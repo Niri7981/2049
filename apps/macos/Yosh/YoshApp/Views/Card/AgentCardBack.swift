@@ -56,7 +56,7 @@ struct AgentCardBack: View {
                                 memberSession.loadError == nil ? "No active agent" : "Agents unavailable",
                                 systemImage: "person.crop.circle.badge.questionmark",
                                 description: Text(memberSession.loadError
-                                    ?? (memberSession.isLoading ? "Waiting for the local service." : "Add an agent in Members to continue.")))
+                                    ?? (memberSession.isLoading ? "Waiting for the local service." : "Add an agent in Agents to continue.")))
                         }
                     }
                 }
@@ -94,7 +94,7 @@ struct AgentCardBack: View {
             CardPageHeader(title: memberSession.loadError == nil ? "Connection" : "Connection Issue",
                 style: .hero(eyebrow: "CONNECTION"))
             Text(memberSession.loadError ?? (memberSession.isLoading
-                ? "Loading connection…" : "Choose an active agent in Members to connect."))
+                ? "Loading connection…" : "Choose an active agent in Agents to connect."))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             if memberSession.loadError != nil {

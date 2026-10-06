@@ -38,7 +38,7 @@ struct LatestActivityHitTest {
         RunLoop.current.run(until: .now.addingTimeInterval(0.2))
         click(window, at: NSPoint(x: 100, y: 134))
         guard listOpens == 1 else {
-            print("FAIL: LATEST ACTIVITY heading must independently open the full list")
+            print("FAIL: Activity heading must independently open the full list")
             exit(1)
         }
         precondition(detailOpens.isEmpty)
@@ -62,7 +62,7 @@ struct LatestActivityHitTest {
         precondition(listOpens == 2 && detailOpens == ["visible-latest"],
             "Loading or saving must disable both routes")
         window.close()
-        print("Latest Activity: separate list/detail hit regions, matching record ID, empty and unavailable states passed")
+        print("Activity: separate list/detail hit regions, matching record ID, empty and unavailable states passed")
     }
 
     @MainActor
