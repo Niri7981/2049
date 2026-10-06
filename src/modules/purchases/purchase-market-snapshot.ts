@@ -48,7 +48,7 @@ export async function purchaseMarketSnapshot(
   const binding = paymentBinding(config, endpoint);
   const existing = ledger.get(input.purchaseId);
   if (existing) {
-    ledger.assertReplayAllowed(existing, options.mode);
+    ledger.assertReplayAllowed(existing, options.mode, ledger.paymentScope(config, options.mode));
     const acceptedBindings = [binding, ...(options.legacyBindings ?? [])];
     if (existing.intent.requestHash !== hash(input.intent) || !acceptedBindings.includes(existing.intent.executionBinding)) {
       throw new Error('Purchase ID already belongs to different input or configuration');
@@ -91,7 +91,7 @@ export async function purchaseMarketSnapshot(
     now,
     authority: options.authority,
   });
-  const reserved = ledger.reserve(spendIntent, quote, now, options.mode);
+  const reserved = ledger.reserve(spendIntent, quote, now, options.mode, undefined, ledger.paymentScope(config, options.mode));
   trace(reserved.status === 'APPROVED' ? 'POLICY_APPROVED' : 'POLICY_STOPPED', reserved.decision.reason);
   if (reserved.intent.id !== spendIntent.id || reserved.status !== 'APPROVED') {
     return { record: reserved, reused: reserved.intent.id !== spendIntent.id, simulated: options.mode === 'simulated' };

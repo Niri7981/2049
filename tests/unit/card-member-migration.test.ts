@@ -1,3 +1,4 @@
+import { DEVNET_NETWORK, DEVNET_USDC_MINT } from '../../src/modules/payment/payment-config';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,11 +27,11 @@ it('migrates historical connection owners without merging different connectionId
       status TEXT NOT NULL CHECK(status IN ('ACTIVE','REVOKED','EXPIRED')), created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER);
   `);
   const insertGrant = database.prepare(`INSERT INTO spend_grants VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  insertGrant.run('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1, firstConnection, 1, 'resource', 'provider', 'operation', 'network', 'asset', 6, 'payee', 'exact', 100, 100, 'REVOKED', 1, 2, 2);
-  insertGrant.run('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 2, secondConnection, 1, 'resource', 'provider', 'operation', 'network', 'asset', 6, 'payee', 'exact', 100, 100, 'REVOKED', 1, 2, 2);
-  const evidence = { quote: '{"amount":"10"}', decision: '{"decision":"APPROVED"}', data: '{"resource":"preserved"}', payload: '{"signed":"preserved"}' };
+  insertGrant.run('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1, firstConnection, 1, 'resource', 'provider', 'operation', DEVNET_NETWORK, DEVNET_USDC_MINT, 6, 'payee', 'exact', 100, 100, 'REVOKED', 1, 2, 2);
+  insertGrant.run('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 2, secondConnection, 1, 'resource', 'provider', 'operation', DEVNET_NETWORK, DEVNET_USDC_MINT, 6, 'payee', 'exact', 100, 100, 'REVOKED', 1, 2, 2);
+  const evidence = { quote: '{"amount":"10"}', decision: '{"decision":"APPROVED","reason":"OLD","committedBefore":0,"remainingAfter":90}', data: '{"resource":"preserved"}', payload: '{"signed":"preserved"}' };
   const insertPurchase = database.prepare('INSERT INTO purchases VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
-  const intent = (connectionId: string, generation: number) => JSON.stringify({ authority: { connectionId, connectionGeneration: generation } });
+  const intent = (connectionId: string, generation: number) => JSON.stringify({ id: crypto.randomUUID(), idempotencyKey: 'old-request', requestHash: 'old-hash', resourceId: 'resource', providerId: 'provider', amount: 10, currency: 'USDC', assetDecimals: 6, assetId: DEVNET_USDC_MINT, network: DEVNET_NETWORK, payTo: 'payee', paymentScheme: 'exact', quoteFingerprint: 'old-quote', createdAt: 1, expiresAt: 2, executionBinding: 'old-binding', authority: { grantId: connectionId === firstConnection ? 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' : 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', grantVersion: 1, operation: 'operation', connectionId, connectionGeneration: generation } });
   insertPurchase.run('p1', 'request-1', 'approval-1', intent(firstConnection, 1), evidence.quote, evidence.decision, 'PAID', 10, '2026-09-22', 'transaction-1', evidence.data, evidence.payload);
   insertPurchase.run('p2', 'request-2', 'approval-2', intent(firstConnection, 7), evidence.quote, evidence.decision, 'PAYMENT_UNKNOWN', 10, null, 'transaction-2', null, evidence.payload);
   insertPurchase.run('p3', 'request-3', 'approval-3', intent(secondConnection, 1), evidence.quote, evidence.decision, 'PAID', 10, '2026-09-22', 'transaction-3', evidence.data, evidence.payload);

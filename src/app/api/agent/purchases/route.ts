@@ -14,9 +14,9 @@ export async function POST(request: Request) {
     const input = PurchaseRequestInputSchema.parse(await smallJson(request));
     return Response.json(await app.requestPurchase(input, localRequestOrigin(request), principal), { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
-    const candidate = error instanceof Error ? error.message : '';
+    const candidate = error instanceof Error ? ('code' in error && typeof error.code === 'string' ? error.code : error.message) : '';
     const code = ['REQUEST_ID_CONFLICT', 'PURCHASE_REQUEST_OWNER_MISMATCH', 'PURCHASE_EXECUTION_MODE_MISMATCH', 'LIVE_PAYMENT_EVIDENCE_INVALID',
-      'SPEND_GRANT_INACTIVE', 'INVALID_X402_QUOTE', 'UNSUPPORTED_PURCHASE_NETWORK', 'INVALID_PURCHASE_ORIGIN'].includes(candidate) ? candidate : 'PURCHASE_REQUEST_FAILED';
-    return Response.json({ code, error: '购买请求未执行付款。' }, { status: ['REQUEST_ID_CONFLICT', 'PURCHASE_REQUEST_OWNER_MISMATCH', 'PURCHASE_EXECUTION_MODE_MISMATCH', 'LIVE_PAYMENT_EVIDENCE_INVALID'].includes(code) ? 409 : 400 });
+      'SPEND_GRANT_INACTIVE', 'INVALID_X402_QUOTE', 'UNSUPPORTED_PURCHASE_NETWORK', 'INVALID_PURCHASE_ORIGIN', 'MAINNET_REGISTERED_RESOURCE_REQUIRED', 'MAINNET_EXECUTION_DISABLED'].includes(candidate) ? candidate : 'PURCHASE_REQUEST_FAILED';
+    return Response.json({ code, error: '购买请求未完成；请查询原购买编号的状态。' }, { status: ['REQUEST_ID_CONFLICT', 'PURCHASE_REQUEST_OWNER_MISMATCH', 'PURCHASE_EXECUTION_MODE_MISMATCH', 'LIVE_PAYMENT_EVIDENCE_INVALID'].includes(code) ? 409 : 400 });
   }
 }

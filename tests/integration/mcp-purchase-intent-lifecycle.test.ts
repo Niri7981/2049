@@ -20,7 +20,8 @@ import { executeApprovedPayment, recoverApprovedPayment } from '../../src/module
 import { loadBuyerSigner } from '../../src/modules/payment/wallet';
 import type { PaidResourceId } from '../../src/modules/resources/paid-resources';
 
-vi.mock('@/modules/app/app-runtime', () => ({
+vi.mock('@/modules/app/app-runtime', async original => ({
+  ...await original<typeof import('../../src/modules/app/app-runtime')>(),
   appRuntime: () => (globalThis as typeof globalThis & { __yosh?: { runtime?: AppRuntime } }).__yosh?.runtime,
 }));
 vi.mock('@/modules/http/local-request', async () => await import('../../src/modules/http/local-request'));

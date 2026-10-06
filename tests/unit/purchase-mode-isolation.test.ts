@@ -40,7 +40,7 @@ function seedVerifiedLivePurchase(ledger: PurchaseLedger, id: string) {
   const now = Date.now();
   const quote = liveQuote(id);
   const intent = reserveIntent(id, quote, now);
-  const reserved = ledger.reserve(intent, quote, now, 'live_devnet');
+  const reserved = ledger.reserve(intent, quote, now, 'live_devnet', undefined, ledger.paymentScope(config, 'live_devnet'));
   ledger.claim(reserved.approvalId, now);
   ledger.savePayload(reserved.approvalId, { x402Version: 2, accepted: quote, payload: { transaction: 'signed-fixture-wire' } });
   ledger.confirmPayment(reserved.approvalId, transaction, {
@@ -57,7 +57,7 @@ it('rejects Mainnet reservation before any write without changing the ledger sch
   const quote = liveQuote('mainnet-disabled');
   try {
     expect(() => ledger.reserve(reserveIntent('mainnet-disabled', quote), quote, Date.now(), 'live_mainnet'))
-      .toThrow('MAINNET_EXECUTION_DISABLED');
+      .toThrow('MAINNET_AUTHORITY_REQUIRED');
     expect(ledger.list()).toEqual(before);
     expect(ledger.get('mainnet-disabled')).toBeUndefined();
   } finally { ledger.close(); }
@@ -123,7 +123,8 @@ it('refuses to reuse a live PAID row after its durable payment proof is missing'
   const id = 'live-proof-required';
   seedVerifiedLivePurchase(ledger, id);
   const database = new DatabaseSync(path);
-  database.prepare('UPDATE purchases SET payload=NULL,payment_evidence=NULL WHERE task_id=?').run(id);
+  expect(() => database.prepare('UPDATE purchases SET payload=NULL WHERE task_id=?').run(id)).toThrow('signed payment payload is immutable');
+  database.prepare('UPDATE purchases SET payment_evidence=NULL WHERE task_id=?').run(id);
   database.close();
   try {
     await expect(purchaseMarketSnapshot({ purchaseId: id, intent: 'same task' }, { config, ledger, origin, mode: 'live_devnet' }))

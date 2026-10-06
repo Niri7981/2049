@@ -25,7 +25,7 @@ export function marketOfferResource(config: StaticResourceRegistryConfig, id: Ma
     method: 'GET',
     input_schema: 'MarketSnapshotInput',
     output_schema: 'MarketSnapshotOutput',
-    expected_price_minor: Number(offer.amount),
+    expected_price_minor: offer.amount,
     currency: 'USDC',
     asset_id: config.asset_id,
     asset_decimals: 6,

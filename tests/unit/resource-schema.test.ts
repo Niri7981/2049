@@ -16,7 +16,7 @@ const validResource = {
   method: "GET",
   input_schema: "MarketSnapshotInput",
   output_schema: "MarketSnapshotOutput",
-  expected_price_minor: 10_000,
+  expected_price_minor: '10000',
   currency: "USDC",
   asset_id: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
   asset_decimals: 6,

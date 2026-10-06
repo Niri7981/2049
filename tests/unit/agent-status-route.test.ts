@@ -21,7 +21,7 @@ beforeEach(() => {
 
 function overview(purchaseMode: 'simulated' | 'live_devnet') {
   return {
-    service: { purchaseMode }, wallet: { address: 'buyer' }, budget: { paid: '0' },
+    service: { purchaseMode, paymentEnabled: purchaseMode === 'live_devnet' }, wallet: { address: 'buyer' }, budget: { paid: '0' },
     grant: { status: 'ACTIVE' }, connection: { enabled: true, access: 'purchase_intent' },
   };
 }

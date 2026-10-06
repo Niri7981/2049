@@ -17,7 +17,7 @@ export async function GET(request: Request) {
       const member = app.memberOverview(principal.cardMemberId);
       return Response.json({ wallet: { ...overview.wallet, balance }, budget: overview.budget, grant: member.grant,
         spendingAuthorized: member.connection.enabled && member.grant?.status === 'ACTIVE',
-        paymentEnabled: overview.service.purchaseMode === 'live_devnet' }, { headers: { 'cache-control': 'no-store' } });
+        paymentEnabled: overview.service.paymentEnabled }, { headers: { 'cache-control': 'no-store' } });
     }
     if (operation !== 'quote') return Response.json({ code: 'UNKNOWN_OPERATION' }, { status: 400 });
     return Response.json(await app.quotePaidResources(new URL(request.url).origin), { headers: { 'cache-control': 'no-store' } });

@@ -9,8 +9,10 @@ import { readPaymentRequiredHeader } from '../payment/x402-client';
 import { MarketOfferIdSchema, marketOffer, marketOfferResource } from '../resources/market-offers';
 import { createMarketSnapshotSpendIntent } from '../resources/market-spend-adapter';
 import { MarketSnapshotOutputSchema, type MarketSnapshotOutput } from '../resources/resource-schema';
-import { PurchaseLedger, type PurchaseExecutionMode, type SpendReservation } from './purchase-ledger';
+import { PurchaseLedger, type DeliveryStatus, type PurchaseExecutionMode, type SpendReservation } from './purchase-ledger';
+import type { ReceiptStatus, DeliveryRecoveryState } from './delivery-state';
 import { hash } from './spending-policy';
+import { validX402Memo } from '../payment/resource-challenge';
 
 export const PurchaseRequestInputSchema = z.object({
   requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),
@@ -30,7 +32,8 @@ export type PurchaseRequestResult = {
   grant: { id: string; version: number } | null;
   paymentStatus: 'NOT_STARTED' | 'PAYING' | 'PAYMENT_UNKNOWN' | 'PAID' | 'FAILED';
   executionMode: PurchaseExecutionMode;
-  deliveryStatus: 'NOT_DELIVERED' | 'PENDING' | 'COMPLETE';
+  deliveryStatus: Exclude<DeliveryStatus, 'NOT_PAID'> | 'NOT_DELIVERED';
+  receiptStatus: ReceiptStatus; deliveryRecovery: DeliveryRecoveryState;
   reused: boolean;
   resource?: MarketSnapshotOutput;
 };
@@ -48,6 +51,7 @@ function result(record: SpendReservation, offerId: PurchaseRequestInput['offerId
       assetDecimals: record.intent.assetDecimals, payTo: record.intent.payTo, amount: String(record.intent.amount), expiresAt: record.intent.expiresAt, fingerprint: record.intent.quoteFingerprint },
     grant: authority ? { id: authority.grantId, version: authority.grantVersion } : null, paymentStatus: record.status === 'PAID' ? 'PAID' : record.status === 'PAYING' ? 'PAYING' : record.status === 'PAYMENT_UNKNOWN' ? 'PAYMENT_UNKNOWN' : record.status === 'FAILED' ? 'FAILED' : 'NOT_STARTED',
     executionMode, deliveryStatus: record.deliveryStatus === 'NOT_PAID' ? 'NOT_DELIVERED' : record.deliveryStatus, reused,
+    receiptStatus: record.receiptStatus, deliveryRecovery: record.deliveryRecovery,
     ...(resource ? { resource } : {}) };
 }
 
@@ -74,7 +78,7 @@ export async function requestMarketPurchase(raw: unknown, options: {
   const executionMode: PurchaseExecutionMode = options.execute === false ? 'simulated' : options.config.mode;
   const requestHash = hash({ offerId: input.offerId, reason: input.reason });
   async function complete(record: SpendReservation, reused: boolean) {
-    options.ledger.assertReplayAllowed(record, executionMode);
+    options.ledger.assertReplayAllowed(record, executionMode, options.ledger.paymentScope(options.config, executionMode));
     // A denied decision is answered exclusively from durable facts, before even
     // resolving the payment endpoint or touching preflight/claim/wallet code.
     if (record.decision.decision !== 'APPROVED' || executionMode === 'simulated') return result(record, input.offerId, reused, executionMode);
@@ -89,7 +93,7 @@ export async function requestMarketPurchase(raw: unknown, options: {
   }
   const existing = options.ledger.get(input.requestId, principal.cardMemberId);
   if (existing) {
-    options.ledger.assertReplayAllowed(existing, executionMode);
+    options.ledger.assertReplayAllowed(existing, executionMode, options.ledger.paymentScope(options.config, executionMode));
     if (existing.intent.requestHash !== requestHash || existing.intent.offerId !== input.offerId) throw new Error('REQUEST_ID_CONFLICT');
     return complete(existing, true);
   }
@@ -107,13 +111,13 @@ export async function requestMarketPurchase(raw: unknown, options: {
     if (required.resource?.url !== resourcePath || required.accepts.length !== 1) throw new Error('INVALID_X402_QUOTE');
     quote = required.accepts[0];
     if (quote.scheme !== 'exact' || quote.network !== config.network || quote.asset !== config.mint || quote.payTo !== config.merchant ||
-      quote.amount !== offer.amount || typeof quote.extra?.memo !== 'string' || !/^day4:[A-Za-z0-9_-]{22}$/.test(quote.extra.memo) ||
+      quote.amount !== offer.amount || !validX402Memo(quote.extra?.memo) ||
       typeof quote.extra?.feePayer !== 'string' || quote.maxTimeoutSeconds <= 0 || quote.maxTimeoutSeconds > 300) throw new Error('INVALID_X402_QUOTE');
     address(quote.extra.feePayer);
   } finally { await response.body?.cancel(); }
 
   const now = clock();
-  const authority = options.ledger.spendAuthorityForDecision(principal, LEGACY_MARKET_SNAPSHOT_OPERATION, now);
+  const authority = options.ledger.spendAuthorityForDecision(principal, LEGACY_MARKET_SNAPSHOT_OPERATION, now, executionMode);
   const resource = marketOfferResource({ endpoint: 'https://purchase.local.invalid/api/paid/market-snapshot', asset_id: config.mint,
     network: config.network, allowed_pay_to: config.merchant }, input.offerId);
   const intent = createMarketSnapshotSpendIntent({ idempotencyKey: input.requestId, request: { asset: 'SOL' }, requestHash, resource, quote,
@@ -122,11 +126,11 @@ export async function requestMarketPurchase(raw: unknown, options: {
   // immutable nonce/quote instead of comparing or replacing it with a new one.
   const winner = options.ledger.get(input.requestId, principal.cardMemberId);
   if (winner) {
-    options.ledger.assertReplayAllowed(winner, executionMode);
+    options.ledger.assertReplayAllowed(winner, executionMode, options.ledger.paymentScope(options.config, executionMode));
     if (winner.intent.requestHash !== requestHash || winner.intent.offerId !== input.offerId) throw new Error('REQUEST_ID_CONFLICT');
     return complete(winner, true);
   }
-  const reserved = options.ledger.reserve(intent, quote, now, executionMode, principal.cardMemberId);
+  const reserved = options.ledger.reserve(intent, quote, now, executionMode, principal.cardMemberId, options.ledger.paymentScope(options.config, executionMode));
   const reservedBinding = reserved.intent.authority;
   if (reserved.ownerCardMemberId !== principal.cardMemberId || (reservedBinding && reservedBinding.cardMemberId !== principal.cardMemberId)) {
     throw new Error('PURCHASE_REQUEST_OWNER_MISMATCH');

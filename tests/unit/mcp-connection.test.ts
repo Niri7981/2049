@@ -90,7 +90,8 @@ it('rejects every credential after its CardMember is revoked', () => {
 it('uses the official MCP handshake and exposes a request-only purchase tool with sanitized failures', async () => {
   const read = vi.fn().mockResolvedValue({ amount: '10000', paymentEnabled: false });
   const requestPurchase = vi.fn(async (input: unknown) => {
-    PurchaseRequestInputSchema.parse(input);
+    const parsed = PurchaseRequestInputSchema.parse(input);
+    if (parsed.resourceId === 'unknown-resource') throw new Error('UNKNOWN_PAID_RESOURCE');
     return { status: 'APPROVED', paymentStatus: 'NOT_STARTED' };
   });
   const server = createAgentServer(read, requestPurchase);

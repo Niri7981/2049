@@ -1,12 +1,18 @@
+import { atomicAmount, addAtomic, remainingAtomic } from '../authority/atomic-money';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { address } from '@solana/kit';
+import { PaymentPayloadV2Schema } from '@x402/core/schemas';
 import { getStandardTokenAccount } from '../payment/payment-preflight';
+import { validateSignedPaymentIdentity } from '../payment/original-payment-evidence';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT, TOKEN_PROGRAM, type PaymentConfig } from '../payment/payment-config';
-import { PaymentEvidenceSchema, PurchaseExecutionModeSchema } from '../purchases/purchase-ledger';
+import { PaymentEvidenceSchema, PurchaseExecutionModeSchema, type PaymentEvidence } from '../purchases/purchase-ledger';
+import { OriginalPaymentRecordSchema } from '../purchases/original-payment-record';
+import { MonetaryScopeSchema, monetaryScopeId } from '../purchases/monetary-scope';
+import { parseStoredSpendIntent } from '../authority/spend-intent';
 import { hash } from '../purchases/spending-policy';
 
 const RequestIdSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
@@ -18,7 +24,7 @@ const StoredQuoteSchema = z.object({
   network: z.string(),
   asset: z.string(),
   payTo: z.string(),
-  extra: z.object({ memo: z.string().regex(/^day4:[A-Za-z0-9_-]{22}$/) }).passthrough(),
+  extra: z.object({ memo: z.string().optional() }).passthrough().optional(),
 }).passthrough();
 const StoredDecisionSchema = z.object({ decision: z.string(), reason: z.string() }).passthrough();
 const signaturePattern = /^[1-9A-HJ-NP-Za-km-z]{64,100}$/;
@@ -72,6 +78,41 @@ function storedPaymentEvidence(value: unknown) {
     const parsed = PaymentEvidenceSchema.safeParse(JSON.parse(value));
     return parsed.success ? parsed.data : undefined;
   } catch { return undefined; }
+}
+
+/** A buyer RPC proof is valid without merchant settlement only when its exact
+ * signed payload and immutable purchase/scope evidence still agree. */
+function verifiedOriginalPaymentProof(ledger: DatabaseSync, row: Record<string, unknown>, proof: Extract<PaymentEvidence, { version: 3 }>) {
+  try {
+    const stored = ledger.prepare('SELECT evidence,state,transaction_id FROM original_payments WHERE purchase_id=?').get(String(row.id));
+    if (!stored || stored.state !== 'CONFIRMED' || stored.transaction_id !== proof.transaction) return false;
+    const original = OriginalPaymentRecordSchema.parse(JSON.parse(String(stored.evidence)));
+    const intent = parseStoredSpendIntent(JSON.parse(String(row.purchase)));
+    const parsedPayload = PaymentPayloadV2Schema.parse(JSON.parse(String(row.payload)));
+    const payload = { x402Version: parsedPayload.x402Version, payload: parsedPayload.payload,
+      ...(parsedPayload.resource ? { resource: parsedPayload.resource } : {}),
+      ...(parsedPayload.extensions === undefined ? {} : { extensions: z.record(z.string(), z.unknown()).parse(parsedPayload.extensions) }),
+      accepted: { ...parsedPayload.accepted, extra: z.record(z.string(), z.unknown()).parse(parsedPayload.accepted.extra),
+        network: z.templateLiteral(['solana:', z.string().min(1)]).parse(parsedPayload.accepted.network) } };
+    const scopeRow = ledger.prepare('SELECT environment,wallet_identity,network,asset_id,asset_decimals FROM monetary_scopes WHERE id=?').get(String(row.monetary_scope_id));
+    if (!scopeRow) return false;
+    const scope = MonetaryScopeSchema.parse({ environment: scopeRow.environment, walletIdentity: scopeRow.wallet_identity,
+      network: scopeRow.network, assetId: scopeRow.asset_id, assetDecimals: scopeRow.asset_decimals });
+    return original.purchaseId === row.id && original.purchaseId === intent.id && original.requestId === row.task_id
+      && original.requestId === intent.idempotencyKey && original.scopeId === row.monetary_scope_id
+      && original.scopeId === monetaryScopeId(scope) && original.monetaryScope.environment === row.execution_mode
+      && original.executionBinding === intent.executionBinding && original.quoteFingerprint === intent.quoteFingerprint
+      && original.quoteFingerprint === hash(payload.accepted) && original.payloadHash === hash(payload)
+      && original.payloadHash === proof.payloadHash && original.quoteFingerprint === proof.quoteFingerprint
+      && original.scopeId === proof.scopeId && hash(original) === proof.originalEvidenceHash
+      && original.identity.messageHash === proof.messageHash && original.identity.payer === proof.payer
+      && original.identity.amount === intent.amount && original.identity.amount === String(row.amount)
+      && original.identity.recipient === intent.payTo && original.identity.mint === intent.assetId
+      && original.identity.network === intent.network && original.identity.decimals === intent.assetDecimals
+      && (!intent.x402Challenge || (hash(payload.resource) === hash(intent.x402Challenge.resource)
+        && hash(payload.extensions ?? {}) === hash(intent.x402Challenge.extensions ?? {})))
+      && validateSignedPaymentIdentity(payload, original.identity);
+  } catch { return false; }
 }
 
 function accountingModeFilter(mode: string) {
@@ -164,7 +205,9 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
   const ledger = new DatabaseSync(ledgerPath, { readOnly: true });
   const settlements = new DatabaseSync(options.settlementDatabase, { readOnly: true });
   try {
-    const row = ledger.prepare(`SELECT id,task_id,purchase,quote,decision,status,amount,transaction_id,execution_mode,payment_evidence,
+    const scoped = ledger.prepare('PRAGMA table_info(purchases)').all().some(column => column.name === 'monetary_scope_id');
+    const scopeColumn = scoped ? ',monetary_scope_id' : '';
+    const row = ledger.prepare(`SELECT id,task_id,purchase,quote,decision,status,CAST(amount AS TEXT) AS amount,transaction_id,execution_mode,payment_evidence${scopeColumn},
       data,data IS NOT NULL AS delivered,payload,payload IS NOT NULL AS payment_payload_present
       FROM purchases WHERE task_id=?`).get(requestId);
     if (!row) throw new Error('The requested purchase does not exist');
@@ -185,26 +228,26 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
 
     const events = ledger.prepare('SELECT sequence,type,at FROM purchase_events WHERE purchase_id=? ORDER BY sequence').all(String(row.id))
       .map(event => ({ sequence: Number(event.sequence), type: String(event.type), at: Number(event.at) }));
-    const clock = ledger.prepare('SELECT spending_day,time_zone FROM app_budget_clock WHERE id=1').get();
-    const settings = ledger.prepare('SELECT daily_limit FROM app_settings WHERE id=1').get();
+    const clock = scoped ? ledger.prepare('SELECT spending_day,time_zone FROM monetary_budget_clock WHERE scope_id=?').get(String(row.monetary_scope_id)) : ledger.prepare('SELECT spending_day,time_zone FROM app_budget_clock WHERE id=1').get();
+    const settings = scoped ? ledger.prepare('SELECT daily_limit FROM monetary_controls WHERE scope_id=?').get(String(row.monetary_scope_id)) : ledger.prepare('SELECT CAST(daily_limit AS TEXT) AS daily_limit FROM app_settings WHERE id=1').get();
     if (!clock || !settings) throw new Error('The managed budget state is incomplete');
-    const budgetModeFilter = accountingModeFilter(mode);
-    const paid = Number(ledger.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status='PAID' AND confirmed_day=?${budgetModeFilter}`).get(String(clock.spending_day))!.total);
-    const reserved = Number(ledger.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases WHERE status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN')${budgetModeFilter}`).get()!.total);
-    const dailyLimit = settings.daily_limit === null ? null : Number(settings.daily_limit);
+    const budgetModeFilter = scoped ? ` AND monetary_scope_id='${z.string().regex(/^[a-f0-9]{64}$/).parse(row.monetary_scope_id)}'` : accountingModeFilter(mode);
+    const sum = (where: string, ...values: string[]) => ledger.prepare(`SELECT CAST(amount AS TEXT) AS amount FROM purchases WHERE ${where}`).all(...values).reduce((total, item) => addAtomic(total, atomicAmount(item.amount)), 0n);
+    const paid = sum(`status='PAID' AND confirmed_day=?${budgetModeFilter}`, String(clock.spending_day));
+    const reserved = sum(`status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN')${budgetModeFilter}`);
+    const dailyLimit = settings.daily_limit === null ? null : atomicAmount(settings.daily_limit);
 
     let grant: null | { status: string; committed: string; remaining: string } = null;
     const grantId = purchase.authority?.grantId;
     if (grantId) {
-      const grantRow = ledger.prepare('SELECT status,total_limit FROM spend_grants WHERE id=?').get(grantId);
+      const grantRow = ledger.prepare('SELECT status,CAST(total_limit AS TEXT) AS total_limit FROM spend_grants WHERE id=?').get(grantId);
       if (!grantRow) throw new Error('The purchase references a missing SpendGrant');
-      const committed = Number(ledger.prepare(`SELECT COALESCE(SUM(amount),0) AS total FROM purchases
-        WHERE json_extract(purchase,'$.authority.grantId')=? AND status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN','PAID')${budgetModeFilter}`).get(grantId)!.total);
-      const totalLimit = Number(grantRow.total_limit);
-      grant = { status: String(grantRow.status), committed: String(committed), remaining: String(Math.max(0, totalLimit - committed)) };
+      const committed = sum(`json_extract(purchase,'$.authority.grantId')=? AND status IN ('APPROVED','PAYING','PAYMENT_UNKNOWN','PAID')${budgetModeFilter}`, grantId);
+      const totalLimit = atomicAmount(grantRow.total_limit);
+      grant = { status: String(grantRow.status), committed: String(committed), remaining: remainingAtomic(totalLimit, committed).toString() };
     }
 
-    const memo = quote.extra.memo;
+    const memo = quote.extra?.memo ?? '';
     const quoteCount = Number(settlements.prepare('SELECT COUNT(*) AS total FROM day4_quotes WHERE id=?').get(memo)!.total);
     const settlementRows = settlements.prepare('SELECT status,receipt,body FROM day4_settlements WHERE quote_id=?').all(memo);
     const totalQuoteCount = Number(settlements.prepare('SELECT COUNT(*) AS total FROM day4_quotes').get()!.total);
@@ -219,8 +262,9 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
     const paymentEvidenceProofVerified = String(row.status) === 'PAID' && payloadPresent && payloadHash !== null
       && payloadHash === paymentEvidence?.payloadHash && transaction !== null && signaturePattern.test(transaction)
       && transaction === paymentEvidence?.transaction && paymentEvidence?.quoteFingerprint === purchase.quoteFingerprint
-      && paymentEvidence?.settlementConfirmed === true && ['confirmed', 'finalized'].includes(paymentEvidence.confirmationStatus);
-    const paymentEvidencePayer = paymentEvidence?.version === 2 ? paymentEvidence.payer : null;
+      && (paymentEvidence?.version === 3 ? verifiedOriginalPaymentProof(ledger, row, paymentEvidence) : paymentEvidence?.settlementConfirmed === true)
+      && ['confirmed', 'finalized'].includes(paymentEvidence.confirmationStatus);
+    const paymentEvidencePayer = paymentEvidence && paymentEvidence.version !== 1 ? paymentEvidence.payer : null;
     if (paymentEvidencePayer && !paymentEvidenceProofVerified) {
       throw new Error('E2E_EVIDENCE_INTEGRITY_ERROR: payment evidence payer is not bound to the paid purchase');
     }
@@ -274,7 +318,7 @@ export async function collectE2eEvidence(rawRequestId: string, options: Evidence
       events,
       budget: {
         day: String(clock.spending_day), timeZone: String(clock.time_zone), dailyLimit: dailyLimit === null ? null : String(dailyLimit),
-        paid: String(paid), reserved: String(reserved), remaining: dailyLimit === null ? null : String(Math.max(0, dailyLimit - paid - reserved)),
+        paid: String(paid), reserved: String(reserved), remaining: dailyLimit === null ? null : remainingAtomic(dailyLimit, addAtomic(paid, reserved)).toString(),
       },
       grant,
       resourcePresent: Boolean(row.delivered),

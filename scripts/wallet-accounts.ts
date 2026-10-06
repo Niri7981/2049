@@ -48,7 +48,7 @@ export async function setupWalletAccounts(directory = '.data') {
     // Fixed instructions, at most two classic ATAs; reserve 10,000 lamports for fees.
     const budget = rent * missing.length + 10_000;
     if (!Number.isSafeInteger(rent) || rent <= 0 || budget > 10_000_000 || !Number.isSafeInteger(balance?.value) || balance.value < budget) throw new Error('Fund the dedicated buyer with 0.01 test SOL before creating USDC accounts');
-    const signer = await loadBuyerSigner(config.buyer);
+    const signer = await loadBuyerSigner(config.buyer, process.env, config);
     const latest = await solanaRpc<{ value: { blockhash: string; lastValidBlockHeight: number } }>(config, 'getLatestBlockhash', [{ commitment: 'confirmed' }]);
     const message = appendTransactionMessageInstructions(missing.map(index => getCreateAssociatedTokenIdempotentInstruction({
       payer: signer, ata: address(atas[index]), owner: address(owners[index]), mint: address(config.mint),

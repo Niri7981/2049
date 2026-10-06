@@ -1,3 +1,4 @@
+import { testModeGrants, testModeDailyLimit } from '../helpers/test-mode-authority';
 import { resolvePaymentEnvironment } from '../../src/modules/payment/payment-environment';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -38,9 +39,9 @@ function facilitator() {
 }
 
 function setup(totalLimit = '5000000', ledgerPath = ':memory:') {
-  const ledger = new PurchaseLedger(ledgerPath, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
-  ledger.setDailyLimit('50000000');
-  ledger.createSpendGrant({ totalLimit, singleLimit: String(Math.min(Number(totalLimit), 500_000)), expiresAt: now + 60 * 60 * 1000 }, principal, {
+  const ledger = new PurchaseLedger(ledgerPath, { managed: true, mode: 'live_devnet', requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
+  testModeDailyLimit(ledger, '50000000');
+  testModeGrants(ledger, { totalLimit, singleLimit: String(Math.min(Number(totalLimit), 500_000)), expiresAt: now + 60 * 60 * 1000 }, principal, {
     resourceId: SOL_MARKET_SNAPSHOT_RESOURCE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation: MARKET_SNAPSHOT_OPERATION,
     network: config.network, assetId: config.mint, assetDecimals: 6, payTo: config.merchant, paymentScheme: 'exact',
   }, now);
@@ -78,7 +79,7 @@ it('runs real quote → SpendGrant → policy for APPROVED and DENIED without pa
     expect(basic.grant).toMatchObject({ id: expect.any(String), version: 1 });
     expect(premium.grant?.id).toBe(basic.grant?.id);
     expect(ledger.list()).toHaveLength(2);
-    expect(ledger.spendGrantSummary(now)).toMatchObject({ committed: '200000', remaining: '4800000' });
+    expect(ledger.spendGrantSummary(now, 'simulated')).toMatchObject({ committed: '200000', remaining: '4800000' });
     expect(remote.verify).not.toHaveBeenCalled();
     expect(remote.settle).not.toHaveBeenCalled();
     expect(claim).not.toHaveBeenCalled();
@@ -356,7 +357,7 @@ it('persists a structured DENIED request when the grant is already revoked', asy
     expect(recover).not.toHaveBeenCalled();
     expect(remote.verify).not.toHaveBeenCalled(); expect(remote.settle).not.toHaveBeenCalled();
     ledger.close();
-    reopened = new PurchaseLedger(ledgerPath, { managed: true, requireSpendGrant: true, now: () => now + 2,
+    reopened = new PurchaseLedger(ledgerPath, { managed: true, mode: 'live_devnet', requireSpendGrant: true, now: () => now + 2,
       timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
     expect(reopened.get('revoked-during-quote')).toMatchObject({
       status: 'DENIED', executionMode: 'live_devnet', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_REVOKED' },

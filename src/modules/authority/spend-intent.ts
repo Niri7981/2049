@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { SpendAuthorityBindingSchema } from './spend-grant';
+import { PositiveAtomicAmountSchema } from './atomic-money';
+import { HttpResourceRequestSchema, X402ChallengeSchema, DeliveryRecoveryCapabilitySchema } from '../resources/http-resource';
 
 const boundedIdentifier = z.string().min(1).max(200);
 
@@ -16,10 +18,14 @@ export const SpendIntentSchema = z.object({
   resourceScopeId: boundedIdentifier.optional(),
   /** Exact path issued in the 402. Historical rows reconstruct from offerId. */
   resourcePath: z.string().startsWith('/api/paid/').max(200).optional(),
+  /** New approvals bind the full HTTP request and challenge; old rows remain readable. */
+  httpRequest: HttpResourceRequestSchema.optional(),
+  x402Challenge: X402ChallengeSchema.optional(),
+  deliveryRecovery: DeliveryRecoveryCapabilitySchema.optional(),
   providerId: boundedIdentifier,
   offerId: boundedIdentifier.optional(),
   reason: z.string().trim().min(1).max(240).optional(),
-  amount: z.number().int().positive().safe(),
+  amount: PositiveAtomicAmountSchema,
   currency: boundedIdentifier,
   assetDecimals: z.number().int().nonnegative().max(255),
   assetId: boundedIdentifier,
@@ -31,7 +37,9 @@ export const SpendIntentSchema = z.object({
   expiresAt: z.number().int(),
   executionBinding: z.string().min(1),
   authority: SpendAuthorityBindingSchema.optional(),
-}).strict();
+}).strict().superRefine((intent, ctx) => {
+  if (Boolean(intent.httpRequest) !== Boolean(intent.x402Challenge)) ctx.addIssue({ code: 'custom', message: 'INCOMPLETE_X402_BINDING' });
+});
 
 export type SpendIntent = z.infer<typeof SpendIntentSchema>;
 
@@ -42,7 +50,7 @@ const LegacyPurchaseSchema = z.object({
   resourceId: boundedIdentifier,
   providerId: boundedIdentifier,
   input: z.unknown(),
-  amount: z.number().int().positive().safe(),
+  amount: PositiveAtomicAmountSchema,
   currency: boundedIdentifier,
   decimals: z.number().int().nonnegative().max(255),
   mint: boundedIdentifier,

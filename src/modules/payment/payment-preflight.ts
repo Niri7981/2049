@@ -1,5 +1,6 @@
 import { address, getAddressEncoder, getProgramDerivedAddress } from "@solana/kit";
 import { assertPaymentConfigExecutionEnabled, DEVNET_GENESIS, PAYMENT_AMOUNT, TOKEN_PROGRAM, type PaymentConfig } from "./payment-config";
+import { readPaymentJson } from './read-payment-json';
 
 const ASSOCIATED_TOKEN_PROGRAM = address("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -32,7 +33,7 @@ export type PaymentPreflightSummary = {
 /** Fail closed; never include RPC URLs, provider payloads, or credentials in errors. */
 export async function runPaymentPreflight(
   config: PaymentConfig,
-  dependencies: { fetch?: typeof fetch; amount?: string } = {},
+  dependencies: { fetch?: typeof fetch; amount?: string; feePayer?: string } = {},
 ): Promise<PaymentPreflightSummary> {
   // Read-only readiness is not available for disabled production or simulation execution.
   assertPaymentConfigExecutionEnabled(config);
@@ -43,7 +44,7 @@ export async function runPaymentPreflight(
     try {
       const response = await fetcher(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), redirect: "error" });
       if (!response.ok) throw new Error();
-      return object(await response.json());
+      return object(await readPaymentJson(response));
     } catch {
       throw new Error(`${label} request failed or timed out`);
     }
@@ -58,8 +59,8 @@ export async function runPaymentPreflight(
   }
 
   const genesis = await rpc("getGenesisHash");
-  if (typeof genesis !== "string" || (config.cluster === "devnet" && genesis !== config.genesisHash)) {
-    throw new Error("RPC genesis hash does not match Solana Devnet");
+  if (typeof genesis !== "string" || (config.cluster !== "localnet" && genesis !== config.genesisHash)) {
+    throw new Error(config.cluster === 'mainnet-beta' ? 'RPC genesis hash does not match Solana Mainnet' : 'RPC genesis hash does not match Solana Devnet');
   }
   if (config.cluster === "localnet" && (genesis === DEVNET_GENESIS
     || genesis.startsWith("5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp")
@@ -71,7 +72,8 @@ export async function runPaymentPreflight(
   supportedUrl.pathname = `${supportedUrl.pathname.replace(/\/$/, "")}/supported`;
   const supported = await json(supportedUrl.toString(), "Facilitator supported");
   const kind = (Array.isArray(supported.kinds) ? supported.kinds : []).map(object).find(
-    (item) => item.x402Version === 2 && item.scheme === "exact" && item.network === config.network,
+    (item) => item.x402Version === 2 && item.scheme === "exact" && item.network === config.network
+      && (dependencies.feePayer === undefined || object(item.extra).feePayer === dependencies.feePayer),
   );
   if (!kind) throw new Error("Facilitator does not support x402 v2 exact payments on the configured network");
   const rawFeePayer = object(kind.extra).feePayer;
@@ -82,6 +84,7 @@ export async function runPaymentPreflight(
   } catch {
     throw new Error("Facilitator supported response must provide a valid feePayer");
   }
+  if (config.mode === 'live_mainnet' && feePayer === config.buyer) throw new Error('Mainnet requires sponsored transaction fees');
   const [buyerAta, merchantAta] = await Promise.all([
     getStandardTokenAccount(config.buyer, config.mint), getStandardTokenAccount(config.merchant, config.mint),
   ]);

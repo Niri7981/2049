@@ -58,3 +58,18 @@ it('sanitizes internal failures and reports ownership contention as unavailable'
   expect(busy.status).toBe(503);
   await expect(busy.json()).resolves.toEqual({ code: 'DATA_DIRECTORY_IN_USE', error: 'Yosh 数据已由另一服务使用。' });
 });
+
+it('keeps monetary API input and output exact at the signed 64-bit boundary', async () => {
+  vi.stubEnv('APP2049_MANAGEMENT_TOKEN', token);
+  const update = (dailyLimit: unknown) => settings(signedManagementRequest(`${origin}/api/app/settings`, token, {
+    method: 'PUT', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ dailyLimit }),
+  }));
+  const setDailyLimit = vi.fn((dailyLimit: string) => ({ dailyBudget: dailyLimit, paused: false, singleLimit: '100000' }));
+  state.appRuntime.mockReturnValue({ setDailyLimit });
+  const response = await update('9223372036854775807');
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({ settings: { dailyBudget: '9223372036854775807' } });
+  for (const invalid of ['9223372036854775808', '01', '1.5', 9007199254740992]) expect((await update(invalid)).status).toBe(400);
+  expect(setDailyLimit).toHaveBeenCalledTimes(1);
+  expect(setDailyLimit).toHaveBeenCalledWith('9223372036854775807');
+});

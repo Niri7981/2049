@@ -45,7 +45,7 @@ async function main() {
     const requirement = selectPaymentQuote(header, config, preflight.facilitator.feePayer);
     console.log(JSON.stringify({ cluster: config.cluster, buyer: config.buyer, merchant: config.merchant,
       token: "test USDC", amount: "0.01", mint: config.mint, feePayer: preflight.facilitator.feePayer }, null, 2));
-    const signer = await loadBuyerSigner(config.buyer);
+    const signer = await loadBuyerSigner(config.buyer, process.env, config);
     const payload = await prepareSolanaPayment(config, signer, requirement, () => console.log("Simulation passed; signing the fixed test payment."));
     journal = { status: "PREPARED", binding, payload };
     await save(journal);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PositiveAtomicAmountSchema } from '../authority/atomic-money';
 
 const identifierSchema = z
   .string()
@@ -85,7 +86,7 @@ export const ResourceMetadataSchema = z
     method: z.literal("GET"),
     input_schema: z.literal("MarketSnapshotInput"),
     output_schema: z.literal("MarketSnapshotOutput"),
-    expected_price_minor: z.number().int().positive().safe(),
+    expected_price_minor: PositiveAtomicAmountSchema,
     currency: z.literal("USDC"),
     asset_id: solanaAddressSchema,
     asset_decimals: z.literal(6),

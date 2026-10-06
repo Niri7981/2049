@@ -5,6 +5,29 @@ import { hash } from '../authority/authority-policy';
 import type { SpendAuthorityBinding } from '../authority/spend-grant';
 import { MarketSnapshotInputSchema, type ResourceMetadata } from './resource-schema';
 import { DEMO_MARKET_DATA_PROVIDER_ID, PREMIUM_SOL_MARKET_SNAPSHOT_ID } from './static-resource-registry';
+import { X402ResourceSchema, type X402Resource } from './http-resource';
+import { resourcePaymentBinding, validateResourceChallenge } from '../payment/resource-challenge';
+import type { PaymentEnvironment } from '../payment/payment-environment';
+import { TEST_CACHED_DELIVERY } from './delivery-capability';
+
+/** The same authority intent, using server-declared HTTP facts rather than Demo identities. */
+export function createX402SpendIntent(input: {
+  idempotencyKey: string; resource: X402Resource; challenge: unknown; environment: PaymentEnvironment;
+  buyer: string; reason?: string; now?: number; authority?: SpendAuthorityBinding;
+}): SpendIntent {
+  const resource = X402ResourceSchema.parse(input.resource);
+  const { challenge, quote } = validateResourceChallenge(input.challenge, resource, input.environment);
+  const now = input.now ?? Date.now();
+  return SpendIntentSchema.parse({ id: randomUUID(), idempotencyKey: input.idempotencyKey,
+    requestHash: hash({ resourceId: resource.resourceId, providerId: resource.providerId, request: resource.request, reason: input.reason }),
+    resourceId: resource.resourceId, providerId: resource.providerId, httpRequest: resource.request, x402Challenge: challenge,
+    ...(resource.deliveryRecovery ? { deliveryRecovery: resource.deliveryRecovery } : {}),
+    ...(input.reason ? { reason: input.reason } : {}), amount: quote.amount, currency: 'USDC', assetDecimals: resource.decimals,
+    assetId: quote.asset, network: quote.network, payTo: quote.payTo, paymentScheme: quote.scheme, quoteFingerprint: hash(quote),
+    createdAt: now, expiresAt: now + quote.maxTimeoutSeconds * 1000,
+    executionBinding: resourcePaymentBinding(input.environment, input.buyer, resource.request, challenge, resource.deliveryRecovery),
+    ...(input.authority ? { authority: input.authority } : {}) });
+}
 
 export function createMarketSnapshotSpendIntent(input: {
   idempotencyKey: string;
@@ -35,6 +58,7 @@ export function createMarketSnapshotSpendIntent(input: {
     requestHash: input.requestHash,
     resourceId: resource.resource_id,
     providerId: resource.provider_id,
+    deliveryRecovery: TEST_CACHED_DELIVERY,
     ...(input.offerId ? { offerId: input.offerId } : {}),
     ...(input.reason ? { reason: input.reason } : {}),
     amount: resource.expected_price_minor,

@@ -18,7 +18,7 @@ function fixture(amount = 10000) {
   const intent: SpendIntent = SpendIntentSchema.parse({ id: randomUUID(), idempotencyKey: randomUUID(), requestHash: hash('task'), resourceId: resource.resource_id,
     providerId: resource.provider_id, amount, currency: 'USDC', assetDecimals: 6, assetId: DEVNET_USDC_MINT, network: DEVNET_NETWORK,
     payTo: resource.allowed_pay_to, paymentScheme: 'exact', quoteFingerprint: hash(quote), createdAt: now, expiresAt: now + 300000, executionBinding: 'fixed-config' });
-  return { quote, intent, resource: { ...resource, expected_price_minor: amount } };
+  return { quote, intent, resource: { ...resource, expected_price_minor: String(amount) } };
 }
 describe('generic authority policy', () => {
   it('defines a strict SpendIntent and upgrades legacy purchase records without changing their execution binding', () => {
@@ -40,7 +40,7 @@ describe('generic authority policy', () => {
     for (const amount of [0, -1, 0.1, Number.MAX_SAFE_INTEGER + 1]) expect(evaluateSpendAuthority({ ...f.intent, amount }, { committed: 0, hasUnknownPayment: false }, now).decision).toBe('DENIED');
     expect(evaluateSpendAuthority(f.intent, { committed: 0, hasUnknownPayment: false }, now + 300000).decision).toBe('DENIED');
     expect(evaluateSpendAuthority(f.intent, { committed: 0, hasUnknownPayment: true }, now).reason).toBe('LEDGER_UNRESOLVED');
-    expect(evaluateSpendAuthority(f.intent, { committed: 0, hasUnknownPayment: false }, now, { dailyBudget: 1000000, singleLimit: 100000, paused: true }).reason).toBe('PAYMENTS_PAUSED');
+    expect(evaluateSpendAuthority(f.intent, { committed: 0, hasUnknownPayment: false }, now, { dailyBudget: '1000000', singleLimit: '100000', paused: true }).reason).toBe('PAYMENTS_PAUSED');
     expect(evaluateSpendAuthority(f.intent, { committed: 995000, hasUnknownPayment: false }, now).reason).toBe('DAILY_BUDGET_EXCEEDED');
   });
   it('uses Shanghai midnight and canonical quote fingerprints', () => {
@@ -55,7 +55,7 @@ describe('market resource adapter', () => {
     const f = fixture();
     const intent = createMarketSnapshotSpendIntent({ idempotencyKey: 'market-1', request: { asset: 'SOL' }, requestHash: hash('task'), resource: f.resource,
       quote: f.quote, executionBinding: 'fixed-config', now });
-    expect(intent).toMatchObject({ idempotencyKey: 'market-1', resourceId: 'premium-sol-market-snapshot', amount: 10000, assetId: DEVNET_USDC_MINT });
+    expect(intent).toMatchObject({ idempotencyKey: 'market-1', resourceId: 'premium-sol-market-snapshot', amount: '10000', assetId: DEVNET_USDC_MINT });
     expect(intent).not.toHaveProperty('input');
   });
   it.each([

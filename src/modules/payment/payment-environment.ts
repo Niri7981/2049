@@ -25,6 +25,7 @@ const EnvironmentSchema = z.object({
   asset: z.object({ network, mint: publicKey, tokenProgram: publicKey, decimals: z.literal(6),
     symbol: z.literal('USDC'), displayLabel: z.string() }).strict(),
   isProduction: z.boolean(),
+  productionExecutionEnabled: z.boolean().default(false),
 }).strict();
 export type PaymentEnvironment = Readonly<Omit<z.infer<typeof EnvironmentSchema>, 'asset'> & {
   asset: Readonly<z.infer<typeof EnvironmentSchema>['asset']>;
@@ -60,6 +61,7 @@ export function validatePaymentEnvironment(input: unknown): PaymentEnvironment {
   const invalid = (setting: string): never => { throw new PaymentEnvironmentError('INVALID_PAYMENT_ENVIRONMENT', setting); };
   if ((value.mode === 'live_mainnet') !== mainnet || (mainnet && value.mode === 'simulated')) invalid('mode/cluster');
   if (value.isProduction !== mainnet) invalid('production/test identity');
+  if (value.productionExecutionEnabled && !mainnet) invalid('production execution mode');
   if (value.asset.network !== value.network) invalid('asset network');
   if (value.asset.tokenProgram !== TOKEN_PROGRAM) invalid('token program');
   const displayLabel = mainnet ? 'USDC' : value.mode === 'simulated' ? 'Simulated test USDC' : localnet ? 'local test USDC' : 'test USDC';
@@ -112,12 +114,14 @@ export function resolvePaymentEnvironment(env: YoshEnvironment = process.env, de
   return validatePaymentEnvironment({ mode, cluster, genesisHash, rpcUrl, network: resolvedNetwork,
     asset: { network: resolvedNetwork, mint, tokenProgram: TOKEN_PROGRAM, decimals: 6, symbol: 'USDC',
       displayLabel: mainnet ? 'USDC' : mode === 'simulated' ? 'Simulated test USDC' : localnet ? 'local test USDC' : 'test USDC' },
-    isProduction: mainnet });
+    isProduction: mainnet, productionExecutionEnabled: configuration.enableMainnetExecution });
 }
 
 export function assertPaymentExecutionEnabled(environment: PaymentEnvironment) {
-  const { mode, cluster, genesisHash, rpcUrl, network, asset, isProduction } = environment;
-  const validated = validatePaymentEnvironment({ mode, cluster, genesisHash, rpcUrl, network, asset, isProduction });
-  if (validated.mode === 'live_mainnet') throw new PaymentEnvironmentError('MAINNET_EXECUTION_DISABLED', 'mainnet is disabled');
+  const { mode, cluster, genesisHash, rpcUrl, network, asset, isProduction, productionExecutionEnabled } = environment;
+  const validated = validatePaymentEnvironment({ mode, cluster, genesisHash, rpcUrl, network, asset, isProduction, productionExecutionEnabled });
+  if (validated.mode === 'live_mainnet' && !validated.productionExecutionEnabled) {
+    throw new PaymentEnvironmentError('MAINNET_EXECUTION_DISABLED', 'explicit production enablement required');
+  }
   if (validated.mode === 'simulated') throw new PaymentEnvironmentError('SIMULATED_EXECUTION_DISABLED', 'simulated mode cannot sign or submit');
 }

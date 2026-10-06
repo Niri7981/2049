@@ -29,7 +29,7 @@ describe('single payment environment', () => {
   it('preserves simulation default and freezes its exact asset identity', () => {
     const environment = simulated();
     expect(environment).toEqual({ mode: 'simulated', cluster: 'devnet', genesisHash: DEVNET_GENESIS,
-      rpcUrl: 'https://api.devnet.solana.com', network: DEVNET_NETWORK, isProduction: false,
+      rpcUrl: 'https://api.devnet.solana.com', network: DEVNET_NETWORK, isProduction: false, productionExecutionEnabled: false,
       asset: { network: DEVNET_NETWORK, mint: DEVNET_USDC_MINT, tokenProgram: TOKEN_PROGRAM,
         decimals: 6, symbol: 'USDC', displayLabel: 'Simulated test USDC' } });
     expect(Object.isFrozen(environment)).toBe(true);
@@ -50,7 +50,7 @@ describe('single payment environment', () => {
 
   it('represents Mainnet without requiring any wallet or recipient', () => {
     expect(mainnet()).toEqual({ mode: 'live_mainnet', cluster: 'mainnet-beta', genesisHash: MAINNET_GENESIS,
-      rpcUrl: 'https://api.mainnet-beta.solana.com', network: MAINNET_NETWORK, isProduction: true,
+      rpcUrl: 'https://api.mainnet-beta.solana.com', network: MAINNET_NETWORK, isProduction: true, productionExecutionEnabled: false,
       asset: { network: MAINNET_NETWORK, mint: MAINNET_USDC_MINT, tokenProgram: TOKEN_PROGRAM,
         decimals: 6, symbol: 'USDC', displayLabel: 'USDC' } });
     expect(PurchaseExecutionModeSchema.parse('live_mainnet')).toBe('live_mainnet');
@@ -133,16 +133,26 @@ describe('single payment environment', () => {
 });
 
 describe('no Mainnet or simulated execution side effects', () => {
+  it('has no Mainnet recipient/resource fallback, even with an explicit Mainnet wallet configured', () => {
+    const env = { YOSH_EXECUTION_MODE: 'live_mainnet', YOSH_MAINNET_WALLET_PUBLIC_KEY: buyer,
+      get DEMO_BUYER_PUBLIC_KEY(): string { throw new Error('must not read test buyer'); },
+      get DEMO_MERCHANT_PUBLIC_KEY(): string { throw new Error('must not read test recipient'); } };
+    expect(() => loadPaymentConfig(env)).toThrow('Demo configuration is forbidden');
+    const environment = mainnet();
+    expect(environment).not.toHaveProperty('merchant');
+    expect(environment).not.toHaveProperty('resource');
+  });
+
   it('blocks Mainnet before reading Demo wallet configuration or opening the App store', () => {
-    expect(() => loadPaymentConfig({ YOSH_EXECUTION_MODE: 'live_mainnet' })).toThrow('MAINNET_EXECUTION_DISABLED');
-    expect(() => loadPaymentConfig({ ...wallets, YOSH_EXECUTION_MODE: 'live_mainnet' })).toThrow('MAINNET_EXECUTION_DISABLED');
+    expect(() => loadPaymentConfig({ YOSH_EXECUTION_MODE: 'live_mainnet' })).toThrow('YOSH_MAINNET_WALLET_PUBLIC_KEY');
+    expect(() => loadPaymentConfig({ ...wallets, YOSH_EXECUTION_MODE: 'live_mainnet' })).toThrow('Demo configuration is forbidden');
     vi.stubEnv('YOSH_EXECUTION_MODE', 'live_mainnet');
     vi.stubEnv('YOSH_ENABLE_DEVNET_PURCHASES', undefined);
     vi.stubEnv('APP2049_ENABLE_DEVNET_PURCHASES', undefined);
     const parent = mkdtempSync(join(tmpdir(), 'environment-disabled-')); dirs.push(parent);
     const directory = join(parent, 'never-opened');
     const initializeWallet = vi.fn();
-    expect(() => new AppRuntime(directory, { initializeWallet })).toThrow('MAINNET_EXECUTION_DISABLED');
+    expect(() => new AppRuntime(directory, { initializeWallet })).toThrow('YOSH_MAINNET_WALLET_PUBLIC_KEY');
     expect(existsSync(directory)).toBe(false);
     expect(initializeWallet).not.toHaveBeenCalled();
   });

@@ -2,17 +2,18 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { PaymentRequirements } from '@x402/core/types';
 import { LEGACY_MARKET_SNAPSHOT_OPERATION as MARKET_SNAPSHOT_OPERATION, type SpendAuthorityBinding } from '../../src/modules/authority/spend-grant';
 import { SpendIntentSchema } from '../../src/modules/authority/spend-intent';
 import { DEVNET_NETWORK, DEVNET_USDC_MINT } from '../../src/modules/payment/payment-config';
+import { MAINNET_NETWORK, MAINNET_USDC_MINT } from '../../src/modules/payment/payment-environment';
 import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';
 import { DEMO_MARKET_DATA_PROVIDER_ID, PREMIUM_SOL_MARKET_SNAPSHOT_ID } from '../../src/modules/resources/static-resource-registry';
 import { demoSnapshot } from '../../src/modules/paid-market-api/paid-market-api';
 
 const paths: string[] = [];
-afterEach(() => paths.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })));
+afterEach(() => { vi.unstubAllEnvs(); paths.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })); });
 const now = Date.parse('2026-09-21T12:00:00Z');
 const cardMemberId = '11111111-1111-4111-8111-111111111111';
 const principal = { cardMemberId, connectionId: '2c187121-f6f1-49a3-aea4-821c4bc0a662', connectionGeneration: 2 };
@@ -22,13 +23,14 @@ const quote: PaymentRequirements = { scheme: 'exact', network: DEVNET_NETWORK, a
   payTo: '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs', maxTimeoutSeconds: 300, extra: {} };
 
 function ledger(path = ':memory:') {
-  const value = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
+  const value = new PurchaseLedger(path, { managed: true, mode: 'simulated', requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
   value.setDailyLimit('50000000');
   return value;
 }
-function authority(value: PurchaseLedger, totalLimit = '5000000', singleLimit = '500000'): SpendAuthorityBinding {
-  value.createSpendGrant({ totalLimit, singleLimit, expiresAt: now + 60 * 60 * 1000 }, principal, scope, now);
-  return value.spendAuthority(principal, MARKET_SNAPSHOT_OPERATION, now);
+function authority(value: PurchaseLedger, totalLimit = '5000000', singleLimit = '500000', mode: 'simulated' | 'live_devnet' = 'simulated'): SpendAuthorityBinding {
+  value.createSpendGrant({ totalLimit, singleLimit, expiresAt: now + 60 * 60 * 1000 }, principal, scope, now, mode);
+  if (mode === 'live_devnet') value.setDailyLimit('50000000', mode);
+  return value.spendAuthority(principal, MARKET_SNAPSHOT_OPERATION, now, mode);
 }
 function intent(id: string, amount: number, binding?: SpendAuthorityBinding, overrides: Record<string, unknown> = {}) {
   return SpendIntentSchema.parse({ id: randomUUID(), idempotencyKey: id, requestHash: `hash-${id}`, resourceId: scope.resourceId, providerId: scope.providerId,
@@ -58,9 +60,9 @@ it('isolates simulated PAID amounts from live daily and SpendGrant accounting', 
     value.finish(reserved.approvalId, { transaction: 'simulated-accounting', data: demoSnapshot }, now);
 
     expect(value.managedSummary(now, 'simulated')).toMatchObject({ paid: '200000', remaining: '49800000' });
-    expect(value.managedSummary(now, 'live_devnet')).toMatchObject({ paid: '0', remaining: '50000000' });
+    expect(value.managedSummary(now, 'live_devnet')).toMatchObject({ paid: '0', remaining: null });
     expect(value.spendGrantSummary(now, 'simulated')).toMatchObject({ committed: '200000', remaining: '300000' });
-    expect(value.spendGrantSummary(now, 'live_devnet')).toMatchObject({ committed: '0', remaining: '500000' });
+    expect(value.spendGrantSummary(now, 'live_devnet')).toBeNull();
   } finally { value.close(); }
 });
 
@@ -137,7 +139,7 @@ it('scopes grants and requestIds per member while enforcing one shared daily bud
     expect(value.list(50, secondMember.id)).toHaveLength(1);
     expect(value.spendGrantSummary(now, 'simulated', cardMemberId)).toMatchObject({ status: 'ACTIVE', committed: '200000' });
     expect(value.spendGrantSummary(now, 'simulated', secondMember.id)).toMatchObject({ status: 'ACTIVE', committed: '0' });
-    const concurrentReader = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+    const concurrentReader = new PurchaseLedger(path, { managed: true, mode: 'simulated', requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
     try {
       expect(concurrentReader.spendGrantSummary(now, 'simulated', cardMemberId)?.status).toBe('ACTIVE');
       expect(concurrentReader.spendGrantSummary(now, 'simulated', secondMember.id)?.status).toBe('ACTIVE');
@@ -200,4 +202,62 @@ it('persists grant history but an App restart can revoke the old connection-boun
     reopened.revokeActiveSpendGrant(now + 1, 'grant.REVOKED_BACKEND_RESTART');
     expect(reopened.spendGrantSummary(now + 1)?.status).toBe('REVOKED');
   } finally { reopened.close(); }
+});
+
+it('never projects persisted Devnet daily authority or grants into Mainnet', () => {
+  const value = ledger();
+  try {
+    const binding = authority(value);
+    const original = value.spendGrantSummary(now);
+    const savedControls = value.controls();
+    expect(value.controls('live_mainnet')).toMatchObject({ dailyBudget: null, paused: true });
+    expect(value.spendGrantSummary(now, 'live_mainnet')).toBeNull();
+    expect(value.managedSummary(now, 'live_mainnet')).toMatchObject({ dailyLimit: null, paused: true, reserved: '0', paid: '0' });
+    expect(value.summary(now, 'live_mainnet')).toMatchObject({ reservedUSDC: 0, paidUSDC: 0 });
+    expect(() => value.spendAuthority(principal, MARKET_SNAPSHOT_OPERATION, now, 'live_mainnet')).toThrow('没有可用的消费授权');
+    expect(() => value.reserve(intent('mainnet-grant-replay', 10_000, binding), quote, now, 'live_mainnet')).toThrow('MONETARY_SCOPE_MISMATCH');
+    expect(value.list()).toHaveLength(0);
+    expect(value.spendGrantSummary(now)).toEqual(original);
+    expect(value.controls()).toEqual(savedControls);
+  } finally { value.close(); }
+});
+
+it('rejects Mainnet grant scopes and purchases even if their execution mode is omitted or mislabeled', () => {
+  const value = ledger();
+  try {
+    const binding = authority(value);
+    const original = value.spendGrantSummary(now);
+    const mainnetScope = { ...scope, network: MAINNET_NETWORK, assetId: MAINNET_USDC_MINT };
+    expect(() => value.createSpendGrant({ totalLimit: '500000', singleLimit: '100000', expiresAt: now + 3600_000 },
+      principal, mainnetScope, now)).toThrow('MAINNET_AUTHORITY_SCOPE_REQUIRED');
+    const mainnetIntent = intent('mainnet-mislabeled', 10_000, binding, { network: MAINNET_NETWORK, assetId: MAINNET_USDC_MINT });
+    expect(() => value.reserve(mainnetIntent, quote, now)).toThrow('MAINNET_AUTHORITY_SCOPE_REQUIRED');
+    expect(() => value.reserve(mainnetIntent, quote, now, 'simulated')).toThrow('MAINNET_AUTHORITY_SCOPE_REQUIRED');
+    expect(() => value.reserve(intent('quote-mainnet', 10_000, binding), { ...quote, network: MAINNET_NETWORK,
+      asset: MAINNET_USDC_MINT }, now, 'live_devnet')).toThrow('MAINNET_AUTHORITY_SCOPE_REQUIRED');
+    expect(value.spendGrantSummary(now)).toEqual(original);
+    expect(value.list()).toHaveLength(0);
+  } finally { value.close(); }
+});
+
+it('an ambient environment switch cannot reinterpret immutable ledger scope or inherit test authority into Mainnet', () => {
+  const value = ledger();
+  try {
+    const binding = authority(value, '5000000', '500000', 'live_devnet');
+    const reserved = value.reserve(intent('before-switch', 10_000, binding), quote, now, 'live_devnet');
+    value.claim(reserved.approvalId, now);
+    const original = value.spendGrantSummary(now, 'live_devnet');
+    vi.stubEnv('YOSH_EXECUTION_MODE', 'live_mainnet');
+    expect(value.controls('live_mainnet')).toMatchObject({ dailyBudget: null, paused: true });
+    expect(value.activeSpendGrant(now, principal.cardMemberId, 'live_mainnet')).toBeUndefined();
+    expect(value.spendGrantSummary(now, 'live_mainnet')).toBeNull();
+    expect(() => value.spendAuthority(principal, MARKET_SNAPSHOT_OPERATION, now, 'live_mainnet')).toThrow('没有可用的消费授权');
+    expect(value.spendAuthorityForDecision(principal, MARKET_SNAPSHOT_OPERATION, now, 'live_mainnet')).toBeUndefined();
+    value.unknown(reserved.approvalId);
+    expect(value.get('before-switch')?.status).toBe('PAYMENT_UNKNOWN');
+    expect(value.controls()).toMatchObject({ dailyBudget: '50000000', paused: false });
+    expect(value.spendGrantSummary(now, 'live_devnet')).toEqual(original);
+    expect(value.spendAuthority(principal, MARKET_SNAPSHOT_OPERATION, now, 'live_devnet')).toEqual(binding);
+    expect(value.managedSummary(now, 'live_devnet')).toMatchObject({ reserved: '10000', unresolved: 1 });
+  } finally { value.close(); }
 });

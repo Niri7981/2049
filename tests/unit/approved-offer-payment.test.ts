@@ -1,3 +1,5 @@
+import { signedPaymentFixture, FIXTURE_TRANSACTION_SIGNATURE } from '../helpers/signed-payment-fixture';
+import { testModeGrants, testModeDailyLimit } from '../helpers/test-mode-authority';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +9,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { LEGACY_MARKET_SNAPSHOT_OPERATION as MARKET_SNAPSHOT_OPERATION } from '../../src/modules/authority/spend-grant';
 import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
 import { runPaymentPreflight } from '../../src/modules/payment/payment-preflight';
-import { inspectOriginalTransaction } from '../../src/modules/payment/reconcile-transaction';
+import { reconcileStoredOriginalPayment } from '../../src/modules/payment/reconcile-transaction';
 import { prepareSolanaPayment } from '../../src/modules/payment/solana-payment';
 import { loadBuyerSigner } from '../../src/modules/payment/wallet';
 import { executeApprovedPayment, paymentBinding, paymentEndpoint, recoverApprovedPayment } from '../../src/modules/purchases/approved-payment';
@@ -25,7 +27,7 @@ vi.mock('../../src/modules/payment/solana-payment', () => ({
   confirmSolanaTransaction: vi.fn(),
 }));
 vi.mock('../../src/modules/payment/reconcile-transaction', () => ({
-  inspectOriginalTransaction: vi.fn(),
+  reconcileStoredOriginalPayment: vi.fn(),
   transactionMessageHash: () => 'b'.repeat(64),
 }));
 
@@ -37,14 +39,15 @@ const snapshot = { asset: 'SOL' as const, as_of: '2026-09-05T08:00:00Z', spot_pr
 
 async function fixture(path = ':memory:') {
   vi.clearAllMocks();
+  vi.mocked(reconcileStoredOriginalPayment).mockResolvedValue({ status: 'UNKNOWN' });
   let now = Date.parse('2026-09-22T08:00:00Z');
   const signer = await generateKeyPairSigner();
   const merchant = (await generateKeyPairSigner()).address;
   const feePayer = (await generateKeyPairSigner()).address;
   const config = loadPaymentConfig({ DEMO_BUYER_PUBLIC_KEY: signer.address, DEMO_MERCHANT_PUBLIC_KEY: merchant });
-  const ledger = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
-  ledger.setDailyLimit('5000000');
-  ledger.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 60 * 60 * 1000 }, principal, {
+  const ledger = new PurchaseLedger(path, { managed: true, mode: 'live_devnet', requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai', defaultCardMemberId: cardMemberId });
+  testModeDailyLimit(ledger, '5000000');
+  testModeGrants(ledger, { totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 60 * 60 * 1000 }, principal, {
     resourceId: SOL_MARKET_SNAPSHOT_RESOURCE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation: MARKET_SNAPSHOT_OPERATION,
     network: config.network, assetId: config.mint, assetDecimals: 6, payTo: config.merchant, paymentScheme: 'exact',
   }, now);
@@ -63,16 +66,16 @@ async function fixture(path = ':memory:') {
     facilitator: { feePayer, feePayerLamports: 100_000 }, readyForSettlement: true });
   vi.mocked(prepareSolanaPayment).mockImplementation(async (_config, _signer, requirement, beforeSign) => {
     beforeSign?.();
-    return { x402Version: 2, accepted: requirement, payload: { transaction: 'offer-wire' } };
+    return signedPaymentFixture(signer, config, requirement);
   });
-  vi.mocked(inspectOriginalTransaction).mockResolvedValue({ status: 'CONFIRMED', transaction: '1'.repeat(88) });
+  vi.mocked(reconcileStoredOriginalPayment).mockResolvedValue({ status: 'CONFIRMED', transaction: FIXTURE_TRANSACTION_SIGNATURE });
   return { ledger, record, config, endpoint, quote, setNow: (value: number) => { now = value; }, initialNow: now };
 }
 
 function paidResponse(config: Awaited<ReturnType<typeof fixture>>['config']) {
   return new Response(JSON.stringify(snapshot), { status: 200, headers: { 'content-type': 'application/json',
     'PAYMENT-RESPONSE': Buffer.from(JSON.stringify({ success: true, network: config.network, payer: config.buyer,
-      amount: '200000', transaction: '1'.repeat(88) })).toString('base64') } });
+      amount: '200000', transaction: FIXTURE_TRANSACTION_SIGNATURE })).toString('base64') } });
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -84,8 +87,8 @@ it('executes the persisted basic offer through claim, 0.20 signing controls, pay
     await executeApprovedPayment(f.ledger, f.record.approvalId, f.config, f.endpoint);
     expect(runPaymentPreflight).toHaveBeenCalledWith(f.config, { amount: '200000' });
     expect(prepareSolanaPayment).toHaveBeenCalledWith(f.config, expect.anything(), f.quote, expect.any(Function),
-      { amount: '200000', resource: '/api/paid/market-snapshot?asset=SOL&offer=basic' });
-    expect(f.ledger.get('offer-basic')).toMatchObject({ status: 'PAID', deliveryStatus: 'COMPLETE', transaction: '1'.repeat(88) });
+      { amount: '200000', resource: '/api/paid/market-snapshot?asset=SOL&offer=basic' }, expect.any(Function));
+    expect(f.ledger.get('offer-basic')).toMatchObject({ status: 'PAID', deliveryStatus: 'COMPLETE', transaction: FIXTURE_TRANSACTION_SIGNATURE });
   } finally { f.ledger.close(); }
 });
 
@@ -120,8 +123,8 @@ it('re-checks revocation after signer loading and inside the SDK signing callbac
 it('does not submit when authority is revoked after payload persistence', async () => {
   const f = await fixture();
   const originalSave = f.ledger.savePayload.bind(f.ledger);
-  vi.spyOn(f.ledger, 'savePayload').mockImplementation((approvalId, payload, validate) => {
-    originalSave(approvalId, payload, validate);
+  vi.spyOn(f.ledger, 'savePayload').mockImplementation((approvalId, payload, validate, original) => {
+    originalSave(approvalId, payload, validate, original);
     f.ledger.revokeActiveSpendGrant(f.initialNow + 1);
   });
   const fetcher = vi.fn();
@@ -129,14 +132,15 @@ it('does not submit when authority is revoked after payload persistence', async 
   try {
     await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, f.endpoint)).rejects.toThrow();
     expect(fetcher).not.toHaveBeenCalled();
-    expect(f.ledger.get('offer-basic')?.status).toBe('PAYMENT_UNKNOWN');
+    expect(f.ledger.get('offer-basic')?.status).toBe('FAILED');
+    expect(f.ledger.savedOriginalPayment(f.record.approvalId)?.state).toBe('NOT_SUBMITTED');
   } finally { f.ledger.close(); }
 });
 
 it.each([
   ['expired', (ledger: PurchaseLedger, f: Awaited<ReturnType<typeof fixture>>) => f.setNow(f.initialNow + 301_000)],
   ['paused', (ledger: PurchaseLedger) => ledger.setPaused(true)],
-  ['lowered daily limit', (ledger: PurchaseLedger) => ledger.setDailyLimit('199999')],
+  ['lowered daily limit', (ledger: PurchaseLedger) => testModeDailyLimit(ledger, '199999')],
 ] as const)('stops after approval when authority becomes %s', async (_name, change) => {
   const f = await fixture();
   change(f.ledger, f);
@@ -151,6 +155,7 @@ it('recovers a timed-out offer with the original payload and never signs again',
   const f = await fixture();
   const fetcher = vi.fn().mockRejectedValueOnce(new Error('timeout')).mockImplementation(async () => paidResponse(f.config));
   vi.stubGlobal('fetch', fetcher);
+  vi.mocked(reconcileStoredOriginalPayment).mockResolvedValueOnce({ status: 'UNKNOWN' });
   try {
     await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, f.endpoint)).rejects.toThrow();
     expect(f.ledger.get('offer-basic')?.status).toBe('PAYMENT_UNKNOWN');
@@ -171,7 +176,7 @@ it('reopens SQLite and recovers the original unknown offer payload without re-si
   try {
     await expect(executeApprovedPayment(f.ledger, f.record.approvalId, f.config, f.endpoint)).rejects.toThrow();
     f.ledger.close();
-    const reopened = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => f.initialNow, timeZone: () => 'Asia/Shanghai' });
+    const reopened = new PurchaseLedger(path, { managed: true, mode: 'live_devnet', requireSpendGrant: true, now: () => f.initialNow, timeZone: () => 'Asia/Shanghai' });
     try {
       reopened.recoverUnsubmittedOnStartup();
       await recoverApprovedPayment(reopened, 'offer-basic', f.config, f.endpoint);
@@ -204,7 +209,7 @@ it.each(['amount', 'payTo', 'asset', 'network', 'memo', 'feePayer', 'binding', '
       db.prepare('UPDATE purchases SET quote=? WHERE task_id=?').run(JSON.stringify(quote), 'offer-basic');
     }
     db.close();
-    const reopened = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => f.initialNow, timeZone: () => 'Asia/Shanghai' });
+    const reopened = new PurchaseLedger(path, { managed: true, mode: 'live_devnet', requireSpendGrant: true, now: () => f.initialNow, timeZone: () => 'Asia/Shanghai' });
     try {
       const endpoint = field === 'resource' ? `${f.endpoint}&changed=true` : f.endpoint;
       await expect(executeApprovedPayment(reopened, f.record.approvalId, f.config, endpoint)).rejects.toThrow();

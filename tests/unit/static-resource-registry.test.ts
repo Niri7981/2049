@@ -29,7 +29,7 @@ describe("static resource registry", () => {
     expect(resource).toMatchObject({
       resource_id: PREMIUM_SOL_MARKET_SNAPSHOT_ID,
       capability: "crypto.market.snapshot",
-      expected_price_minor: 10_000,
+      expected_price_minor: '10000',
       currency: "USDC",
       network: registryConfig.network,
       enabled: true,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PositiveAtomicAmountSchema } from '../authority/atomic-money';
 
 import {
   MarketSnapshotInputSchema,
@@ -21,7 +22,7 @@ export const AgentVisibleResourceSchema = z
     provider_id: z.string(),
     input_schema: z.literal("MarketSnapshotInput"),
     output_schema: z.literal("MarketSnapshotOutput"),
-    expected_price_minor: z.number().int().positive(),
+    expected_price_minor: PositiveAtomicAmountSchema,
     currency: z.literal("USDC"),
     network: z.string(),
     payment_scheme: z.literal("exact"),

@@ -1,6 +1,10 @@
 import { x402Client, x402HTTPClient } from '@x402/core/client';
 import { PaymentRequiredV2Schema, PaymentPayloadV2Schema } from '@x402/core/schemas';
 import type { PaymentPayload, PaymentRequired, SettleResponse } from '@x402/core/types';
+import { z } from 'zod';
+import { PositiveAtomicAmountSchema } from '../authority/atomic-money';
+import { SolanaPublicKeySchema, X402ChallengeSchema } from '../resources/http-resource';
+import { TransactionSignatureSchema } from './original-payment-evidence';
 
 const MAX_PAYMENT_HEADER_BYTES = 16_384;
 const protocol = new x402HTTPClient(new x402Client());
@@ -15,15 +19,50 @@ function boundedHeader(value: string | null, name: string) {
 export function readPaymentRequiredHeader(encoded: string): PaymentRequired {
   const value = boundedHeader(encoded, 'PAYMENT-REQUIRED');
   const decoded = protocol.getPaymentRequiredResponse(name => name === 'PAYMENT-REQUIRED' ? value : null);
-  return PaymentRequiredV2Schema.parse(decoded) as PaymentRequired;
+  const parsed = PaymentRequiredV2Schema.parse(decoded);
+  return X402ChallengeSchema.parse({ ...parsed, accepts: parsed.accepts.map(requirement => ({ ...requirement, extra: requirement.extra ?? {} })),
+    ...(parsed.extensions === null ? { extensions: undefined } : {}) });
 }
 
 export function paymentSignatureHeaders(payload: PaymentPayload): Record<string, string> {
   PaymentPayloadV2Schema.parse(payload);
-  return protocol.encodePaymentSignatureHeader(payload);
+  const headers = protocol.encodePaymentSignatureHeader(payload);
+  for (const value of Object.values(headers)) boundedHeader(value, 'PAYMENT-SIGNATURE');
+  return headers;
 }
 
-export function readSettlementResponse(response: Response): SettleResponse {
+const receiptFields = {
+  network: z.templateLiteral(['solana:', z.string().min(1).max(193)]),
+  amount: z.string().refine(value => PositiveAtomicAmountSchema.safeParse(value).success).optional(), extensions: z.record(z.string(), z.json()).optional(),
+  extra: z.record(z.string(), z.json()).optional(),
+};
+export const SettlementReceiptSchema = z.discriminatedUnion('success', [
+  z.object({ success: z.literal(true), ...receiptFields, payer: SolanaPublicKeySchema,
+    transaction: TransactionSignatureSchema }).strict(),
+  z.object({ success: z.literal(false), ...receiptFields, payer: SolanaPublicKeySchema.optional(),
+    transaction: z.union([z.literal(''), TransactionSignatureSchema]),
+    errorReason: z.string().min(1).max(240).optional(), errorMessage: z.string().max(1024).optional() }).strict(),
+]);
+export type SettlementReceiptBinding = { network: string; payer: string; amount: string; transaction?: string };
+
+export function validateSettlementReceipt(raw: unknown, expected?: SettlementReceiptBinding): SettleResponse {
+  const receipt = SettlementReceiptSchema.parse(raw);
+  if (expected && (receipt.network !== expected.network || receipt.payer !== expected.payer
+    || (receipt.amount !== undefined && receipt.amount !== expected.amount)
+    || (expected.transaction !== undefined && receipt.transaction !== expected.transaction))) throw new Error('SETTLEMENT_RECEIPT_BINDING_MISMATCH');
+  return receipt;
+}
+
+export function readSettlementResponse(response: Response, expected?: SettlementReceiptBinding): SettleResponse {
   boundedHeader(response.headers.get('PAYMENT-RESPONSE'), 'PAYMENT-RESPONSE');
-  return protocol.getPaymentSettleResponse(name => response.headers.get(name));
+  return validateSettlementReceipt(protocol.getPaymentSettleResponse(name => response.headers.get(name)), expected);
+}
+
+/** An unusable receipt may still reveal the original signature. This is only a
+ * durable search hint; it cannot authorize PAID or release any reservation. */
+export function readSettlementTransactionHint(response: Response): string | undefined {
+  boundedHeader(response.headers.get('PAYMENT-RESPONSE'), 'PAYMENT-RESPONSE');
+  const decoded: unknown = protocol.getPaymentSettleResponse(name => response.headers.get(name));
+  const parsed = z.object({ transaction: TransactionSignatureSchema }).passthrough().safeParse(decoded);
+  return parsed.success ? parsed.data.transaction : undefined;
 }

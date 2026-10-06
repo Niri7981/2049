@@ -21,7 +21,7 @@ describe("resource discovery", () => {
       status: "found",
       resource: {
         resource_id: "premium-sol-market-snapshot",
-        expected_price_minor: 10_000,
+        expected_price_minor: '10000',
         currency: "USDC",
       },
     });

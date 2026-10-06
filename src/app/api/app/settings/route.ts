@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { AtomicAmountSchema } from '../../../../modules/authority/atomic-money';
 import { appRuntime } from '@/modules/app/app-runtime';
 import { managementRoute } from '@/modules/app/management-auth';
 import { smallJson } from '@/modules/http/local-request';
 
 const Input = z.union([
-  z.object({ dailyLimit: z.string().regex(/^\d{1,15}$/).nullable() }).strict(),
+  z.object({ dailyLimit: z.string().refine(value => AtomicAmountSchema.safeParse(value).success, 'Invalid atomic amount').nullable() }).strict(),
   z.object({ paused: z.boolean() }).strict(),
 ]);
 export const runtime = 'nodejs';

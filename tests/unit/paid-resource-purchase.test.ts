@@ -1,3 +1,4 @@
+import { testModeGrants, testModeDailyLimit } from '../helpers/test-mode-authority';
 import { resolvePaymentEnvironment } from '../../src/modules/payment/payment-environment';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -28,10 +29,10 @@ const now = Date.parse('2026-09-24T03:00:00Z');
 const origin = 'http://127.0.0.1:3049';
 
 function setup(path = ':memory:', operation: string = PAID_RESOURCE_PURCHASE_OPERATION, singleLimit = '200000') {
-  const ledger = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now,
+  const ledger = new PurchaseLedger(path, { managed: true, mode: 'live_devnet', requireSpendGrant: true, now: () => now,
     timeZone: () => 'Asia/Shanghai', defaultCardMemberId: memberId });
-  ledger.setDailyLimit('1000000');
-  ledger.createSpendGrant({ totalLimit: '400000', singleLimit, expiresAt: now + 60 * 60 * 1000 }, principal, {
+  testModeDailyLimit(ledger, '1000000');
+  testModeGrants(ledger, { totalLimit: '400000', singleLimit, expiresAt: now + 60 * 60 * 1000 }, principal, {
     resourceId: PAID_RESOURCE_SCOPE_ID, providerId: DEMO_MARKET_DATA_PROVIDER_ID, operation,
     network: config.network, assetId: config.mint, assetDecimals: 6, payTo: config.merchant, paymentScheme: 'exact',
   }, now);
@@ -98,7 +99,7 @@ it('registers token risk, approves its fresh 0.05 quote, and replays the persist
       resourcePath: '/api/paid/token-risk-report?asset=SOL',
       authority: { operation: PAID_RESOURCE_PURCHASE_OPERATION } });
     f.ledger.close();
-    const reopened = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+    const reopened = new PurchaseLedger(path, { managed: true, mode: 'live_devnet', requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
     try {
       const saved = reopened.get('risk-report-approved')!;
       expect(paymentEndpointForIntent(origin, saved.intent)).toBe(`${origin}/api/paid/token-risk-report?asset=SOL`);
@@ -154,7 +155,7 @@ it('takes no Agent amount, price, offerId, payTo, or arbitrary requirements', ()
 it('rejects an unknown resource through the registry before quoting or reserving', async () => {
   const f = setup();
   try {
-    expect(PurchaseRequestInputSchema.safeParse({ requestId: 'unknown-resource', resourceId: 'unknown-resource', reason: 'Need data' }).success).toBe(false);
+    expect(PurchaseRequestInputSchema.safeParse({ requestId: 'unknown-resource', resourceId: 'unknown-resource', reason: 'Need data' }).success).toBe(true);
     await expect(requestPaidResourcePurchase({ requestId: 'unknown-resource', resourceId: 'unknown-resource', reason: 'Need data' },
       { config, ledger: f.ledger, origin, principal, fetcher: f.fetcher, now: () => now, execute: false })).rejects.toThrow('UNKNOWN_PAID_RESOURCE');
     expect(f.fetcher).not.toHaveBeenCalled();
@@ -168,7 +169,7 @@ it('uses a stored legacy grant for registered resources without rewriting its op
   const f = setup(path, LEGACY_MARKET_SNAPSHOT_OPERATION);
   try {
     f.ledger.close();
-    const reopened = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+    const reopened = new PurchaseLedger(path, { managed: true, mode: 'live_devnet', requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
     try {
       const purchase = await requestPaidResourcePurchase(request('legacy-resource-grant', 'market-snapshot'),
         { config, ledger: reopened, origin, principal, fetcher: f.fetcher, now: () => now, execute: false });
@@ -177,7 +178,7 @@ it('uses a stored legacy grant for registered resources without rewriting its op
       expect(record.intent.authority?.operation).toBe(LEGACY_MARKET_SNAPSHOT_OPERATION);
       expect(reopened.spendGrantSummary(now)?.operation).toBe(LEGACY_MARKET_SNAPSHOT_OPERATION);
     } finally { reopened.close(); }
-    const recovering = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+    const recovering = new PurchaseLedger(path, { managed: true, mode: 'live_devnet', requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
     try {
       const record = recovering.get('legacy-resource-grant')!;
       expect(record.intent.authority?.operation).toBe(LEGACY_MARKET_SNAPSHOT_OPERATION);
@@ -239,7 +240,7 @@ it('reopens new purchases without offerId and reconstructs the exact selected en
     await requestPaidResourcePurchase(request('restart-resource', 'market-snapshot'),
       { config, ledger: f.ledger, origin, principal, fetcher: f.fetcher, now: () => now, execute: false });
     f.ledger.close();
-    const reopened = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
+    const reopened = new PurchaseLedger(path, { managed: true, mode: 'live_devnet', requireSpendGrant: true, now: () => now, timeZone: () => 'Asia/Shanghai' });
     try {
       const record = reopened.get('restart-resource')!;
       expect(record.intent.offerId).toBeUndefined();
@@ -248,4 +249,21 @@ it('reopens new purchases without offerId and reconstructs the exact selected en
       expect(record.quote.amount).toBe('200000');
     } finally { reopened.close(); }
   } finally { f.store.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+it('refuses a stored request replay after changing wallet scope before quote, payment or recovery', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-wallet-scope-replay-'));
+  const file = join(directory, 'ledger.sqlite'); const f = setup(file);
+  let other: PurchaseLedger | undefined;
+  try {
+    const input = request('wallet-bound-risk', 'token-risk-report');
+    await requestPaidResourcePurchase(input, { config, ledger: f.ledger, origin, principal, fetcher: f.fetcher, now: () => now, execute: false });
+    other = new PurchaseLedger(file, { managed: true, requireSpendGrant: true, walletIdentity: 'fixture-other-wallet', mode: 'simulated', now: () => now });
+    const fetcher = vi.fn(); const pay = vi.fn(); const recover = vi.fn();
+    await expect(requestPaidResourcePurchase(input, { config, ledger: other, origin, principal, fetcher, pay, recover, now: () => now, execute: false }))
+      .rejects.toThrow('MONETARY_SCOPE_MISMATCH');
+    expect(fetcher).not.toHaveBeenCalled(); expect(pay).not.toHaveBeenCalled(); expect(recover).not.toHaveBeenCalled();
+    expect(other.managedSummary(now)).toMatchObject({ paid: '0', reserved: '0', dailyLimit: null });
+    expect(f.ledger.managedSummary(now, 'simulated')).toMatchObject({ reserved: '50000' });
+  } finally { other?.close(); f.ledger.close(); f.store.close(); rmSync(directory, { recursive: true, force: true }); }
 });

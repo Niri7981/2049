@@ -3,8 +3,14 @@ import { createKeyPairSignerFromPrivateKeyBytes, getBase58Decoder } from "@solan
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { loadBuyerSigner } from "../../src/modules/payment/wallet";
 
-vi.mock("../../src/modules/payment/keychain", () => ({ readDemoKeychain: vi.fn() }));
-import { readDemoKeychain } from "../../src/modules/payment/keychain";
+vi.mock("../../src/modules/payment/keychain", async importOriginal => ({
+  ...await importOriginal<typeof import('../../src/modules/payment/keychain')>(),
+  readDemoKeychain: vi.fn(), readAppWalletKeychain: vi.fn(), createAppWalletKeychain: vi.fn(),
+  readMainnetWalletKeychain: vi.fn(), createMainnetWalletKeychain: vi.fn(),
+}));
+import { readDemoKeychain, readAppWalletKeychain, readMainnetWalletKeychain, createMainnetWalletKeychain } from "../../src/modules/payment/keychain";
+import { resolvePaymentEnvironment } from '../../src/modules/payment/payment-environment';
+import { loadPaymentConfig, TOKEN_PROGRAM } from '../../src/modules/payment/payment-config';
 
 const SAFE_CONFIG_ERROR = "Configure a valid dedicated test buyer signer via DEMO_BUYER_KEYCHAIN_SERVICE, DEMO_BUYER_KEYPAIR or DEMO_BUYER_PRIVATE_KEY";
 const SAFE_ADDRESS_ERROR = "Buyer signer does not match DEMO_BUYER_PUBLIC_KEY";
@@ -20,7 +26,7 @@ beforeAll(async () => {
   seed.fill(0);
 });
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.resetAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("Payment dedicated buyer signer", () => {
   it("loads the configured Keychain signer and verifies its public address", async () => {
@@ -87,5 +93,70 @@ describe("Payment dedicated buyer signer", () => {
     expect(error.cause).toBeUndefined();
     expect(String(error)).not.toContain(encoded);
     expect(String(error)).not.toContain(publicAddress);
+  });
+});
+
+describe('Mainnet signer source isolation', () => {
+  const mainnet = { YOSH_EXECUTION_MODE: 'live_mainnet' };
+  it('preserves Devnet product-wallet loading with the immutable payment configuration', async () => {
+    vi.mocked(readAppWalletKeychain).mockResolvedValue(getBase58Decoder().decode(secretBytes));
+    const env = { YOSH_USE_PRODUCT_WALLET: '1', DEMO_BUYER_PUBLIC_KEY: publicAddress, DEMO_MERCHANT_PUBLIC_KEY: TOKEN_PROGRAM };
+    const signer = await loadBuyerSigner(publicAddress, env, loadPaymentConfig(env));
+    expect(signer.address).toBe(publicAddress);
+    expect(readAppWalletKeychain).toHaveBeenCalledOnce();
+    expect(readMainnetWalletKeychain).not.toHaveBeenCalled();
+  });
+  it.each(['DEMO_BUYER_PRIVATE_KEY', 'DEMO_BUYER_KEYPAIR', 'DEMO_BUYER_KEYCHAIN_SERVICE',
+    'DEMO_BUYER_PUBLIC_KEY', 'DEMO_MERCHANT_PUBLIC_KEY'])('rejects %s before reading any signer', async key => {
+    await expect(loadBuyerSigner(publicAddress, { ...mainnet, YOSH_USE_PRODUCT_WALLET: '1',
+      YOSH_MAINNET_WALLET_PUBLIC_KEY: publicAddress, [key]: 'legacy-fixture' })).rejects.toThrow('MAINNET_WALLET_ISOLATION');
+    expect(readDemoKeychain).not.toHaveBeenCalled();
+    expect(readAppWalletKeychain).not.toHaveBeenCalled();
+    expect(readMainnetWalletKeychain).not.toHaveBeenCalled();
+  });
+  it('requires a separately configured Mainnet public identity', async () => {
+    await expect(loadBuyerSigner(publicAddress, mainnet)).rejects.toThrow('explicit Mainnet wallet identity required');
+    await expect(loadBuyerSigner(publicAddress, { ...mainnet,
+      YOSH_MAINNET_WALLET_PUBLIC_KEY: '11111111111111111111111111111111' })).rejects.toThrow('explicit Mainnet wallet identity required');
+    expect(readMainnetWalletKeychain).not.toHaveBeenCalled();
+  });
+  it('loads only the dedicated Mainnet item and proves its signer address', async () => {
+    vi.mocked(readAppWalletKeychain).mockResolvedValue(undefined);
+    vi.mocked(readMainnetWalletKeychain).mockResolvedValue(getBase58Decoder().decode(secretBytes));
+    const signer = await loadBuyerSigner(publicAddress, { ...mainnet, YOSH_MAINNET_WALLET_PUBLIC_KEY: publicAddress });
+    expect(signer.address).toBe(publicAddress);
+    expect(signer.keyPair.privateKey.extractable).toBe(false);
+    expect(readMainnetWalletKeychain).toHaveBeenCalledOnce();
+    expect(readDemoKeychain).not.toHaveBeenCalled();
+    expect(createMainnetWalletKeychain).not.toHaveBeenCalled();
+  });
+  it('rejects a configured address that does not match the actual Mainnet signer', async () => {
+    vi.mocked(readAppWalletKeychain).mockResolvedValue(undefined);
+    vi.mocked(readMainnetWalletKeychain).mockResolvedValue(getBase58Decoder().decode(secretBytes));
+    const other = '11111111111111111111111111111111';
+    await expect(loadBuyerSigner(other, { ...mainnet, YOSH_MAINNET_WALLET_PUBLIC_KEY: other })).rejects.toThrow('does not match');
+  });
+  it('does not reuse a product signer when the purchase and active environments disagree', async () => {
+    await expect(loadBuyerSigner(publicAddress, mainnet, resolvePaymentEnvironment({}, 'live_devnet'))).rejects.toThrow('WALLET_ENVIRONMENT_MISMATCH');
+    expect(readAppWalletKeychain).not.toHaveBeenCalled();
+    expect(readMainnetWalletKeychain).not.toHaveBeenCalled();
+  });
+  it('rechecks the environment after an asynchronous Keychain read', async () => {
+    const env = { ...mainnet, YOSH_MAINNET_WALLET_PUBLIC_KEY: publicAddress };
+    vi.mocked(readAppWalletKeychain).mockResolvedValue(undefined);
+    vi.mocked(readMainnetWalletKeychain).mockImplementation(async () => {
+      env.YOSH_EXECUTION_MODE = 'live_devnet';
+      return getBase58Decoder().decode(secretBytes);
+    });
+    await expect(loadBuyerSigner(publicAddress, env)).rejects.toThrow('WALLET_ENVIRONMENT_MISMATCH');
+  });
+  it('fails closed on an inaccessible or missing Mainnet item without creating a replacement', async () => {
+    vi.mocked(readAppWalletKeychain).mockResolvedValue(undefined);
+    vi.mocked(readMainnetWalletKeychain).mockRejectedValue(new Error('Keychain unavailable'));
+    const env = { ...mainnet, YOSH_MAINNET_WALLET_PUBLIC_KEY: publicAddress };
+    await expect(loadBuyerSigner(publicAddress, env)).rejects.toThrow('Keychain unavailable');
+    vi.mocked(readMainnetWalletKeychain).mockResolvedValue(undefined);
+    await expect(loadBuyerSigner(publicAddress, env)).rejects.toThrow('unavailable in Keychain');
+    expect(createMainnetWalletKeychain).not.toHaveBeenCalled();
   });
 });

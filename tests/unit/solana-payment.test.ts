@@ -4,6 +4,7 @@ import { address, type TransactionSigner } from "@solana/kit";
 import type { PaymentRequirements } from "@x402/core/types";
 import { DEVNET_NETWORK, DEVNET_USDC_MINT, PAYMENT_AMOUNT, type PaymentConfig } from "../../src/modules/payment/payment-config";
 import { confirmSolanaTransaction, solanaRpc, MARKET_RESOURCE, prepareSolanaPayment, selectPaymentQuote } from "../../src/modules/payment/solana-payment";
+import { X402ChallengeSchema } from '../../src/modules/resources/http-resource';
 
 const sdk = vi.hoisted(() => ({ constructor: vi.fn(), createPaymentPayload: vi.fn() }));
 
@@ -72,12 +73,16 @@ describe("Payment fixed payment quote", () => {
   it.each([
     { feePayer: config.buyer, memo: "day4:ABCDEFGHIJKLMNOPQRSTUV" },
     { memo: "day4:ABCDEFGHIJKLMNOPQRSTUV" },
-    { feePayer },
     { feePayer, memo: 42 },
-    { feePayer, memo: "different-payment" },
-    { feePayer, memo: `day4:${"x".repeat(124)}` },
+    { feePayer, memo: '' },
+    { feePayer, memo: 'x'.repeat(257) },
   ])("rejects untrusted fee payer or memo %j", extra => {
     expect(() => selectPaymentQuote(encodeQuote({ ...requirement(), extra }), config, feePayer)).toThrow();
+  });
+
+  it.each([undefined, 'arbitrary-approved-memo', '主网资源付款', 'x'.repeat(256)])('accepts a missing or SDK-compatible memo %s', memo => {
+    const extra = { feePayer, ...(memo === undefined ? {} : { memo }) };
+    expect(selectPaymentQuote(encodeQuote({ ...requirement(), extra }), config, feePayer)).toEqual({ ...requirement(), extra });
   });
 
   it("rejects a changed resource and ambiguous payment options", () => {
@@ -97,7 +102,8 @@ describe("Payment simulation before signing", () => {
     const signer: TransactionSigner = { address: address(config.buyer), signTransactions };
     sdk.createPaymentPayload.mockImplementation(async () => {
       const checkedSigner = sdk.constructor.mock.lastCall![0];
-      await checkedSigner.signTransactions([{ messageBytes: new Uint8Array(), signatures: {} }]);
+      await checkedSigner.signTransactions([{ messageBytes: new Uint8Array(), signatures: {},
+        lifetimeConstraint: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 123456n } }]);
       return { x402Version: 2, payload: { transaction: "signed-test-transaction" } };
     });
     return { signer, signTransactions };
@@ -163,6 +169,32 @@ describe("Payment simulation before signing", () => {
     const result = await prepareSolanaPayment(config, signer, payment, () => {}, { amount: "200000", resource });
     expect(sdk.createPaymentPayload.mock.lastCall![1].amount).toBe("200000");
     expect(result).toMatchObject({ accepted: payment, resource: { url: resource } });
+  });
+
+  it("captures the local SDK transaction lifetime before signing as integer strings", async () => {
+    mockRpc({ value: { err: null } });
+    const { signer, signTransactions } = setupSigning();
+    const onLifetime = vi.fn();
+    const payment = requirement();
+    payment.extra = { ...payment.extra, blockhash: 'untrusted-merchant-hint', lastValidBlockHeight: 1 };
+    await prepareSolanaPayment(config, signer, payment, () => {}, undefined, onLifetime);
+    expect(onLifetime).toHaveBeenCalledExactlyOnceWith({ recentBlockhash: '11111111111111111111111111111111', lastValidBlockHeight: '123456' });
+    expect(onLifetime.mock.invocationCallOrder[0]).toBeLessThan(signTransactions.mock.invocationCallOrder[0]);
+  });
+
+  it('preserves the approved challenge resource, extensions and non-routing requirement extras through the official client', async () => {
+    mockRpc({ value: { err: null } });
+    const { signer } = setupSigning();
+    const payment = requirement();
+    payment.extra = { ...payment.extra, reference: 'provider-reference', blockhash: 'untrusted' };
+    const extensions = { bazaar: { info: { input: { type: 'http', method: 'GET' } } }, 'builder-code': { info: { code: 'fixture' } } };
+    const challenge = X402ChallengeSchema.parse({ x402Version: 2, resource: { url: 'https://api.provider.example/v1/data', mimeType: 'application/json' },
+      accepts: [payment], extensions });
+    const result = await prepareSolanaPayment(config, signer, payment, () => {}, { amount: payment.amount, resource: challenge.resource.url, challenge });
+    expect(result.resource).toEqual(challenge.resource);
+    expect(result.extensions).toEqual(extensions);
+    expect(result.accepted).toEqual(payment);
+    expect(sdk.createPaymentPayload.mock.lastCall![1].extra).toEqual({ feePayer, memo: payment.extra.memo, reference: 'provider-reference' });
   });
 
   it("rejects a buyer address mismatch before invoking the SDK", async () => {

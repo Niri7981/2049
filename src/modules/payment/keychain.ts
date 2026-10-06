@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { address } from "@solana/kit";
+import { validatePaymentEnvironment, type PaymentEnvironment } from './payment-environment';
 
 class KeychainCommandError extends Error {
   constructor(readonly exitCode: number | null) { super('Keychain command failed'); }
@@ -31,12 +32,18 @@ function security(args: string[], input?: string): Promise<string> {
 }
 
 export const APP_WALLET_KEYCHAIN = Object.freeze({ service: 'com.2049.wallet.v1', account: 'consumer-wallet-v1' });
+export const MAINNET_WALLET_KEYCHAIN = Object.freeze({ service: 'com.yosh.wallet.mainnet.v1', account: 'consumer-wallet-mainnet-v1' });
+
+/** Keep the installed test item intact. Environment selection never copies its key. */
+export function productWalletKeychain(environment: PaymentEnvironment) {
+  return validatePaymentEnvironment(environment).mode === 'live_mainnet' ? MAINNET_WALLET_KEYCHAIN : APP_WALLET_KEYCHAIN;
+}
 
 /** The product wallet uses one fixed Keychain item so a crash cannot orphan a newly-created signer. */
-export async function readAppWalletKeychain(): Promise<string | undefined> {
+async function readWalletKeychain(item: typeof APP_WALLET_KEYCHAIN | typeof MAINNET_WALLET_KEYCHAIN): Promise<string | undefined> {
   if (process.platform !== 'darwin') throw new Error('The Yosh wallet requires macOS Keychain');
   try {
-    const secret = await security(['find-generic-password', '-s', APP_WALLET_KEYCHAIN.service, '-a', APP_WALLET_KEYCHAIN.account, '-w']);
+    const secret = await security(['find-generic-password', '-s', item.service, '-a', item.account, '-w']);
     if (!/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(secret)) throw new Error();
     return secret;
   } catch (error) {
@@ -45,11 +52,16 @@ export async function readAppWalletKeychain(): Promise<string | undefined> {
   }
 }
 
-export async function createAppWalletKeychain(secret: string): Promise<void> {
+async function createWalletKeychain(item: typeof APP_WALLET_KEYCHAIN | typeof MAINNET_WALLET_KEYCHAIN, secret: string): Promise<void> {
   if (process.platform !== 'darwin') throw new Error('The Yosh wallet requires macOS Keychain');
   if (!/^[1-9A-HJ-NP-Za-km-z]{64,100}$/.test(secret)) throw new Error('Invalid Yosh wallet signer encoding');
-  await security(['-i'], `add-generic-password -s ${APP_WALLET_KEYCHAIN.service} -a ${APP_WALLET_KEYCHAIN.account} -w ${secret}\n`);
+  await security(['-i'], `add-generic-password -s ${item.service} -a ${item.account} -w ${secret}\n`);
 }
+
+export const readAppWalletKeychain = () => readWalletKeychain(APP_WALLET_KEYCHAIN);
+export const createAppWalletKeychain = (secret: string) => createWalletKeychain(APP_WALLET_KEYCHAIN, secret);
+export const readMainnetWalletKeychain = () => readWalletKeychain(MAINNET_WALLET_KEYCHAIN);
+export const createMainnetWalletKeychain = (secret: string) => createWalletKeychain(MAINNET_WALLET_KEYCHAIN, secret);
 
 export async function readDemoKeychain(service: string, account: string): Promise<string> {
   validateItem(service, account);

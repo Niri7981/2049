@@ -61,6 +61,39 @@ describe('authenticated local management boundary', () => {
 });
 
 describe('managed budget and Devnet test records', () => {
+  it('rejects Mainnet authority changes before rotating a connection or using the test recipient default', () => {
+    const now = Date.now();
+    const app = runtime('Asia/Shanghai', () => now);
+    try {
+      app.setDailyLimit('1000000');
+      const { grant, principal } = authorize(app, now);
+      vi.stubEnv('YOSH_EXECUTION_MODE', 'live_mainnet');
+      expect(() => app.createSpendGrant({ totalLimit: '1000000', singleLimit: '100000', expiresAt: now + 3600_000 })).toThrow('Restart Yosh');
+      expect(() => app.setDailyLimit('2000000')).toThrow('Restart Yosh');
+      expect(() => app.setPaused(false)).toThrow('Restart Yosh');
+      expect(app.ledger.spendGrantSummary(now, 'live_mainnet')).toBeNull();
+      vi.unstubAllEnvs();
+      expect(app.agentConnection.principal('request_purchase')).toEqual(principal);
+      expect(app.ledger.spendGrantSummary(now)?.id).toBe(grant.id);
+      expect(app.ledger.controls()).toMatchObject({ dailyBudget: '1000000' });
+    } finally { app.close(); }
+  });
+
+  it('rejects a pending test wallet result when the environment switches before it resolves', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'yosh-wallet-switch-')); dirs.push(dir);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const app = new AppRuntime(dir, { initializeWallet: async () => { await pending; return { address, reused: true }; } });
+    try {
+      const initializing = app.initializeWallet();
+      vi.stubEnv('YOSH_EXECUTION_MODE', 'live_mainnet');
+      release();
+      await expect(initializing).rejects.toThrow('Restart Yosh');
+      vi.unstubAllEnvs();
+      expect(await app.initializeWallet()).toEqual({ address, reused: true });
+    } finally { release(); app.close(); }
+  });
+
   it('shares one wallet initialization across concurrent overview and readiness requests', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'yosh-wallet-cache-')); dirs.push(dir);
     let release!: () => void;
@@ -207,6 +240,7 @@ describe('managed budget and Devnet test records', () => {
   });
 
   it('startup recovers original pending purchases once even when paused and live purchases are disabled', async () => {
+    vi.stubEnv('APP2049_ENABLE_DEVNET_PURCHASES', '1');
     vi.stubEnv('DEMO_MERCHANT_PUBLIC_KEY', '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs');
     vi.stubEnv('SOLANA_CLUSTER', 'devnet');
     const app = runtime();
@@ -222,6 +256,7 @@ describe('managed budget and Devnet test records', () => {
     app.ledger.claim(record.approvalId);
     app.ledger.savePayload(record.approvalId, { x402Version: 2, accepted: quote, payload: { transaction: 'test-wire' } });
     app.setPaused(true);
+    vi.stubEnv('APP2049_ENABLE_DEVNET_PURCHASES', '0');
     let release!: () => void;
     let entered!: () => void;
     const recovering = new Promise<void>(resolve => { entered = resolve; });
@@ -246,7 +281,7 @@ describe('managed budget and Devnet test records', () => {
     try {
       const empty = await app.balance(address, async () => Response.json({ jsonrpc: '2.0', id: 1, result: { value: null } }));
       const malformed = await app.balance(address, async () => Response.json({ jsonrpc: '2.0', id: 1, result: { value: { owner: 'wrong' } } }));
-      expect(empty).toEqual({ amount: '0', display: '0.00 test USDC', available: true });
+      expect(empty).toEqual({ amount: '0', display: '0.00 Test USDC', available: true });
       expect(malformed.available).toBe(false);
     } finally { app.close(); }
   });
@@ -310,7 +345,7 @@ describe('managed budget and Devnet test records', () => {
       expect(replay.status).toBe('PAID');
       expect(app.spendGrantSummary()).toMatchObject({ committed: '10000', remaining: '990000' });
       vi.stubEnv('APP2049_ENABLE_DEVNET_PURCHASES', '1');
-      expect(app.spendGrantSummary()).toMatchObject({ committed: '0', remaining: '1000000' });
+      expect(app.spendGrantSummary()).toBeNull();
       expect(app.ledger.list()).toHaveLength(1);
     } finally { app.close(); }
   });
@@ -345,7 +380,7 @@ describe('managed budget and Devnet test records', () => {
 
   it('rechecks pause and a lowered limit before signing and before submission', () => {
     const now = Date.parse('2026-09-14T08:00:00Z');
-    const ledger = new PurchaseLedger(':memory:', { managed: true, timeZone: () => 'Asia/Shanghai', now: () => now });
+    const ledger = new PurchaseLedger(':memory:', { managed: true, mode: 'live_devnet', timeZone: () => 'Asia/Shanghai', now: () => now });
     const merchant = '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
     const resource = createStaticResourceRegistry({ endpoint: 'https://purchase.local.invalid/api/paid/market-snapshot', asset_id: DEVNET_USDC_MINT, network: DEVNET_NETWORK, allowed_pay_to: merchant })[0];
     const quote: PaymentRequirements = { scheme: 'exact', network: DEVNET_NETWORK, asset: DEVNET_USDC_MINT, amount: '10000', payTo: merchant, maxTimeoutSeconds: 300, extra: {} };

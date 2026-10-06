@@ -1,7 +1,8 @@
 import { z } from 'zod';
+import { AtomicAmountSchema, PositiveAtomicAmountSchema, atomicAmount } from './atomic-money';
 
 const identifier = z.string().min(1).max(200);
-const minorUnits = z.string().regex(/^(?:0|[1-9]\d*)$/).refine(value => Number.isSafeInteger(Number(value)));
+const minorUnits = z.string().refine(value => AtomicAmountSchema.safeParse(value).success);
 export const PAID_RESOURCE_PURCHASE_OPERATION = 'paid.resource.purchase';
 /** Stored in grants and in-flight purchases created before generic paid resources. */
 export const LEGACY_MARKET_SNAPSHOT_OPERATION = 'market.snapshot.read';
@@ -46,8 +47,8 @@ export const SpendGrantSchema = SpendPrincipalSchema.extend({
   assetDecimals: z.number().int().nonnegative().max(255),
   payTo: identifier,
   paymentScheme: identifier,
-  totalLimit: z.number().int().positive().safe(),
-  singleLimit: z.number().int().positive().safe(),
+  totalLimit: PositiveAtomicAmountSchema,
+  singleLimit: PositiveAtomicAmountSchema,
   status: z.enum(['ACTIVE', 'REVOKED', 'EXPIRED']),
   createdAt: z.number().int().nonnegative().safe(),
   expiresAt: z.number().int().positive().safe(),
@@ -62,7 +63,7 @@ export type SpendGrant = z.infer<typeof SpendGrantSchema>;
 
 export function parseGrantAmount(value: string, name: string) {
   if (!/^(?:0|[1-9]\d*)$/.test(value)) throw new Error(`${name} must be an integer string`);
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`${name} must be a positive safe integer`);
+  const parsed = atomicAmount(value);
+  if (parsed <= 0n) throw new Error(`${name} must be a positive integer`);
   return parsed;
 }

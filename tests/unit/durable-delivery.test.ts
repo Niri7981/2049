@@ -1,0 +1,263 @@
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { generateKeyPairSigner } from '@solana/kit';
+import { encodePaymentResponseHeader } from '@x402/core/http';
+import { afterEach, expect, it, vi } from 'vitest';
+import { resolvePaymentEnvironment } from '../../src/modules/payment/payment-environment';
+import type { PaymentConfig } from '../../src/modules/payment/payment-config';
+import { loadBuyerSigner } from '../../src/modules/payment/wallet';
+import { prepareSolanaPayment } from '../../src/modules/payment/solana-payment';
+import { reconcileStoredOriginalPayment } from '../../src/modules/payment/reconcile-transaction';
+import { createX402SpendIntent } from '../../src/modules/resources/market-spend-adapter';
+import { TEST_CACHED_DELIVERY, validateDeliveryCapability, type DeliveryRecoveryCapability } from '../../src/modules/resources/delivery-capability';
+import type { X402Resource } from '../../src/modules/resources/http-resource';
+import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';
+import { executeApprovedPayment, recoverApprovedPayment } from '../../src/modules/purchases/approved-payment';
+import { DELIVERY_RETRY_LIMIT } from '../../src/modules/purchases/delivery-state';
+import { PAID_RESOURCE_PURCHASE_OPERATION } from '../../src/modules/authority/spend-grant';
+import { signedPaymentFixture, FIXTURE_TRANSACTION_SIGNATURE } from '../helpers/signed-payment-fixture';
+import { AppRuntime } from '../../src/modules/app/app-runtime';
+
+vi.mock('../../src/modules/payment/wallet', () => ({ loadBuyerSigner: vi.fn() }));
+vi.mock('../../src/modules/payment/solana-payment', async original => ({ ...await original<typeof import('../../src/modules/payment/solana-payment')>(), prepareSolanaPayment: vi.fn() }));
+vi.mock('../../src/modules/payment/reconcile-transaction', async original => ({ ...await original<typeof import('../../src/modules/payment/reconcile-transaction')>(), reconcileStoredOriginalPayment: vi.fn() }));
+const handles = new Set<PurchaseLedger>(); const directories: string[] = [];
+afterEach(() => {
+  for (const ledger of handles) { try { ledger.close(); } catch { /* Already closed by restart fixture. */ } }
+  handles.clear(); for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true });
+  vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers(); vi.resetAllMocks();
+});
+async function fixture(capability: DeliveryRecoveryCapability | null = TEST_CACHED_DELIVERY) {
+  let clock = Date.now();
+  const signer = await generateKeyPairSigner(); const fee = await generateKeyPairSigner(); const recipient = (await generateKeyPairSigner()).address;
+  const environment = resolvePaymentEnvironment({}, 'live_devnet');
+  const config: PaymentConfig = { ...environment, buyer: signer.address, mint: environment.asset.mint,
+    merchant: (await generateKeyPairSigner()).address, facilitatorUrl: 'https://facilitator.example' };
+  const resource: X402Resource = { resourceId: 'approved-result', providerId: 'approved-provider', network: config.network,
+    mint: config.mint, decimals: 6, recipient, request: { url: 'https://api.provider.example/v1/result', method: 'POST',
+      access: 'https', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: '{"query":"approved"}' },
+    ...(capability ? { deliveryRecovery: capability } : {}) };
+  const challenge = { x402Version: 2 as const, resource: { url: resource.request.url }, accepts: [{ scheme: 'exact',
+    network: config.network, asset: config.mint, payTo: recipient, amount: '10000', maxTimeoutSeconds: 300, extra: { feePayer: fee.address } }] };
+  const dir = mkdtempSync(join(tmpdir(), 'yosh-delivery-')); directories.push(dir); const path = join(dir, 'app-ledger.sqlite');
+  const options = { managed: true, requireSpendGrant: true, mode: 'live_devnet' as const, now: () => clock };
+  const ledger = new PurchaseLedger(path, options); handles.add(ledger);
+  ledger.setDailyLimit('100000', 'live_devnet');
+  const principal = { cardMemberId: ledger.defaultCardMember().id, connectionId: crypto.randomUUID(), connectionGeneration: 1 };
+  ledger.createSpendGrant({ totalLimit: '100000', singleLimit: '10000', expiresAt: clock + 600_000 }, principal,
+    { resourceId: resource.resourceId, providerId: resource.providerId, operation: PAID_RESOURCE_PURCHASE_OPERATION,
+      network: config.network, assetId: config.mint, assetDecimals: 6, payTo: recipient, paymentScheme: 'exact' }, clock, 'live_devnet');
+  const authority = ledger.spendAuthority(principal, PAID_RESOURCE_PURCHASE_OPERATION, clock, 'live_devnet');
+  const intent = createX402SpendIntent({ idempotencyKey: 'original-purchase', resource, challenge, environment, buyer: signer.address, authority, now: clock });
+  const record = ledger.reserve(intent, challenge.accepts[0], clock, 'live_devnet');
+  expect(record.status).toBe('APPROVED');
+  vi.mocked(loadBuyerSigner).mockResolvedValue(signer);
+  vi.mocked(prepareSolanaPayment).mockImplementation(async (signedConfig, _signer, quote, beforeSign) => {
+    beforeSign?.(); return { ...await signedPaymentFixture(signer, signedConfig, quote), resource: challenge.resource };
+  });
+  vi.mocked(reconcileStoredOriginalPayment).mockResolvedValue({ status: 'CONFIRMED', transaction: FIXTURE_TRANSACTION_SIGNATURE, confirmationStatus: 'finalized' });
+  const initial = vi.fn<typeof fetch>().mockRejectedValue(new Error('Response lost')); vi.stubGlobal('fetch', initial);
+  const paid = () => executeApprovedPayment(ledger, record.approvalId, config, resource.request.url);
+  const retry = (fetcher: typeof fetch, activeLedger = ledger) => recoverApprovedPayment(activeLedger, intent.idempotencyKey, config,
+    resource.request.url, undefined, principal.cardMemberId, { fetcher });
+  const response = (receipt = true, body = '{"result":"original-data"}') => new Response(body, { headers: {
+    'content-type': 'application/json', ...(receipt ? { 'PAYMENT-RESPONSE': encodePaymentResponseHeader({ success: true,
+      network: config.network, payer: config.buyer, transaction: FIXTURE_TRANSACTION_SIGNATURE, amount: '10000' }) } : {}) } });
+  return { ledger, record, config, resource, intent, path, options, principal, paid, retry, initial, response,
+    advance: (ms = 60_000) => { clock += ms; }, now: () => clock,
+    reopen: () => { const reopened = new PurchaseLedger(path, options); handles.add(reopened); return reopened; } };
+}
+
+it('persists independent PAID, receipt CONFIRMED and delivered success without a delivery retry', async () => {
+  const f = await fixture(); f.initial.mockResolvedValue(f.response());
+  await f.paid();
+  expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', receiptStatus: 'CONFIRMED', deliveryStatus: 'COMPLETE', deliveryRecovery: { retryCount: 0 } });
+});
+it('lost response remains paid and receipt unavailable until a later delivery-only retry succeeds', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', receiptStatus: 'UNAVAILABLE', deliveryStatus: 'PENDING' });
+  const retry = vi.fn<typeof fetch>().mockResolvedValue(f.response()); await f.retry(retry);
+  expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', receiptStatus: 'CONFIRMED', deliveryStatus: 'COMPLETE', deliveryRecovery: { retryCount: 1 } });
+  const request = retry.mock.calls[0][1]; expect(request).toMatchObject({ method: 'POST', body: f.resource.request.body, redirect: 'error' });
+  expect(request?.headers).toMatchObject({ 'PAYMENT-RECOVERY': '1', 'PAYMENT-SIGNATURE': f.initial.mock.calls[0][1]?.headers && new Headers(f.initial.mock.calls[0][1]?.headers).get('PAYMENT-SIGNATURE') });
+  expect(loadBuyerSigner).toHaveBeenCalledOnce(); expect(prepareSolanaPayment).toHaveBeenCalledOnce();
+  expect(reconcileStoredOriginalPayment).toHaveBeenCalledOnce();
+});
+it('valid delivery can be complete while the independent receipt remains unavailable', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  await f.retry(vi.fn<typeof fetch>().mockResolvedValue(f.response(false)));
+  expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', receiptStatus: 'UNAVAILABLE', deliveryStatus: 'COMPLETE' });
+});
+it('claims only one concurrent retry and repeated completed calls send no request', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  let release!: (response: Response) => void;
+  const retry = vi.fn<typeof fetch>().mockImplementation(() => new Promise(resolve => { release = resolve; }));
+  const first = f.retry(retry); await f.retry(retry);
+  expect(retry).toHaveBeenCalledOnce(); expect(f.ledger.get(f.intent.idempotencyKey)?.deliveryRecovery.retryCount).toBe(1);
+  release(f.response()); await first; await f.retry(retry);
+  expect(retry).toHaveBeenCalledOnce();
+});
+it('another SQLite handle cannot steal an active delivery claim', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  const token = f.ledger.claimDelivery(f.record.approvalId, 'retry'); expect(token).toBeTypeOf('string');
+  const other = f.reopen();
+  expect(other.claimDelivery(f.record.approvalId, 'retry')).toBeUndefined();
+  expect(other.get(f.intent.idempotencyKey)?.deliveryRecovery.retryCount).toBe(1);
+});
+it('restart preserves consumed attempts, recovers an interrupted claim and rejects the stale owner', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  const token = f.ledger.claimDelivery(f.record.approvalId, 'retry')!; f.ledger.close();
+  const reopened = f.reopen(); reopened.recoverDeliveryClaimsOnStartup();
+  expect(reopened.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', deliveryStatus: 'PENDING', deliveryRecovery: { retryCount: 1, lastError: 'DELIVERY_ATTEMPT_INTERRUPTED' } });
+  expect(() => reopened.finish(f.record.approvalId, { transaction: FIXTURE_TRANSACTION_SIGNATURE, data: { stale: true } }, undefined, token)).toThrow('DELIVERY_CLAIM_MISMATCH');
+  f.advance(); await f.retry(vi.fn<typeof fetch>().mockResolvedValue(f.response()), reopened);
+  expect(reopened.get(f.intent.idempotencyKey)).toMatchObject({ deliveryStatus: 'COMPLETE', deliveryRecovery: { retryCount: 2 } });
+});
+it('four failed retries exhaust durably; requests and restart cannot reset the budget', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  const retry = vi.fn<typeof fetch>().mockRejectedValue(new Error('Unavailable'));
+  for (let i = 0; i < DELIVERY_RETRY_LIMIT; i++) { await f.retry(retry); f.advance(); }
+  expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', deliveryStatus: 'EXHAUSTED', deliveryRecovery: { retryCount: 4 } });
+  expect(f.ledger.pendingRecovery()).toEqual([]); await f.retry(retry);
+  f.ledger.close(); const reopened = f.reopen(); reopened.recoverDeliveryClaimsOnStartup(); await f.retry(retry, reopened);
+  expect(retry).toHaveBeenCalledTimes(4); expect(prepareSolanaPayment).toHaveBeenCalledOnce();
+});
+it('a crash during the last attempt becomes exhausted without granting a fifth attempt', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  for (let i = 0; i < 3; i++) { await f.retry(vi.fn<typeof fetch>().mockRejectedValue(new Error('Unavailable'))); f.advance(); }
+  expect(f.ledger.claimDelivery(f.record.approvalId, 'retry')).toBeTypeOf('string'); f.ledger.close();
+  const reopened = f.reopen(); reopened.recoverDeliveryClaimsOnStartup();
+  expect(reopened.get(f.intent.idempotencyKey)).toMatchObject({ deliveryStatus: 'EXHAUSTED', deliveryRecovery: { retryCount: 4 } });
+  expect(reopened.claimDelivery(f.record.approvalId, 'retry')).toBeUndefined();
+});
+it('backoff survives restart and repeated early calls do not consume another attempt', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow(); const retry = vi.fn<typeof fetch>().mockRejectedValue(new Error('Unavailable'));
+  await f.retry(retry); const state = f.ledger.get(f.intent.idempotencyKey)!.deliveryRecovery;
+  expect(state.nextAttemptAt).toBe(f.now() + 1000); f.ledger.close(); const reopened = f.reopen();
+  await f.retry(retry, reopened); expect(retry).toHaveBeenCalledOnce();
+  f.advance(1000); await f.retry(retry, reopened); expect(retry).toHaveBeenCalledTimes(2);
+});
+it.each([{ kind: 'none' } as const, null])('unsupported or absent capability never sends a delivery request', async capability => {
+  const f = await fixture(capability); await expect(f.paid()).rejects.toThrow();
+  const retry = vi.fn<typeof fetch>(); await f.retry(retry); await f.retry(retry);
+  expect(retry).not.toHaveBeenCalled(); expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', deliveryStatus: 'UNSUPPORTED', deliveryRecovery: { retryCount: 0 } });
+});
+it('unknown payment never enters paid-delivery recovery or consumes an attempt', async () => {
+  const f = await fixture(); vi.mocked(reconcileStoredOriginalPayment).mockResolvedValue({ status: 'UNKNOWN' });
+  await expect(f.paid()).rejects.toThrow(); const retry = vi.fn<typeof fetch>(); await f.retry(retry);
+  expect(retry).not.toHaveBeenCalled(); expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAYMENT_UNKNOWN', deliveryStatus: 'NOT_PAID', deliveryRecovery: { retryCount: 0 } });
+  expect(prepareSolanaPayment).toHaveBeenCalledOnce();
+});
+it('delivery retry changes no daily paid/reserved/remaining amounts or grant commitment, even after pause/revocation', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  const before = f.ledger.managedSummary(f.now(), 'live_devnet'); const grant = f.ledger.spendGrantSummary(f.now(), 'live_devnet', f.principal.cardMemberId);
+  f.ledger.setPaused(true); f.ledger.revokeActiveSpendGrant(f.now());
+  await f.retry(vi.fn<typeof fetch>().mockResolvedValue(f.response()));
+  const after = f.ledger.managedSummary(f.now(), 'live_devnet'); const nextGrant = f.ledger.spendGrantSummary(f.now(), 'live_devnet', f.principal.cardMemberId);
+  expect([after.paid, after.reserved, after.remaining]).toEqual([before.paid, before.reserved, before.remaining]);
+  expect(nextGrant).toMatchObject({ committed: grant!.committed, remaining: grant!.remaining });
+  expect(f.ledger.events(f.intent.idempotencyKey).filter(event => event.type === 'payment.PAID')).toHaveLength(1);
+});
+it.each(['not json', '[]', '1', ' '.repeat(16_385)])('malformed recovered delivery remains paid and consumes a bounded retry', async body => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow(); await f.retry(vi.fn<typeof fetch>().mockResolvedValue(f.response(true, body)));
+  expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', receiptStatus: 'CONFIRMED', deliveryStatus: 'PENDING', deliveryRecovery: { retryCount: 1 } });
+  expect(f.ledger.get(f.intent.idempotencyKey)?.data).toBeUndefined();
+});
+it('malformed/wrong transaction receipt cannot satisfy delivery and cannot erase confirmed payment', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  const response = f.response(); response.headers.set('PAYMENT-RESPONSE', 'malformed'); await f.retry(vi.fn<typeof fetch>().mockResolvedValue(response));
+  expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', receiptStatus: 'INVALID', deliveryStatus: 'PENDING' });
+});
+it('idempotent replay reuses the original signature without injecting a Demo recovery header', async () => {
+  const f = await fixture({ kind: 'idempotent_replay' }); await expect(f.paid()).rejects.toThrow();
+  const retry = vi.fn<typeof fetch>().mockResolvedValue(f.response()); await f.retry(retry);
+  const headers = new Headers(retry.mock.calls[0][1]?.headers);
+  expect(headers.has('PAYMENT-SIGNATURE')).toBe(true); expect(headers.has('PAYMENT-RECOVERY')).toBe(false);
+  expect(headers.get('PAYMENT-SIGNATURE')).toBe(new Headers(f.initial.mock.calls[0][1]?.headers).get('PAYMENT-SIGNATURE'));
+});
+it.each(['query', 'header'] as const)('declared payment identifier lookup uses %s and sends no payment credential', async location => {
+  const capability: DeliveryRecoveryCapability = { kind: 'payment_identifier', request: { url: 'https://api.provider.example/v1/cache',
+    method: 'GET', access: 'https', headers: { accept: 'application/json' } }, identifier: 'transaction', location, name: 'payment-id' };
+  const f = await fixture(capability); await expect(f.paid()).rejects.toThrow();
+  const retry = vi.fn<typeof fetch>().mockResolvedValue(f.response(false)); await f.retry(retry);
+  const [url, request] = retry.mock.calls[0]; expect(request?.method).toBe('GET'); const headers = new Headers(request?.headers);
+  expect(headers.has('PAYMENT-SIGNATURE')).toBe(false); expect(headers.has('PAYMENT-RECOVERY')).toBe(false);
+  expect(location === 'query' ? new URL(String(url)).searchParams.get('payment-id') : headers.get('payment-id')).toBe(FIXTURE_TRANSACTION_SIGNATURE);
+  expect(f.ledger.get(f.intent.idempotencyKey)?.deliveryStatus).toBe('COMPLETE'); expect(prepareSolanaPayment).toHaveBeenCalledOnce();
+});
+it('capability request cannot change origin or weaken access', () => {
+  expect(() => validateDeliveryCapability({ kind: 'payment_identifier', request: { url: 'https://other.provider.example/cache', method: 'GET', access: 'https', headers: {} },
+    identifier: 'transaction', location: 'query', name: 'payment-id' }, { url: 'https://api.provider.example/data', access: 'https' })).toThrow('DELIVERY_RECOVERY_RESOURCE_MISMATCH');
+});
+it('SQL rejects retry reset and changing the persisted recovery capability', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow(); await f.retry(vi.fn<typeof fetch>().mockRejectedValue(new Error('Unavailable')));
+  const db = new DatabaseSync(f.path);
+  try {
+    expect(() => db.prepare('UPDATE purchase_delivery SET retry_count=0 WHERE purchase_id=?').run(f.intent.id)).toThrow('delivery retry count cannot reset');
+    expect(() => db.prepare('UPDATE purchase_delivery SET capability=? WHERE purchase_id=?').run('{"kind":"idempotent_replay"}', f.intent.id)).toThrow('delivery capability is immutable');
+  } finally { db.close(); }
+});
+
+it.each(['PAID', 'PAYMENT_UNKNOWN'] as const)('009 migration preserves the original %s row and financial/evidence bindings', async status => {
+  const f = await fixture();
+  if (status === 'PAYMENT_UNKNOWN') vi.mocked(reconcileStoredOriginalPayment).mockResolvedValue({ status: 'UNKNOWN' });
+  await expect(f.paid()).rejects.toThrow(); f.ledger.close();
+  const db = new DatabaseSync(f.path);
+  const before = db.prepare('SELECT * FROM purchases').all();
+  const grants = db.prepare('SELECT * FROM spend_grants').all();
+  const original = db.prepare('SELECT * FROM original_payments').all();
+  db.exec("DROP TRIGGER purchase_delivery_payment_state; DROP TABLE purchase_delivery; DELETE FROM ledger_schema_migrations WHERE id='009_durable_delivery_recovery'");
+  db.close(); const reopened = f.reopen();
+  expect(reopened.get(f.intent.idempotencyKey)).toMatchObject({ status, deliveryStatus: status === 'PAID' ? 'PENDING' : 'NOT_PAID', deliveryRecovery: { retryCount: 0 } });
+  const after = new DatabaseSync(f.path);
+  try {
+    expect(after.prepare('SELECT * FROM purchases').all()).toEqual(before);
+    expect(after.prepare('SELECT * FROM spend_grants').all()).toEqual(grants);
+    expect(after.prepare('SELECT * FROM original_payments').all()).toEqual(original);
+    expect(after.prepare('PRAGMA integrity_check').get()).toMatchObject({ integrity_check: 'ok' });
+  } finally { after.close(); }
+});
+it('backend automatically retries due paid deliveries after restart, even while payments are disabled', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow(); f.ledger.close();
+  vi.stubEnv('YOSH_EXECUTION_MODE', 'simulated'); vi.stubEnv('APP2049_ENABLE_DEVNET_PURCHASES', '0');
+  vi.stubEnv('SOLANA_CLUSTER', 'devnet'); vi.stubEnv('DEMO_MERCHANT_PUBLIC_KEY', f.config.merchant);
+  vi.stubEnv('DEMO_BUYER_PUBLIC_KEY', f.config.buyer); vi.stubEnv('YOSH_USE_PRODUCT_WALLET', '1');
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(f.response());
+  const app = new AppRuntime(join(f.path, '..'), { initializeWallet: async () => ({ address: f.config.buyer, reused: true }), now: f.now, fetcher });
+  try {
+    app.ledger.setPaused(true);
+    await app.start('http://127.0.0.1:3049');
+    expect(app.ledger.get(f.intent.idempotencyKey)?.deliveryRecovery.retryCount).toBe(1);
+    f.advance(1000); await vi.advanceTimersByTimeAsync(1000);
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(app.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', deliveryStatus: 'COMPLETE', deliveryRecovery: { retryCount: 2 } });
+    expect(loadBuyerSigner).toHaveBeenCalledOnce(); expect(prepareSolanaPayment).toHaveBeenCalledOnce();
+    await app.prepareQuit(); await vi.advanceTimersByTimeAsync(10_000); expect(fetcher).toHaveBeenCalledOnce();
+  } finally { await app.prepareQuit(); app.close(); }
+});
+it('cached-result retries never invoke the fixture token-transfer dispatcher a second time', async () => {
+  const f = await fixture(); const transfer = vi.fn();
+  f.initial.mockImplementation(async () => { transfer(); throw new Error('Transfer succeeded, response lost'); });
+  await expect(f.paid()).rejects.toThrow();
+  const originalHeader = new Headers(f.initial.mock.calls[0][1]?.headers).get('PAYMENT-SIGNATURE');
+  const cache = vi.fn<typeof fetch>().mockImplementation(async (_url, request) => {
+    const headers = new Headers(request?.headers);
+    expect(headers.get('PAYMENT-RECOVERY')).toBe('1');
+    expect(headers.get('PAYMENT-SIGNATURE')).toBe(originalHeader);
+    // The declared fixture cache serves/reads this already paid result, never settles.
+    throw new Error('Cache not available yet');
+  });
+  for (let i = 0; i < DELIVERY_RETRY_LIMIT; i++) { await f.retry(cache); f.advance(); }
+  expect(transfer).toHaveBeenCalledOnce(); expect(cache).toHaveBeenCalledTimes(4);
+  expect(prepareSolanaPayment).toHaveBeenCalledOnce();
+  expect(f.ledger.list()).toHaveLength(1); expect(f.ledger.get(f.intent.idempotencyKey)?.deliveryStatus).toBe('EXHAUSTED');
+});
+it('rejects a test purchase with a Mainnet recovery environment before a delivery request or claim', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow(); const fetcher = vi.fn<typeof fetch>();
+  const mainnet = { ...f.config, ...resolvePaymentEnvironment({ YOSH_EXECUTION_MODE: 'live_mainnet' }) };
+  await expect(recoverApprovedPayment(f.ledger, f.intent.idempotencyKey, mainnet, f.resource.request.url, undefined, f.principal.cardMemberId, { fetcher })).rejects.toThrow('PURCHASE_EXECUTION_MODE_MISMATCH');
+  expect(fetcher).not.toHaveBeenCalled(); expect(f.ledger.get(f.intent.idempotencyKey)?.deliveryRecovery.retryCount).toBe(0);
+});

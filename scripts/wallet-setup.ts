@@ -5,6 +5,7 @@ import { createKeyPairSignerFromPrivateKeyBytes, getBase58Decoder } from "@solan
 import { createDemoKeychain, readDemoKeychain } from "../src/modules/payment/keychain";
 import { loadBuyerSigner } from "../src/modules/payment/wallet";
 import { DEVNET_USDC_MINT } from "../src/modules/payment/payment-config";
+import { assertTestWalletEnvironment } from '../src/modules/app-wallet/product-wallet';
 
 type WalletRecord = { version: 1; cluster: "devnet"; address: string; keychainService: string; createdAt: string };
 async function optionalRead(path: string) {
@@ -12,6 +13,8 @@ async function optionalRead(path: string) {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
 }
 async function main() {
+  // Refuse Mainnet before creating Demo records, touching Keychain or rewriting configuration.
+  assertTestWalletEnvironment();
   if (process.platform !== "darwin") throw new Error("Wallet setup uses macOS Keychain");
   await mkdir(".data", { recursive: true, mode: 0o700 });
   const lock = new DatabaseSync(".data/day4-wallet-lock.sqlite");
