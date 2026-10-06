@@ -1,6 +1,6 @@
 # Yosh macOS 第一版实施计划
 
-更新日期：2026-10-05。
+更新日期：2026-10-06。
 
 本文记录本轮确认的目标架构、实施顺序和当前证据。状态以本页“实施状态”和实际测试为准；任何开发进度都不代表付款、部署或推送授权。
 
@@ -52,7 +52,7 @@
 
 2026-09-18 M3 验收：产品钱包 `Hr937hUNE1yHzjDLhZngWn8rHUWGTuTRLMJoTzi9BUeH` 在真实 Devnet 模式完成购买 `m3-20260918-final-1`。付款交易为 `42qEJgZfZbWbf8FRwuKvJ2mfMwyi5evrZr2r9cNfriocGxN4gt5jfAAjKiDBjKn2Tpx9ihbdMHu2zbKKK5GfAVkr`；RPC 确认买方 `10000 → 0`、商家 `130000 → 140000` 最小单位。当前进程重放和重新打开账本后的重放均返回同一交易，购买记录始终只有一条；App 界面显示付款已确认、结果已交付、当日已消费 0.01 测试 USDC。
 
-新 App 开发以本文和 [AGENTS.md](AGENTS.md) 为依据；`docs/architecture/` 中原 V0 文档保留为测试网 Demo 的历史设计。旧文档中的固定资源、固定预算、不使用 MCP 等限定不自动延续到新 App；钱包隔离、报价校验、幂等和恢复要求继续保留。
+新 App 开发以本文和 [AGENTS.md](AGENTS.md) 为依据；`docs/architecture/v0/` 中原 V0 文档保留为测试网 Demo 的历史设计。旧文档中的固定资源、固定预算、不使用 MCP 等限定不自动延续到新 App；钱包隔离、报价校验、幂等和恢复要求继续保留。
 
 ## 1. 产品与范围
 
@@ -194,7 +194,21 @@ Codex ── MCP 接口 ──────┘          │
 
 完成状态以上方“实施状态”为准。每阶段先验证前提，再实现最小可用功能；按真实证据更新进度。
 
-2026-10-05 Mainnet readiness P0：完整范围与首步边界见 [Payment Environment isolation](docs/architecture/payment-environment-isolation.md)。确认最终依次覆盖环境、钱包/授权、账本/整数金额、通用 x402 资源、商家无关原交易恢复、付款/回执/交付分离、安全展示与完整验收；扩展现有流水线，核心不得按商家名称分支。本轮仅授权环境模型、配置一致性校验与相关回归；`live_mainnet` 结构合法仍禁止实际执行，其他步骤未开始，最终主网购买仍需具体授权。
+2026-10-05 Mainnet readiness P0：完整范围与首步边界见 [Payment Environment isolation](docs/architecture/mainnet-readiness/payment-environment-isolation.md)。确认最终依次覆盖环境、钱包/授权、账本/整数金额、通用 x402 资源、商家无关原交易恢复、付款/回执/交付分离、安全展示与完整验收；扩展现有流水线，核心不得按商家名称分支。本轮仅授权环境模型、配置一致性校验与相关回归；`live_mainnet` 结构合法仍禁止实际执行，其他步骤未开始，最终主网购买仍需具体授权。
+
+2026-10-05 P0 第二步：用户另行授权仅实现 [Mainnet wallet and authority isolation](docs/architecture/mainnet-readiness/mainnet-wallet-authority-isolation.md)。保留 test Keychain，新增显式 Mainnet Keychain 身份并核对真实 signer；拒绝 Demo 来源、旧钱包身份和 test 授权/recipient defaults。现有授权存储尚未分区，因此 Mainnet 的 authority 为暂停、无额度、无 grant，暂不开放 App 或付款执行。账本 scope/bigint、商家、恢复和 UI 改造仍未开始。
+
+2026-10-05 P0 第三步：用户另行授权仅实现 [ledger monetary scope + integer money](docs/architecture/mainnet-readiness/ledger-monetary-scope.md)。购买、每日预算窗口与 SpendGrant 承诺按环境、钱包身份、网络、mint/精度隔离；权威金额使用有界 bigint 和十进制 TEXT/JSON 字符串。006 迁移保留历史购买、预占、PAID、未知付款与原始证据；缺失来源的历史测试记录隔离并保守阻止绕过旧预占。Mainnet 仍暂停、无可用授权且禁止执行。商家、恢复重设计与 UI 改造仍未开始。
+
+2026-10-06 P0 第四步：用户另行授权仅实现 [merchant-independent original-payment recovery](docs/architecture/mainnet-readiness/original-payment-recovery.md)。原签名 payload、买方签名/message identity、monetary scope、实际 memo、blockhash/lifetime 与首次发送状态持久绑定；商家不可用时由买方 RPC 核对精确原交易，confirmed/finalized 成功可记为 PAID，只有确定未提交或 finalized 失败才释放预占，查询缺失与异常继续保留未知付款。007 增量迁移不改写历史购买或证据，旧 signed payload 的发送状态保守未知；`recordedAt` 不伪装历史签名时间。缺失响应不触发第二次签名或替代付款，V3 buyer_rpc 证明与商家回执/交付保持独立。Mainnet 执行仍禁用；通用商家接入、交付重试重设计和 UI 改造未开始，验证与本机安装结果以本轮实际验收为准。
+
+2026-10-06 P0 第五步：用户另行授权仅实现 [production x402 compatibility hardening](docs/architecture/mainnet-readiness/production-x402-compatibility.md)。在既有官方 SDK 和购买执行器中支持声明式外部 HTTPS 请求，绑定完整 URL、HTTP method、headers/body、生产 network/USDC/recipient 与完整 challenge；保留 extensions，取消客户端 `day4:` memo 要求，持久使用实际已签 memo，严格校验 settlement receipt。008 只新增新 HTTP-bound intents 的不可变约束，不改写历史记录。Mainnet 执行、可用授权及生产资源管理入口仍未开放；不新增商家适配器、付款栈、交付重试设计或 UI 改造，验证与本机安装结果以本轮实际验收为准。
+
+2026-10-06 P0 第六步：用户另行授权仅实现 [durable delivery recovery](docs/architecture/mainnet-readiness/durable-delivery-recovery.md)。付款结果、回执结果和交付状态分开保存；仅在原付款确定 PAID 后原子领取交付执行权，最多四次恢复，次数/等待/claim 与终态跨重启保留。能力来自批准资源的声明，支持幂等原凭据重放、显式缓存重放和 payment identifier 查询；未声明能力则保留 PAID 并记录 UNSUPPORTED，不再购买。009 仅新增 side table 与约束，旧行和资金证据保留。后端自动检查到期交付，暂停不退回已消费额度，退出停止新重试并等待在途操作。Mainnet 执行及可用授权仍禁用；无 UI 改造或商家名称分支，验收以本轮实际结果为准。
+
+2026-10-06 P0 第七步：用户另行授权仅实现 [conditional Mainnet execution](docs/architecture/mainnet-readiness/conditional-mainnet-execution.md)。共享后端执行器以显式生产开关、独立 Mainnet daily authority/SpendGrant、登记 HTTPS 资源、精确不可变绑定、原子 reserve/claim、专用 Keychain signer、Mainnet preflight 和 simulation 替换 blanket execution/authority 禁令。010 激活迁移隔离启用前的 Mainnet authority，不移动测试授权或资金记录。原交易对账及已付款交付恢复在关闭生产开关后仍可运行，不再次签名。内部登记资源服务在 fixture 中到达既有官方 SDK/签名边界；原生 App runtime 和测试资源入口仍是测试用途，生产管理入口/UI 未开放。本轮无真实主网付款、充值、Mainnet 钱包创建、商家付费调用或 UI 改造；最终验证与本机安装证据见本阶段文档。
+
+2026-10-06 P0 第八步：用户另行授权仅实现 [guarded Mainnet product entry](docs/architecture/mainnet-readiness/mainnet-product-entry.md)。既有 Codex MCP purchase intent 经认证 Agent API/AppRuntime 到达同一登记资源、授权、原子预占与主网门禁执行器；原生 App 最小接线读取生产状态、配置主网日额度/暂停和具体登记 API 的 SpendGrant，保留原有 UI。主网默认禁用，测试入口拒绝主网，测试授权不能跨 scope；重放与重启恢复复用原付款及原端点。无真实主网付款、钱包创建、充值或 UI 改造；最终当前验证与本机安装证据见该文档。
 
 | 阶段 | 优先级 | 任务 | 依赖 | 验收标准 |
 |---|---|---|---|---|
@@ -225,3 +239,15 @@ M6 前必须再次取得具体主网交易授权（API/收款方、用途、金�
 - 展示：原凭据和密钥不进入前端；失败原因足够定位且脱敏；测试快照明确标记。
 
 测试和代码要求见 [AGENTS.md](AGENTS.md)。
+
+2026-10-06 Execution Details：本轮仅实现 Authority 的 Execution 详情导航、后端持久环境选择和准确模式标签。原生选择通过认证管理接口进入现有 PaymentEnvironment 配置；Mainnet 可选择但不创建钱包、额度或 SpendGrant、不恢复暂停、不授予生产标志。进行中或待恢复付款/预占阻止切换；付款内核不变，没有执行主网付款。当前实现与验证见 [Execution selection](docs/architecture/mainnet-readiness/execution-selection.md)。
+
+2026-10-06 Mainnet Authority Surface：本轮仅更新现有 Authority 的 Available／Reserved／Paid、资产语义、独立 Daily Authority 状态、专用主网钱包只读详情、当前 Agent 的注册 API Grant 与具体阻止原因。展示金额由后端选定 monetary scope 的整数／bigint 账本生成；主网缺少钱包时不创建或回退测试钱包，不创建额度或解除暂停。付款内核、Latest Activity、交易与恢复页面不变；没有主网付款。修改和当前验证记录见 [Mainnet Authority Surface](docs/architecture/mainnet-readiness/mainnet-authority-surface.md)。
+
+2026-10-06 UI semantics tightening：本轮仅调整原生文案与展示投影，统一 Mainnet／Devnet · Developer／Simulation，按保存的 environment + network 显示生产与 Test 资产；缺失或冲突来源不冒充生产资产。保留 Authority、Daily Authority、Spend Grant、Available、Reserved、Paid、Connection、Activity；Members 显示改为 Agents，内部标识不变。Allowed 与付款、交付分别表述；未知付款显示 Checking original payment 并解释 Reserved 继续保留，已付款交付恢复显示 Payment confirmed · retrieving result／result not recovered。Activity 命名、Spend Grant 操作文案、已知阻止原因、加载与未实现状态保持一致；保留原布局与资源图标，缩短 Activity 标题后维持完整原生按钮点击范围。未修改后端、付款行为或保存的模式，没有真实付款或 Computer Use。
+
+本轮当前验证：原生展示、资产隔离、付款/交付状态、恢复边界、窄窗口、按钮、滚动、导航、连接与 Spend Grant 定向测试，以及成员/Mainnet 管理请求与认证管理接口 mock 冒烟均通过；一次批量页签滚动测试在并发构建时捕捉未完成动画，单独重跑通过，未改动画。typecheck、lint、Next production build、macOS Debug 与 Release build、diff 检查通过。更新 `/Users/irin/Applications/Yosh.app`，严格签名校验、安装与 Release 构建逐文件一致、图标 hash 保持一致。启动 App PID 84784 路径为安装位置；用户正常解锁后，本次生命周期日志确认后端 PID 84844 ready，并监听 `127.0.0.1:3049`。本轮未提交/推送：工作区存在大量前序 Mainnet 阶段未提交改动，且与本轮文件重叠、构成编译依赖；保留既有暂存和工作区，未将其混入语义修改提交。
+
+2026-10-06 Activity 环境隔离修复：仅在原生展示层新增当前模式的 Activity 记录投影，按购买保存的 monetaryEnvironment + network 匹配 Mainnet／Devnet／Simulation；来源缺失或网络冲突不归入当前环境。Authority 下方摘要、Activity 列表与购买详情查找共用这一投影；所选 Agent 的原有所有权范围保留，账本历史不删除或改写，后台恢复与付款行为不变。先用混合环境记录复现 Mainnet 摘要误显示 Devnet 的失败，再验证模式隔离、无记录空状态、legacy test、所有付款状态及完整原账本保留；相关原生展示与点击测试、typecheck、lint、Debug、production build 和安装脚本 Release 构建通过。旧 App 正常退出并确认后端停止；已更新 `/Users/irin/Applications/Yosh.app`，签名与安装/构建逐文件一致。本次运行 App PID 86183，后端 PID 86190 ready，监听 `127.0.0.1:3049`。没有 Computer Use 或真实付款；既有重叠改动的提交/推送限制仍保留。
+
+2026-10-06 统一提交与推送：用户明确要求把当前累计改动统一提交到 main，并拆成多个 Commit。此前“重叠”指同一工作区文件同时含前序 Mainnet 接入与后续 UI/Activity 修改，并非已提交 Commit 冲突；该范围现已获统一提交授权。按文档整理、后端 Mainnet 与恢复能力、原生 Mainnet 接入、UI 语义、Activity 环境隔离及验证记录拆为六个签名提交。通过已加载的系统 SSH agent 使用原配置签名密钥，未关闭签名或改写 Git 配置；按阶段快照组织暂存区并核对工作文件指纹，源码内容完整保留。提交前最新 backend 回归为 56 个文件 / 694 项通过，typecheck、lint、diff 和待提交文件敏感信息扫描通过；本轮原生 Activity 隔离与点击回归、Debug/Release 构建及安装就绪证据见上两条记录。此次仅整理提交与文档，不改变已安装代码，不发起付款或部署。远端 main 在提交前已 fetch 并与原基准一致；最终推送与本地/远端提交编号以本次交付回复为准。
