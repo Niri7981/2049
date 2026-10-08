@@ -65,7 +65,7 @@ export class AgentConnection {
     const token = randomBytes(32).toString('base64url');
     this.write({ origin, token, cardMemberId: this.cardMemberId, connectionId: randomUUID(), generation: 1, capabilities: [...agentCapabilities] });
   }
-  /** Grant changes invalidate the old token, without changing intent permissions. */
+  /** Explicit credential rotation invalidates the old token and live session. */
   rotateCredential(): SpendPrincipal | undefined {
     if (!this.descriptor) return undefined;
     if (!this.isCardMemberActive(this.descriptor.cardMemberId)) throw new Error('CARD_MEMBER_REVOKED');

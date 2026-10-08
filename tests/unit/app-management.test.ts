@@ -179,8 +179,8 @@ describe('managed budget and Devnet test records', () => {
       const grant = await app.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 8 * 60 * 60 * 1000 });
       expect(grant.operation).toBe(PAID_RESOURCE_PURCHASE_OPERATION);
       const authorized = readConnection(app.directory);
-      expect(authorized).toMatchObject({ connectionId: intentCredential.connectionId, generation: intentCredential.generation + 1, capabilities: ['read', 'request_purchase'] });
-      expect(authorized.token).not.toBe(intentCredential.token);
+      expect(authorized).toMatchObject({ connectionId: intentCredential.connectionId, generation: intentCredential.generation, capabilities: ['read', 'request_purchase'] });
+      expect(authorized.token).toBe(intentCredential.token);
       expect(app.agentConnection.status()).toMatchObject({ enabled: true, access: 'purchase_intent' });
       expect(grant).toMatchObject({ status: 'ACTIVE', totalLimit: '5000000', singleLimit: '500000' });
       expect(app.ledger.spendGrantSummary()).toMatchObject({ id: grant.id, status: 'ACTIVE', remaining: '5000000' });

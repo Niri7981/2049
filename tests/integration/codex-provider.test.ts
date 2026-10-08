@@ -121,17 +121,18 @@ it.skipIf(!executable)('uses the saved provider config in the real Codex host, o
     expect(app.spendGrantSummary(memberId)).toBeNull();
     expect(app.ledger.list()).toHaveLength(0);
 
-    // An idempotent Connect must not rotate credentials or revoke delegation.
+    // Grant creation changes ledger authority without rotating the live host credential.
     app.createSpendGrant({ totalLimit: '500000', singleLimit: '200000', expiresAt: Date.now() + 3_600_000 });
-    const rotated = readConnection(directory, memberId);
-    expect(rotated.token).not.toBe(first.token);
-    expect(app.agentConnection.status().integration?.connected).toBe(false);
-    expect((await write(true)).status).toBe(200);
-    expect(readConnection(directory, memberId).token).toBe(rotated.token);
-    expect(app.spendGrantSummary(memberId)?.status).toBe('ACTIVE');
-    const old = await host.request('mcpServer/tool/call', { threadId: started.thread.id, server: serverName,
+    const authorized = readConnection(directory, memberId);
+    expect(authorized.token).toBe(first.token);
+    expect(authorized.generation).toBe(first.generation);
+    expect(app.agentConnection.status().integration?.connected).toBe(true);
+    const continued = await host.request('mcpServer/tool/call', { threadId: started.thread.id, server: serverName,
       tool: 'get_spending_status', arguments: {} });
-    expect(JSON.stringify(old)).toContain('AGENT_UNAUTHORIZED');
+    expect(JSON.stringify(continued)).toContain(memberId);
+    expect((await write(true)).status).toBe(200);
+    expect(readConnection(directory, memberId).token).toBe(first.token);
+    expect(app.spendGrantSummary(memberId)?.status).toBe('ACTIVE');
     await host.request('config/mcpServer/reload', {});
     const renewed = z.object({ thread: z.object({ id: z.string() }) }).passthrough().parse(await host.request('thread/start', {
       cwd: tmpdir(), ephemeral: true, approvalPolicy: 'never', sandbox: 'read-only',
@@ -148,7 +149,7 @@ it.skipIf(!executable)('uses the saved provider config in the real Codex host, o
     await app.prepareQuit(); app.close();
     app = new AppRuntime(directory); globals.__yosh = { runtime: app };
     expect(app.agentConnection.status().integration?.connected).toBe(false);
-    expect(readConnection(directory, memberId).token).toBe(rotated.token);
+    expect(readConnection(directory, memberId).token).toBe(authorized.token);
     await vi.waitFor(() => expect(app.agentConnection.status().integration?.connected).toBe(true), { timeout: 20_000 });
     const resumed = await host.request('mcpServer/tool/call', { threadId: renewed.thread.id, server: serverName,
       tool: 'get_spending_status', arguments: {} });
@@ -165,10 +166,10 @@ it.skipIf(!executable)('uses the saved provider config in the real Codex host, o
     expect(app.agentConnection.status()).toMatchObject({ enabled: true, integration: { configured: true, connected: false } });
     expect(app.spendGrantSummary(memberId)?.status).toBe('ACTIVE');
     expect(() => app.authenticateAgent(new Request(`${origin}/api/agent`, {
-      headers: { authorization: `Bearer ${rotated.token}` },
+      headers: { authorization: `Bearer ${authorized.token}` },
     }))).not.toThrow();
     expect((await write(true)).status).toBe(200);
-    expect(readConnection(directory, memberId).token).toBe(rotated.token);
+    expect(readConnection(directory, memberId).token).toBe(authorized.token);
     expect((await write(false)).status).toBe(200);
     expect(app.spendGrantSummary(memberId)?.status).toBe('REVOKED');
     expect(app.agentConnection.status().integration).toMatchObject({ configured: false, connected: false, state: 'disconnected' });

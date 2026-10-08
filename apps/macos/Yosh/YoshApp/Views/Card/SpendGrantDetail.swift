@@ -92,7 +92,7 @@ struct SpendGrantDetail: View {
         .confirmationDialog("Revoke this Spend Grant?", isPresented: $showingRevokeConfirmation) {
             Button("Revoke Spend Grant", role: .destructive) { Task { await onRevoke(isMainnet ? selectedResourceID : nil) } }
         } message: {
-            Text("New purchases will lose this Spend Grant. Reconnect the Agent afterward.")
+            Text("New purchase requests will be denied until you create another Spend Grant. The Agent connection stays active.")
         }
     }
 
@@ -245,7 +245,7 @@ struct SpendGrantDetail: View {
             .padding(.top, 12)
 
             if overview.connection.enabled {
-                Text(isReplacing ? "Replaces current Spend Grant · reconnect afterward" : "Reconnect your Agent after creating a Spend Grant")
+                Text(isReplacing ? "Replaces the active Spend Grant · connection stays active" : "Connection stays active · purchases require this Spend Grant")
                     .font(.system(size: 10)).foregroundStyle(secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 9)

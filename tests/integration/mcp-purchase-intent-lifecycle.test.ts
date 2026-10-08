@@ -152,10 +152,10 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
     app.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 180_000 });
     const active = readConnection(directory);
     expect(active.capabilities).toEqual(['read', 'request_purchase']);
-    expect(active.token).not.toBe(first.token);
-    expect((await purchaseRequest(origin, first.token, 'intent-stale-before-revoke')).status).toBe(401);
-    expect(app.ledger.get('intent-stale-before-revoke')).toBeUndefined();
-    const activeClient = await connect();
+    expect(active.token).toBe(first.token);
+    const afterGrant = await initialClient.callTool({ name: 'get_spending_status', arguments: {} });
+    expect(afterGrant.isError).not.toBe(true);
+    const activeClient = initialClient;
     const overLimit = await call(activeClient, 'intent-active-over-limit', 'market-analysis');
     expect(overLimit).toMatchObject({
       status: 'DENIED', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_SINGLE_LIMIT_EXCEEDED' },
@@ -172,10 +172,10 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
     app.revokeSpendGrant();
     const revoked = readConnection(directory);
     expect(revoked.capabilities).toEqual(['read', 'request_purchase']);
-    expect(revoked.token).not.toBe(active.token);
-    expect((await purchaseRequest(origin, active.token, 'intent-stale-after-revoke')).status).toBe(401);
-    expect(app.ledger.get('intent-stale-after-revoke')).toBeUndefined();
-    const revokedClient = await connect();
+    expect(revoked.token).toBe(active.token);
+    const afterRevoke = await initialClient.callTool({ name: 'get_spending_status', arguments: {} });
+    expect(afterRevoke.isError).not.toBe(true);
+    const revokedClient = initialClient;
     const revokedResult = await call(revokedClient, 'intent-revoked');
     expect(revokedResult).toMatchObject({
       status: 'DENIED', executionMode: 'live_devnet', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_REVOKED' },
@@ -193,7 +193,7 @@ it('separates authenticated MCP purchase intents from SpendGrant authority acros
 
     app.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 90_000 });
     now += 90_001;
-    const expiredClient = await connect();
+    const expiredClient = initialClient;
     const expiredResult = await call(expiredClient, 'intent-expired');
     expect(expiredResult).toMatchObject({
       status: 'DENIED', decision: { decision: 'DENIED', reason: 'SPEND_GRANT_EXPIRED' },

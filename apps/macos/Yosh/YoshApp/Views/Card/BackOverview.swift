@@ -568,10 +568,10 @@ struct BackOverview: View {
                 success = "Daily limit saved"
             case .createGrant(let total, let single, let expiration, let resourceID, let sample, let approvalHash):
                 try await overviewClient.createMemberGrant(memberID, totalLimit: total, singleLimit: single, expiresAt: expiration, resourceId: resourceID, sample: sample, postApprovalHash: approvalHash)
-                success = "Spend Grant saved. Reconnect the Agent."
+                success = "Spend Grant saved."
             case .revokeGrant(let resourceID):
                 try await overviewClient.revokeMemberGrant(memberID, resourceId: resourceID)
-                success = "Spend Grant revoked. Reconnect the Agent."
+                success = "Spend Grant revoked."
             case .connection(let enabled):
                 try await overviewClient.setMemberConnection(memberID, enabled: enabled)
                 success = enabled ? "Access is ready." : "Disconnected. Current spending authorization revoked."

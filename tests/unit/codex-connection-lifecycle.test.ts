@@ -37,6 +37,35 @@ it('serializes concurrent Connect and preserves a member credential and grant on
   } finally { app.close(); }
 });
 
+it('keeps an authenticated Codex MCP session alive across Grant replacement and revocation', async () => {
+  vi.spyOn(CodexIntegration.prototype, 'connect').mockResolvedValue();
+  const { app, memberId } = fixture();
+  try {
+    await app.setMemberConnection(true, origin, memberId);
+    const connection = readConnection(app.directory, memberId);
+    const sessionId = '33333333-3333-4333-8333-333333333333';
+    const session = (phase: 'initialized' | 'heartbeat', sequence: number) =>
+      agent(connection.token, { provider: 'codex', sessionId, phase, sequence });
+
+    expect((await POST(session('initialized', 0))).status).toBe(200);
+    expect(app.agentConnection.status().integration).toMatchObject({ connected: true, state: 'connected' });
+
+    const first = await app.createSpendGrant({ totalLimit: '500000', singleLimit: '200000', expiresAt: Date.now() + 3_600_000 });
+    expect(readConnection(app.directory, memberId).token).toBe(connection.token);
+    const replacement = await app.createSpendGrant({ totalLimit: '600000', singleLimit: '300000', expiresAt: Date.now() + 3_600_000 });
+    expect(app.ledger.spendGrantById(first.id)?.status).toBe('REVOKED');
+    expect(replacement.status).toBe('ACTIVE');
+    expect(readConnection(app.directory, memberId).token).toBe(connection.token);
+    expect(app.agentConnection.status().integration).toMatchObject({ connected: true, state: 'connected' });
+    expect((await POST(session('heartbeat', 1))).status).toBe(200);
+
+    expect(app.revokeSpendGrant(memberId)).toBe(true);
+    expect(readConnection(app.directory, memberId).token).toBe(connection.token);
+    expect(app.agentConnection.status().integration).toMatchObject({ connected: true, state: 'connected' });
+    expect((await POST(session('heartbeat', 2))).status).toBe(200);
+  } finally { app.close(); }
+});
+
 it('revokes access and delegation even when removing user-modified Codex config fails', async () => {
   vi.spyOn(CodexIntegration.prototype, 'connect').mockResolvedValue();
   vi.spyOn(CodexIntegration.prototype, 'disconnect').mockRejectedValue(new ManagementApiError('CODEX_CONFIG_CONFLICT', 409, 'Fixture conflict'));

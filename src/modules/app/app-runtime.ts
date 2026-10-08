@@ -625,25 +625,23 @@ export class AppRuntime {
       if (mode === 'live_mainnet' && (this.authorityWalletStatus !== 'available' || !(livePayTo ?? resource?.recipient))) throw new Error('Mainnet wallet or recipient unavailable');
       if (mode === 'live_mainnet' && (livePayTo ?? resource?.recipient) === this.walletAddress) throw new Error('MAINNET_RESOURCE_REGISTRATION_INVALID');
       const connection = this.connectionFor(memberId);
-      const principal = connection.rotateCredential();
+      // A Grant changes spending authority, not Agent identity. Keep the
+      // installed MCP credential/session stable; purchases bind to this
+      // connection generation plus the new immutable Grant version.
+      const principal = connection.principal('read');
       if (!principal) throw new Error('请先启用 Agent 连接。');
-      try {
-        const payTo = livePayTo ?? resource?.recipient ?? (process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs');
-        return this.ledger.createSpendGrant(input, principal, {
-          resourceId: resource?.resourceId ?? PAID_RESOURCE_SCOPE_ID,
-          providerId: resource?.providerId ?? DEMO_MARKET_DATA_PROVIDER_ID,
-          operation: PAID_RESOURCE_PURCHASE_OPERATION,
-          network: resource?.network ?? DEVNET_NETWORK,
-          assetId: resource?.mint ?? DEVNET_USDC_MINT,
-          assetDecimals: 6,
-          payTo,
-          paymentScheme: 'exact',
-          ...(resource?.request.method === 'POST' ? { postPolicyHash: postRequestPolicyHash(resource) } : {}),
-        }, now, mode);
-      } catch (error) {
-        connection.rotateCredential();
-        throw error;
-      }
+      const payTo = livePayTo ?? resource?.recipient ?? (process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs');
+      return this.ledger.createSpendGrant(input, principal, {
+        resourceId: resource?.resourceId ?? PAID_RESOURCE_SCOPE_ID,
+        providerId: resource?.providerId ?? DEMO_MARKET_DATA_PROVIDER_ID,
+        operation: PAID_RESOURCE_PURCHASE_OPERATION,
+        network: resource?.network ?? DEVNET_NETWORK,
+        assetId: resource?.mint ?? DEVNET_USDC_MINT,
+        assetDecimals: 6,
+        payTo,
+        paymentScheme: 'exact',
+        ...(resource?.request.method === 'POST' ? { postPolicyHash: postRequestPolicyHash(resource) } : {}),
+      }, now, mode);
     };
     if (resource?.recipientSource === 'live_challenge') {
       const initialPrincipal = this.connectionFor(memberId).principal('read');
@@ -664,9 +662,7 @@ export class AppRuntime {
   }
 
   revokeSpendGrant(memberId = this.ledger.defaultCardMember().id, resourceId?: string) {
-    const revoked = this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED', memberId, resourceId);
-    this.connectionFor(memberId).rotateCredential();
-    return revoked;
+    return this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED', memberId, resourceId);
   }
   private purchaseAuthority(principal?: SpendPrincipal) {
     const current = principal ?? this.agentConnection.principal('request_purchase');

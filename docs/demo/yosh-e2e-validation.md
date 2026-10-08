@@ -28,7 +28,7 @@ tool_timeout_sec = 210
 APP2049_DATA_DIR = "/Users/you/Library/Application Support/Bound-E2E"
 ```
 
-Restart the Codex MCP connection after changing the configuration or rotating the SpendGrant connection credential.
+Restart the Codex MCP connection after changing its configuration or explicitly rotating its connection credential.
 
 ## Read-only evidence
 
