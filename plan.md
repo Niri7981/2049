@@ -1,8 +1,86 @@
 # Yosh macOS 第一版实施计划
 
-更新日期：2026-10-06。
+更新日期：2026-10-08。
 
-本文记录本轮确认的目标架构、实施顺序和当前证据。状态以本页“实施状态”和实际测试为准；任何开发进度都不代表付款、部署或推送授权。
+本文是 Yosh v1 的现行产品与架构合同，并保留历史实施证据。产品要求以“Yosh v1 产品合同”为准；历史阶段、旧规则和验收记录只说明当时的决策与证据，不自动代表当前能力或授权。任何开发进度都不代表实际付款、部署或推送授权。
+
+## Yosh v1 产品合同（2026-10-08）
+
+### 产品定位与支持范围
+
+Yosh 是自主 Agent 的经济权威与消费控制面：**x402 让 Agent 能付款，Yosh 决定它是否应该付款。** Yosh 不是 API 市场、新支付协议或商家专属集成集合。架构必须保持：**一个 Resource Model、一个 Authorization Model、一条 x402 Payment Pipeline。** 新商家通过经过校验的声明式 Resource 配置接入，不应要求按商家名称修改 Yosh 源码。
+
+v1 的目标产品是原生 macOS App、本地随 App 提供的后端，以及面向兼容 Agent（首先是 Codex）的 MCP 接入。付款目标限定为官方 x402 V2 JavaScript SDK、Solana Mainnet、原生 USDC 和受支持的 `exact` 流程，配合专用 Keychain 钱包、Spend Grant、Daily Authority、原子预占、账本与恢复。HTTP Resource 目标支持静态 GET、参数化 GET、固定 JSON POST、参数化 JSON POST、声明式请求头/参数约束/交付策略，以及有明确大小限制的 JSON 与文本响应。**这段描述目标范围，不表示这些能力都已实现或通过安装版验收。** v1 不承诺支持所有网络、资产、x402 scheme 或任意 HTTP 响应格式。
+
+能力状态必须逐项按证据标为：已实现并测试、部分实现、缺失、等待安装版验证、v1 有意不支持。单元测试通过不等于完整生命周期、真实 Agent 宿主或安装版验收完成。历史 Devnet 购买仅是 Devnet 证据；当前不记录任何真实 Mainnet 购买验收。
+
+### 端到端用户生命周期
+
+```text
+Agent 发现候选 x402 API → 提议注册 → 用户审阅并批准 Resource
+→ 用户创建 Spend Grant → Agent 请求购买 → Yosh 授权并通过 x402 付款
+→ Agent 收到购买结果 → Yosh 记账并在需要时恢复原交易/交付
+```
+
+各阶段共享同一份经过校验的 Resource Definition 和同一个不可变 Authorized Request Instance；禁止在发现、Grant、预检、预占、签名或付费重试时重新解释请求。
+
+| 阶段 | 输入与输出 | 权限边界及状态 |
+|---|---|---|
+| Discovery | Agent 提交候选 origin/endpoint、HTTP 方法及必要输入；Yosh 以安全的未付款请求取得响应或 402 payment requirements，并返回兼容性分析 | 支持 GET 与 JSON POST 的目标能力。POST 必须受显式字段约束并满足副作用安全策略；不得对不可信端点盲目提交任意数据。Discovery 永不签名或付款。它是 Agent 驱动的候选端点发现，不是全网搜索引擎 |
+| Registration Proposal / Approval | Agent 提议 Resource Definition；App 展示规范化端点、方法、固定/动态 query 与 JSON body 字段、必需/允许输入及约束、允许的相关 headers、网络/资产/付款能力、交付格式/响应限制/恢复能力 | Agent 只能提议；只有用户能批准注册。注册是持久运行时数据，不是源码，也不赋予消费权限 |
+| Quote / Grant | 用户选择动态 Resource 的有效样例请求；Yosh 进行只读报价，不付款；用户创建 Grant | Grant 绑定 Agent 身份、Resource 身份、经济范围、允许的收款方约束、网络/资产、总额度、单笔上限和到期时间。同一 Agent 可对不同 Resource 持有独立有效 Grant，但共享 Daily Authority。注册和 Grant 是不同授权 |
+| Purchase / Authorization | Agent 提交已注册 Resource ID、允许的请求输入、用途和稳定 request ID；Yosh 返回购买状态与可安全交付的结果 | Yosh 构造唯一不可变 Authorized Request Instance。每笔新购买取新鲜 x402 quote，并在签名前检查授权和经济约束；复用同一实例进行 Grant 检查、preflight、reserve、sign、paid-request retry。官方 SDK 处理所支持的协议语义与付款构造；Yosh 管经济授权、签名边界、请求身份、账务、幂等和恢复 |
+| Delivery / Ledger / Recovery | 成功 HTTP 响应、付款/结算证据、持久购买与交付状态 | 付款成功不等于资源交付成功。接受 Resource 声明的成功响应（目标含 200/201），并确保 Agent 可检索交付内容；HTTP 响应上限、持久结果存储和 MCP 输出上限必须一致。未知付款只能核对/恢复原交易；交付失败绝不自动创建第二笔付款 |
+
+### 必须保持的架构不变量
+
+- 不按商家名称分支执行付款；不接受 Agent 提供的任意钱包交易，不让 Agent 控制私钥。
+- 不隐式注册 Resource 或授权消费。用户批准注册与创建 Grant 是分开的明确操作。
+- 已安装产品不要求开发者 `.env.local` 才能运行。
+- Discovery、注册、Grant 样例请求、购买与恢复必须遵循同一 Resource / Authorized Request 合同。
+- 资源 readiness、预算 reservation、执行权 claim 和签名提交必须采用一致且原子的规则。
+- 不削弱 SSRF、DNS rebinding、redirect、认证、客户端身份或 signer 身份校验。
+- 保持 Mainnet/Devnet 隔离，不改写历史金融记录；保留原付款证据、未知付款与交付恢复保证。
+- Agent 身份、用户授权证明和客户端认证是不同事实；模型字段、重复令牌或 MCP 请求本身不能证明用户同意。
+
+### 当前能力状态快照
+
+此快照按仓库历史和截至 2026-10-07 的记录填写；“已实现”只代表表中明确的边界，不外推到完整生命周期。
+
+| 状态 | 能力及证据边界 |
+|---|---|
+| 已实现并测试 | 持久运行时 Registered API registry 的管理 list/add/inspect/disable/remove；旧资源一次性导入与 tombstone；非付款 x402 discovery；单一后端 registry 被管理界面及 Authority selector 共用。2026-10-07 记录含安装版非付款 You.com discovery、注册持久读取和未授权请求 401 证据 |
+| 已实现并测试（历史/局部） | Devnet 测试 USDC 的官方 x402 exact 购买、有限 Codex CardMember/Grant 路径、原子 reservation、幂等、未知付款和原付款恢复；证据见下方带日期记录。历史 Devnet 付款不能作为 Mainnet 证据 |
+| 部分实现 | Mainnet 隔离、授权/账本隔离、条件执行入口、已登记资源的后端购买管线、声明式外部 HTTPS 请求和持久交付恢复已有阶段性实现；旧绑定对部分 600 秒 challenge 有已知兼容限制。用户可用的通用资源生命周期仍未完成 |
+| 缺失或未证明 | Agent 驱动的安全 GET/JSON POST discovery 与注册提议闭环；完整可变 query/body Resource contract；未知 JSON POST 商家的无源码变更全生命周期；跨阶段同一 Authorized Request Instance；Agent-bound、多 Resource 独立 Grants 的完整产品验收；200/201 与 HTTP/MCP/存储大小一致性回归；三类合成商家的端到端生命周期验收 |
+| 等待安装版/宿主验证 | 截至 2026-10-07，安装版 desktop MCP 记录为 Transport closed、连接 disabled/disconnected；不可将 fixture 或 MCP mock 视为 Codex 实际宿主验收。任何新接线完成后仍需按该功能的实际验收记录更新状态 |
+| v1 有意不支持 | 全网 API 搜索/市场、任意 x402 网络/资产/scheme、任意 HTTP 媒体格式、商家专属付款适配、Agent 管理权限、任意签名和退款 |
+
+### 通用资源生命周期验收合同
+
+必须先用合成商家验证通用架构，之后才把 Agent402、You.com 作为外部兼容性验证，不为它们增加特例。以下三种此前未知的 Resource 形状均须在不改 Yosh 源码的条件下通过同一完整路径：
+
+1. 带多个 x402 payment options 的参数化 GET。
+2. 有必需动态输入参数、quote 有效期较长的动态 GET。
+3. 未知商家的 JSON POST，分别覆盖固定 body 与动态 body。
+
+每种都必须覆盖 Discovery → Registration Proposal → User Approval → Quote → Grant → Authorized Request → Preflight → Payment Pipeline → Delivery to Agent → Ledger/Recovery。还须覆盖：价格、收款方、mint、network 错误或变化；缺失/无效参数；同一 Agent 多个有效 Resource Grant；不支持的付款 flow；DNS rebinding 与不安全网络目标；HTTP 200/201；超大 MCP 响应；重复 request ID；重启与未知付款恢复；已付款但交付不可用。任何 fixture 结果均与真实安装版/真实链路证据分开标记。
+
+### 尚待确定并验收的产品细节
+
+这些事项不阻止本合同定义目标，但在对应实现阶段必须先确定并记录，不能由商家特例或客户端默认值隐式决定：
+
+- 用户批准 Resource 与消费授权的可信确认通道，以及宿主无法证明用户操作时的产品行为。
+- JSON POST discovery 的副作用安全声明、允许的媒体类型/字段约束，以及是否允许对特定 endpoint 执行未付款 POST。
+- Resource ID/endpoint 规范化、动态参数 schema、允许请求头集合、敏感输入存放/展示和 Resource 版本变化规则。
+- x402 多 payment option 的选择策略，以及 v1 `exact` 支持下对 quote 有效期、recipient 约束和价格变化的精确定义。
+- HTTP、持久结果与 MCP 各自的响应大小上限，以及 JSON/text 解码失败时给 Agent 的稳定错误契约。
+- 各 Resource 可声明的交付恢复能力、凭据保留期限和第三方不支持恢复时的终态展示。
+- 完整 Mainnet 安装版验收的具体 Resource、收款方、用途与金额上限；实际付款仍须另行取得具体授权。
+
+## 历史授权、阶段与证据的解释
+
+本文后续带日期的阶段记录是不可覆盖的历史证据。旧版“固定 API/GET-only”“跨 Agent 共用 API 长期批准”“全网 API 自动发现”以及旧 M0–M7 排期中的假设已被上面的 v1 合同取代：Resource 可声明 GET/JSON POST 和动态输入；Resource 注册需用户批准；Spend Grant 绑定 Agent 与 Resource；Agent 驱动的候选 API discovery 属于目标，全球搜索引擎仍不属于目标。不得将旧阶段表中的“已完成”解释为当前产品生命周期完成。
 
 ## 代码提交与本地同步（用户明确授权）
 
@@ -54,9 +132,9 @@
 
 新 App 开发以本文和 [AGENTS.md](AGENTS.md) 为依据；`docs/architecture/v0/` 中原 V0 文档保留为测试网 Demo 的历史设计。旧文档中的固定资源、固定预算、不使用 MCP 等限定不自动延续到新 App；钱包隔离、报价校验、幂等和恢复要求继续保留。
 
-## 1. 产品与范围
+## 历史计划：产品与范围（旧假设由上方 Yosh v1 产品合同取代）
 
-Yosh 是建立在 x402 之上的 Agent 消费管理 App，为用户提供钱包、授权、额度、购买记录和异常处理。第一版由 macOS App、本地后端和 MCP 接口组成，优先接入 Codex 桌面版。
+本节保留 2026-10-06 及更早的范围讨论，不能覆盖上方 2026-10-08 合同。现行 v1 产品定位、支持范围和能力状态以“Yosh v1 产品合同”为准。
 
 ### x402 复用边界（2026-09-18 确认）
 
@@ -76,39 +154,39 @@ Yosh 是建立在 x402 之上的 Agent 消费管理 App，为用户提供钱包�
 
 实际替换与验收范围以上方实施状态和对应证据为准；本节原则本身不放宽 M0–M7 的验收要求。
 
-### 第一版范围
+### 第一版范围（历史草案）
 
 - App 负责展示、管理设置和提交用户操作，不内置聊天或任务执行界面。
 - 本地后端负责钱包、报价、授权、额度、付款、账本和交付恢复。
 - MCP 负责把 Codex 的请求接入同一个后端，不另建付款逻辑。
 - 用户在 Codex 原对话中提出需求、确认购买、接收结果。
-- 第一条产品验证链路使用自建 Paid API 和 Solana Devnet；之后验证 Solana 主网 USDC 购买真实第三方 API。
+- 历史验证链路曾使用自建 Paid API 和 Solana Devnet；现行 v1 目标与未完成验收边界见上方产品合同及下方阶段证据。
 - 原生 SOL 可以作为后续同链资产扩展；不把“Solana 支持”等同于支持该链所有币种。资产按实际 API 报价和已实现适配范围校验。
 
-首版暂不做：Claude Code、Hermes、其他操作系统、多链、退款、钱包导入、Phantom 签名、开机自动启动、全网 API 自动发现、精细视觉和动效。
+旧草案中的“不做全网 API 自动发现”现明确为“不做全球 API 搜索引擎”；Agent 针对已知候选端点执行未付款 discovery 是 v1 目标。其他旧排除项仅在与上方合同一致时继续有效。
 
 界面先使用简单文字、表单和按钮。保留用户喜欢 Phantom 丝滑交互的设计偏好，但不作为当前开发任务或验收条件。
 
-## 2. 已有基础与当前限制
+## 2. 历史基础与当前限制（状态以产品合同快照及最新证据为准）
 
-根据仓库验收记录，已有：自建 x402 V2 `exact` Paid API、Devnet 测试 USDC 付款、规则审批、钥匙串签名、SQLite 账本、并发预占、幂等、原付款恢复、真实模型与网页执行记录。
+根据历史仓库验收记录，曾完成：自建 x402 V2 `exact` Paid API、Devnet 测试 USDC 付款、规则审批、钥匙串签名、SQLite 账本、并发预占、幂等和原付款恢复。历史能力不等于当前所有资源类型或 Mainnet 产品闭环已验收。
 
-这些能力此前已完成测试网闭环。固定测试币、价格和历史行情快照是该阶段有意采用的边界，不应为了新 App 全部重写。
+这些能力有测试网历史证据。固定测试币、价格和历史行情快照属于旧阶段边界，不应被误认为通用 Resource Model。
 
-当前已有开发态独立 macOS App；尚未完成可安装打包、Codex MCP 接入、可靠的原对话授权链路或主网购买能力。旧网页中的模型规划与任务分析属于演示入口，不搬入产品 App。
+截至 2026-10-07 的记录，已存在安装版原生 macOS App 和运行时 Registered API registry；但安装版 Codex MCP 仍为 disabled/disconnected，Agent 实际宿主与完整 Mainnet 购买/交付验收未完成。旧网页模型规划与任务分析属于演示入口，不搬入产品 App。更新这些状态必须附本轮实际证据。
 
 本机状态备注：旧 CLI 配置中的买方公钥仍与旧钥匙串签名器不一致，不能直接用于新付款。M3 使用独立的产品钥匙串钱包，不依赖该 CLI 公钥，并已完成真实付款。后续若恢复旧 CLI 测试，应核对并复用原专用钥匙串钱包；不能只改公钥、覆盖旧钱包或删除原付款记录。交易浏览器曾返回 429；是否可查看交易网页与 RPC 能否验证交易分别报告。
 
-## 3. 架构与职责
+## 3. 架构与职责（现行职责须符合 Yosh v1 产品合同）
 
 ```text
-macOS App ── 管理 API ──┐
-                       ├── Yosh 本地后端 ── x402 Paid API
-Codex ── MCP 接口 ──────┘          │
-                         macOS 钥匙串 / SQLite / Solana RPC
+原生 macOS App ── 管理 API ──┐
+                             ├── Yosh 本地后端 ── 登记的外部 x402 Resource
+兼容 Agent ── MCP 接口 ───────┘          │
+                               Keychain / SQLite / Solana RPC
 ```
 
-采用本机模块化服务，不拆成云端微服务。App 壳已选择 Electron，并复用现有 TypeScript 后端；选择依据和进程管理细节见 [macOS App 壳与本地服务生命周期](docs/architecture/macos-app-shell.md)。MCP 传输方式在 M4 验证后记录。
+采用本机模块化服务，不拆成云端微服务。上方“原生 macOS App”是 v1 产品要求；具体壳与后端打包方式须以当前实现和 [macOS App 壳与本地服务生命周期](docs/architecture/macos-app-shell.md) 为证，不可把旧计划中 Electron 的选择写成目标平台限制。MCP 的可用传输和实际宿主状态按最新验证记录更新。
 
 | 模块 | 负责 | 不负责 |
 |---|---|---|
@@ -126,12 +204,33 @@ Codex ── MCP 接口 ──────┘          │
 
 ### 钱包与首次使用
 
-- 首次使用创建专用本地消费钱包，密钥保存在 macOS 钥匙串；以后复用同一个钱包。
-- 钱包初始化必须幂等，钥匙串无法访问时报告错误，不能悄悄生成替代钱包。
+2026-10-06 用户澄清：以下为后续 WalletAccount 实施的强制约束，取代旧的首次启动自动创建规则；本次仅更新文档，尚未实现或验收迁移。
+
+- 当前 Mac 已有真实 Devnet/Test 与 Mainnet 两个 Yosh 钱包，均为现有用户钱包；Mainnet 即将用于真实付款验收与录屏，但此说明不构成付款授权。
+- 迁移仅创建或采用引用原身份的 WalletAccount 元数据，沿用原 Keychain service/account 与同一 keypair。不得生成替代钱包、轮换密钥、删除或覆盖旧项、改变公钥地址；默认不移动私钥字节，确有必要时须先说明原因及保留方案。
+- 所有旧 Yosh Keychain 位置中的现有钱包均按用户钱包处理，不因旧名称或存储位置将其丢弃。现有产品项为 Devnet/Test 的 `com.2049.wallet.v1` / `consumer-wallet-v1`，以及 Mainnet 的 `com.yosh.wallet.mainnet.v1` / `consumer-wallet-mainnet-v1`；实施前还须核对其他旧位置，不读取或输出真实私钥作诊断。
+- WalletAccount 采用必须确定且幂等；重复执行、并发执行、部分完成后的重启均不能生成重复账户或钱包。已有账户应复用；身份冲突、损坏或 Keychain 无法访问时报错，不把访问失败当成不存在，不创建替代身份。
+- 保留既有付款历史、账本、预占、未知付款与原凭据恢复关联。历史行的原钱包身份和 monetary scope 不改写为新的钱包身份；新增账户映射必须关联正确的原钱包，不能依据当前选择的网络猜测或合并两个钱包。
+- 真正全新安装（不存在任何 legacy 或 WalletAccount 钱包）从零钱包开始。启动及打开 Overview、Authority、Balance、Settings、MCP status，或切换环境、连接 MCP，均不得自动生成钱包。
+- 用户必须显式选择 `Create New Wallet` 或 `Import Wallet`；只有明确的 Create Wallet 操作生成新 keypair，Import Wallet 采用用户提供的身份而不额外生成钱包。这是后续钱包范围要求，不是本轮实现授权。
 - App 展示地址、余额和充值入口，用户可从 Phantom 等外部钱包充值。
-- 不导入外部钱包、不要求用户向 Agent 提交私钥或助记词。
-- 首次流程：创建钱包 → 充值 → 自行填写每日额度 → 连接 Codex → 首页。
+- 不要求用户向 Agent 提交私钥或助记词；后续 Import Wallet 的具体安全流程另行设计和授权，取代旧的永久排除导入约定。
+- 全新安装首次流程：显式创建或导入钱包 → 充值 → 自行填写每日额度 → 连接 Codex → 首页；未操作前保持零钱包，不自动补齐。
 - 充值、连接和额度设置可稍后完成；后端阻止条件不齐的付款，并返回具体原因。
+
+**迁移前测试门禁：** 修改任何钱包迁移代码前，先添加以下边界回归测试；使用固定测试 keypair、内存 Keychain 和临时账本，不访问本机真实密钥、不付款。新增迁移/零钱包行为在旧实现上的失败必须先记录，之后才实现对应修复。
+
+- 预置两个不同的 legacy keypair，采用为普通 WalletAccount 后 Mainnet 与 Devnet 公钥和完整私钥字节逐一完全不变，旧项内容及位置不变；生成、创建、覆盖、删除、搬运密钥的调用次数均为零。
+- 重复、并发及中断后重启采用均得到同一账户映射；两钱包场景恰好两个账户，无重复账户或新钱包。已有 WalletAccount 与 legacy 并存时复用原身份；冲突和读取拒绝不得触发替代生成。
+- 混合 Mainnet/Devnet 历史中的已付款、未提交、未知付款及预占继续映射各自原钱包；迁移及重启前后金额、交易、凭据与恢复归属保持不变，不再次签名或扣款。
+- 空 legacy/WalletAccount 状态下，启动、全部上述只读页面、MCP 状态/连接及环境切换后仍为零账户、零 Keychain 写入、零 keypair 生成；重复读取和重启结果不变。
+- 只有显式 Create Wallet 才生成并保存新 keypair；重复提交同一创建操作不产生第二钱包。显式 Import Wallet 保留所导入身份，且不调用新 keypair 生成。
+
+升级本机的最终验收必须分别确认两个原钱包的公钥与私钥身份不变、账本关联正确且没有额外钱包。自动化 fixture 通过不等于本机已验证；私钥一致性仅在后端受控边界核对，不导出、截图、写入日志或提交真实密钥。
+
+2026-10-06 Settings 钱包只读入口：用户另行授权先展示现有 Mainnet／Devnet 钱包。Settings 顶部新增 WALLETS，两项分别通过认证管理 `GET /api/app/wallets` 读取原产品 Keychain 并派生公钥，支持复制完整地址；不依赖当前 Execution 或配置公钥猜测。缺失显示 No wallet，读取失败或损坏显示 Keychain unavailable，失败项不妨碍另一项显示。Settings 不再为读取信息调用可能初始化钱包的 overview；新读取入口只具备 read 能力，不写 Keychain、不迁移账本、不创建 WalletAccount。固定测试 keypair 的原密钥保留、重复/并发读取、零钱包、访问拒绝及损坏测试先失败再通过；认证/重放与原钱包回归共 7 个文件 / 78 项通过，原生投影、两地址复制、不可用状态、滚动和 Debug build 通过，typecheck、lint 通过。本步不宣称完整 WalletAccount 迁移或所有页面的全新安装零钱包规则已实现；现有非 Settings 初始化路径留待该阶段修改。本机安装与启动证据以本次实际交付为准；没有付款。
+
+本步当前交付：旧 App 与后端正常退出；安装脚本 production build 与 macOS Release build 通过，更新 `/Users/irin/Applications/Yosh.app`。strict 签名校验及安装／构建逐文件一致检查通过，前端 `.next/static` 无新增钱包读取／签名实现或 Keychain 身份匹配。新版 App PID 93974 的运行路径为安装位置；23:44:15 本次生命周期日志确认后端 PID 93995 ready，仅监听 `127.0.0.1:3049`，未认证钱包查询实际返回 401。本机两个钱包的列表、公钥对照及钥匙串确认仍由用户在 Settings 验收，不把 fixture 测试当作真实私钥比对证据；未导出密钥、创建钱包或付款。
 
 ### 每日额度
 
@@ -144,11 +243,11 @@ Codex ── MCP 接口 ──────┘          │
 - 超过每日额度时，可仅额外批准当前一笔，不提高日额度、不扩大长期授权，仍记录实际消费。
 - 时区切换、时钟回拨、夏令时与跨日结算的详细归属规则须在额度阶段明确并测试，不能通过重复“重置”获得额外额度。
 
-### API 授权与确认
+### API 授权与确认（旧授权草案；Resource/Grant 语义由 v1 合同取代）
 
 - 选项固定为“不允许、仅限一次、以后都允许”。
 - “仅限一次”绑定当前购买和报价，只能消费一次。
-- “以后都允许”仅针对当前 API，跨已连接 Agent 共用；其他 Agent 首次使用该授权时提醒用户。
+- 旧草案曾允许当前 API 的长期授权跨 Agent 共用；现行 Spend Grant 必须绑定 Agent 身份和 Resource 身份。不得把 Agent A 的 Grant 自动视为 Agent B 的授权。用户授权证明仍须绑定具体范围，并与 MCP 客户端认证区分。
 - 不能把当前 API 授权扩大到整个域名或供应商；API 身份至少区分来源、HTTP 方法与规范化接口标识，具体粒度在实现前记录。
 - 涨价重新确认；收款方、网络、资产等关键条件变化不能静默沿用旧授权。
 - 用户在 Codex 原对话确认。MCP 发来的 `approved: true`、模型复述或普通可回显令牌本身都不是用户授权证明。
@@ -175,7 +274,7 @@ Codex ── MCP 接口 ──────┘          │
 - Codex 收到明确异常与缺失结果，继续完成不依赖该结果的部分；实际行为在 Codex 中验证。
 - 首版不实现退款，交付失败也保留账本和原交易记录。
 
-## 5. 接口约定方向
+## 5. 接口约定方向（历史草案，接口实现需落实 v1 生命周期合同）
 
 以下是职责草案，不是已经存在的接口路径或最终 SDK：
 
@@ -183,16 +282,17 @@ Codex ── MCP 接口 ──────┘          │
 |---|---|---|
 | 读取概览、钱包、记录、设置 | App | 返回安全且完整的展示数据，不暴露签名载荷 |
 | 修改额度、暂停、连接和授权管理 | App | 认证管理权限并持久保存；资金相关判断在后端完成 |
-| 准备购买 | 测试入口 / Codex | 验证 API 请求、获取真实 402、固定报价，返回购买 ID 和是否待确认 |
-| 接收用户确认 | 经验证的确认通道 | 绑定具体报价和操作范围，消费一次性授权或保存当前 API 长期授权 |
+| Discovery / 提议 Resource | Agent / App | 使用声明的方法和约束输入进行未付款 discovery；Agent 提议、用户审阅批准并持久注册 Resource |
+| Quote / Spend Grant | App / 用户 | 用动态 Resource 的有效样例请求获取只读 quote；Grant 绑定 Agent、Resource、经济范围及期限 |
+| 请求购买 | Agent | 提交 Resource ID、允许的请求输入、用途和稳定 request ID；后端创建不可变 Authorized Request Instance |
 | 执行已授权购买 | 后端购买服务 | 原子预占并领取执行权，复核策略后签名付款 |
 | 查询购买与结果 | App / Codex | 返回付款、交付和恢复状态；重复读取不付款 |
 
 不要暴露通用 `signTransaction`、任意转账或允许调用方修改账本的工具。授权凭据不等于 HTTP 身份认证；两层都需要验证。
 
-## 6. 实施顺序与验收
+## 6. 历史实施顺序与验收（旧 M0–M7 排期，不是现行能力清单）
 
-完成状态以上方“实施状态”为准。每阶段先验证前提，再实现最小可用功能；按真实证据更新进度。
+本表保留旧 M0–M7 排期和当时验收口径；与上方 Yosh v1 产品合同不一致之处以上方为准。它不能证明通用 Resource 生命周期、安装版 Agent 宿主或 Mainnet 购买已完成。新的 Resource Lifecycle Integration 必须按本页“通用资源生命周期验收合同”逐项实现与验收，并仅凭最新证据更新状态。
 
 2026-10-05 Mainnet readiness P0：完整范围与首步边界见 [Payment Environment isolation](docs/architecture/mainnet-readiness/payment-environment-isolation.md)。确认最终依次覆盖环境、钱包/授权、账本/整数金额、通用 x402 资源、商家无关原交易恢复、付款/回执/交付分离、安全展示与完整验收；扩展现有流水线，核心不得按商家名称分支。本轮仅授权环境模型、配置一致性校验与相关回归；`live_mainnet` 结构合法仍禁止实际执行，其他步骤未开始，最终主网购买仍需具体授权。
 
@@ -251,3 +351,27 @@ M6 前必须再次取得具体主网交易授权（API/收款方、用途、金�
 2026-10-06 Activity 环境隔离修复：仅在原生展示层新增当前模式的 Activity 记录投影，按购买保存的 monetaryEnvironment + network 匹配 Mainnet／Devnet／Simulation；来源缺失或网络冲突不归入当前环境。Authority 下方摘要、Activity 列表与购买详情查找共用这一投影；所选 Agent 的原有所有权范围保留，账本历史不删除或改写，后台恢复与付款行为不变。先用混合环境记录复现 Mainnet 摘要误显示 Devnet 的失败，再验证模式隔离、无记录空状态、legacy test、所有付款状态及完整原账本保留；相关原生展示与点击测试、typecheck、lint、Debug、production build 和安装脚本 Release 构建通过。旧 App 正常退出并确认后端停止；已更新 `/Users/irin/Applications/Yosh.app`，签名与安装/构建逐文件一致。本次运行 App PID 86183，后端 PID 86190 ready，监听 `127.0.0.1:3049`。没有 Computer Use 或真实付款；既有重叠改动的提交/推送限制仍保留。
 
 2026-10-06 统一提交与推送：用户明确要求把当前累计改动统一提交到 main，并拆成多个 Commit。此前“重叠”指同一工作区文件同时含前序 Mainnet 接入与后续 UI/Activity 修改，并非已提交 Commit 冲突；该范围现已获统一提交授权。按文档整理、后端 Mainnet 与恢复能力、原生 Mainnet 接入、UI 语义、Activity 环境隔离及验证记录拆为六个签名提交。通过已加载的系统 SSH agent 使用原配置签名密钥，未关闭签名或改写 Git 配置；按阶段快照组织暂存区并核对工作文件指纹，源码内容完整保留。提交前最新 backend 回归为 56 个文件 / 694 项通过，typecheck、lint、diff 和待提交文件敏感信息扫描通过；本轮原生 Activity 隔离与点击回归、Debug/Release 构建及安装就绪证据见上两条记录。此次仅整理提交与文档，不改变已安装代码，不发起付款或部署。远端 main 在提交前已 fetch 并与原基准一致；最终推送与本地/远端提交编号以本次交付回复为准。
+
+2026-10-07 Mainnet wallet identity/readiness 定向修复：专用 Mainnet Keychain keypair 派生的公钥成为 AppRuntime 身份来源，环境公钥仅作可选匹配断言。Settings、overview、成员 Authority、MCP 和余额查询复用运行时身份；MCP 余额结果同步 readiness，RPC 失败不改变钱包可用性，零余额单独分类。付款配置使用已验证运行时买方，实际 signer 加载重新核对专用 Keychain 身份和 Devnet 隔离，不创建／替换钱包。新增 fixture 回归覆盖断言缺失／匹配／不匹配、余额失败／零／有资金、损坏／缺失／复制测试 signer、身份替换及首次成员读取；原全套 59 文件／708 项通过，最终成员入口补齐后相关 42 项及成员管理／快照 12 项通过，typecheck、lint、backend production build、原生 Debug／Release build 和安装签名／产物比对通过。更新同一安装版并正常重启；安装后实际 MCP／余额结果以本轮验收回复为准。本轮无 UI 改造、实际交易或 Computer Use。
+
+## 2026-10-07：持久运行时 Registered API registry
+
+- 按用户本轮明确授权实施：内置只读目录 + SQLite 用户注册数据，管理 API 的 list/add/inspect/disable/remove，以及非付款 x402 discovery。旧安装资源只导入一次，资源 ID 和历史记录保留，移除使用 tombstone；不把实时 payTo/fee payer 固化到新增资源策略。
+- Settings 新增最小 Registered APIs 管理入口；Authority selector 读取同一后端 registry，管理写入立即通知刷新，外部运行时注册最多三秒内自动进入列表。
+- 管理认证、Spend Grant 和 Mainnet 授权保持严格。Agent 无注册工具/管理权限；签名 guard 额外检查当前资源状态，覆盖准备期间禁用的竞态。付款内核文件与本轮开始时逐文件哈希一致。
+- 最终全套 62 文件 / 744 测试通过；typecheck、lint、backend build、native Debug/Release 与 native 模型/transport CLI 测试通过。已通过现有脚本更新同一安装位置一次；14 条历史购买和原付款证据指纹在安装后保持一致。安装后通过已认证管理 API 实际注册 runtime-verification-20261007，立即进入同一后端 Registered API selector 数据源，期间无第二次构建/安装，二进制哈希不变；SQLite 重新打开仍可读取相同记录。完整 AppRuntime 重启持久性已由自动化测试覆盖，演示后未额外重启安装版。
+- 范围、迁移、接口、实际验证与限制见 [runtime registry](docs/architecture/resources/runtime-registry.md)。已识别旧付款绑定对部分 600 秒 challenge 的兼容限制；本轮按“不改付款内核”要求保留，不宣称 Mainnet 付款已验收。
+- 未付款、未自动创建 Grant、未启用 Mainnet 执行、未解除 Payments 暂停；未使用 Computer Use、未提交或推送。
+
+- 安装版实际只读查询：Mainnet 钱包可用、余额 0.01 USDC；Payments paused、执行 disabled、Daily Authority/remaining 0.01 USDC、Grant null、paid/reserved 0。真实非付款 You.com discovery 返回 5000 atomic USDC，paymentSent=false。运行时注册后全安装 14 条历史购买指纹和零原付款记录不变；未授权注册请求实际返回 401。真实 desktop MCP 仍 Transport closed，连接 disabled/disconnected；未自动启用连接，未将 fixture 验收记作实际宿主通过。
+
+## 2026-10-08：Agent → Purchase Resource Lifecycle
+
+按 [生命周期实现与验证](docs/architecture/resources/agent-purchase-lifecycle.md) 完成通用资源定义、MCP 只读 GET/JSON POST 发现、样例报价、原生注册与 Spend Grant 输入、同 Agent 多资源 Grant、统一外部目标保护和分块交付读取。合成未知 JSON POST 商家无需修改或重建 Yosh，即从发现进入经授权的 `APPROVED` 购买资格；未签名、未提交交易。完整自动化 67 文件 / 772 项、typecheck、lint、后端 build、原生 Release build 通过。安装版只读验收以本轮最终回复为准；Mainnet 实际购买仍需单独授权。
+
+
+2026-10-08 四项 RC blocker 定向修复：后端注册、外部报价及生产执行分别拒绝不支持的 HTTP 方法；新增资源字段 descriptor 约束并复用同一请求构造/重验合同，历史数组策略保持原语义。探索性 POST 在发送前通过现有原生管理通道确认具体 URL、方法、headers/body；Agent 不能提供批准证据。POST Grant 单独确认样例及资源委托范围，增量迁移 `014_post_grant_consent` 仅增加 nullable 策略指纹，不给旧 Grant 自动补授权。统一 HTTPS 访问采用保守 IANA 地址表，保留 DNS pinning、禁止重定向及大小/超时限制。资源 HTTP body 为 16 KiB UTF-8，相关本地 JSON envelope 为 128 KiB，其它管理接口仍 8 KiB。定向 150 项、全套 74 文件 / 930 项、typecheck、lint、production/native Release build 及原生确认/transport 测试通过；当前安装验收另行记录。具体约束见 [生命周期修复记录](docs/architecture/resources/agent-purchase-lifecycle.md#four-blocker-remediation-2026-10-08)。本轮不执行真实主网签名、提交、付款，不自动登记资源/创建 Grant；冻结决定留给下一次独立只读审计。
+
+本轮安装证据：已正常退出旧版并确认 loopback listener 停止；现有脚本更新同一安装位置，strict deep 签名及安装/Release 逐文件比对通过。新版 App PID 70730 从安装路径运行；14 条购买、10 个 Grant、3 个资源、原配置/连接及其它账本表的旧列摘要保持一致。当前 macOS 钥匙串 App Lock 确认与原 PIN 解锁等待用户完成，后端尚未监听；不把原生进程存活当作后台 ready。安装版新门禁/MCP、重启后钱包身份及增量迁移实际就绪验收待解锁后补核对，当前测试证据与实际运行限制分开报告。
+
+2026-10-08 解锁后安装版补验收：用户完成系统确认及解锁后，App PID 71143、后端 PID 71151 均从安装 bundle 运行，后端 cwd 为 bundle 内 Runtime/backend，仅监听 `127.0.0.1:3049`；生命周期记录管理认证、coreReady 和 walletAvailable。签名和安装/Release 比对仍通过；原生 Authority 加载完成，显示 Connected、Mainnet 和 Grant expired。当前桌面 MCP 及使用安装版 MCP 的新真实 Codex app-server 宿主均读取到原主网钱包身份和就绪服务，过期 Grant 保持拒绝付款资格。新宿主未确认 POST 返回 `RESOURCE_POST_APPROVAL_REQUIRED`，伪造批准字段被 schema 拒绝；无认证管理请求返回 401。实际数据库已应用 `014_post_grant_consent`，旧 10 个 Grant 无自动 POST 授权；购买、Grant、事件、资源、成员、monetary 旧列及配置/连接摘要与安装前一致。上条解锁等待现已解除。未创建资源/Grant，未签名、提交或付款；安装版正向 POST 确认发送及实际商家购买未执行，不将隔离测试作为该项运行证据。冻结决定仍留给独立只读审计。
