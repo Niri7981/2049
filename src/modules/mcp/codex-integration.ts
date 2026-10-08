@@ -60,7 +60,10 @@ export class CodexIntegration {
     }
   }
   get configured() { return Boolean(this.record); }
-  get needsMigration() { return this.record?.config.name === this.legacyServerName || existsSync(this.migrationPath); }
+  get needsMigration() {
+    return Boolean(this.record && (this.record.config.name === this.legacyServerName
+      || !this.matchesLaunch(this.record.config))) || existsSync(this.migrationPath);
+  }
   private async run(args: string[], deadline: number) {
     try {
       if (this.options.run) return await this.options.run(args);
@@ -91,8 +94,10 @@ export class CodexIntegration {
   }
   private launch() {
     if (![this.root, this.node, this.directory].every(isAbsolute)) throw new Error('ABSOLUTE_MCP_PATH_REQUIRED');
-    const args = ['--import', join(this.root, 'node_modules/tsx/dist/loader.mjs'), join(this.root, 'scripts/mcp.ts')];
-    for (const path of [this.node, args[1], args[2]]) if (!existsSync(path))
+    const packaged = process.env.YOSH_PACKAGED_RUNTIME_DIR;
+    const args = packaged ? [join(packaged, 'mcp.cjs')]
+      : ['--import', join(this.root, 'node_modules/tsx/dist/loader.mjs'), join(this.root, 'scripts/mcp.ts')];
+    for (const path of [this.node, ...(packaged ? args : args.slice(1))]) if (!existsSync(path))
       throw new ManagementApiError('CODEX_BRIDGE_UNAVAILABLE', 503, 'Yosh MCP 启动文件不可用，请重新安装 Yosh。');
     return { type: 'stdio', command: this.node, args, env: {
       YOSH_DATA_DIR: this.directory, YOSH_CARD_MEMBER_ID: this.memberId, YOSH_MCP_PROVIDER: 'codex',
@@ -148,33 +153,37 @@ export class CodexIntegration {
     if (existsSync(this.migrationPath)) {
       try { journal = RenameSchema.parse(JSON.parse(readFileSync(this.migrationPath, 'utf8'))); }
       catch { throw new ManagementApiError('CODEX_CONFIG_FAILED', 503, 'Yosh 的连接迁移记录不可读，未修改 Codex 配置。'); }
-      if (journal.previous.memberId !== this.memberId || journal.previous.config.name !== this.legacyServerName
+      if (journal.previous.memberId !== this.memberId || ![this.legacyServerName, this.serverName].includes(journal.previous.config.name)
         || !this.matchesLegacyMember(journal.previous.config)
         || journal.expected.name !== this.serverName || !this.matchesLaunch(journal.expected)) this.conflict();
-      if (!this.record || (this.record.config.name === this.legacyServerName
-        && !isDeepStrictEqual(this.record, journal.previous))) this.conflict();
+      if (!this.record || !isDeepStrictEqual(this.record, journal.previous)) this.conflict();
     } else {
-      if (!this.record || this.record.config.name !== this.legacyServerName || !previous
-        || !this.matchesLegacyMember(previous) || !isDeepStrictEqual(previous, this.record.config) || current) this.conflict();
+      if (!this.record || ![this.legacyServerName, this.serverName].includes(this.record.config.name)) this.conflict();
+      const owned = entries.find(entry => entry.name === this.record?.config.name);
+      if (!owned || !this.matchesLegacyMember(owned) || !isDeepStrictEqual(owned, this.record.config)
+        || (this.record.config.name === this.legacyServerName && current)) this.conflict();
       journal = { previous: this.record, expected: { name: this.serverName, enabled: true, transport: this.launch() } };
       this.writePrivate(this.migrationPath, journal);
     }
-    if (previous) {
-      if (!isDeepStrictEqual(previous, journal.previous.config) || current) this.conflict();
-      await this.run(['mcp', 'remove', this.legacyServerName], deadline);
+    const oldEntry = entries.find(entry => entry.name === journal.previous.config.name);
+    if (oldEntry && isDeepStrictEqual(oldEntry, journal.previous.config)) {
+      if (journal.previous.config.name === this.legacyServerName && current) this.conflict();
+      await this.run(['mcp', 'remove', journal.previous.config.name], deadline);
       const after = await this.entries(deadline);
       previous = after.find(entry => entry.name === this.legacyServerName);
       current = after.find(entry => entry.name === this.serverName);
       if (previous || current) this.conflict();
+    } else if (oldEntry && !isDeepStrictEqual(oldEntry, journal.expected)) this.conflict();
+    else if (journal.previous.config.name === this.legacyServerName && current && !isDeepStrictEqual(current, journal.expected)) {
+      this.conflict();
     }
     if (!current) {
       // A canonical receipt with its entry missing is a user edit, not a pending add.
-      if (this.record?.config.name === this.serverName) this.conflict();
+      if (this.record?.config.name === this.serverName && !existsSync(this.migrationPath)) this.conflict();
       await this.install(deadline);
       current = await this.current(deadline);
     }
-    if (!current || !this.matchesLaunch(current)
-      || (this.record?.config.name === this.serverName && !isDeepStrictEqual(current, this.record.config))) this.conflict();
+    if (!current || !this.matchesLaunch(current)) this.conflict();
     this.save(current);
     unlinkSync(this.migrationPath);
   }

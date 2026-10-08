@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { requireLocalRequest } from '../http/local-request';
@@ -33,8 +33,15 @@ export class AgentConnection {
   constructor(private directory: string, private cardMemberId: string, private isCardMemberActive: (id: string) => boolean,
     private memberFile = false, now: () => number = Date.now) {
     this.sessions = new McpSessions(now);
-    // A new backend must not accept credentials left by an earlier process.
-    this.removeFile();
+    // The descriptor is an installation capability, not a process capability.
+    // Keep it across a normal restart; host-session liveness starts empty.
+    try {
+      const file = this.file();
+      const metadata = lstatSync(file);
+      if (!metadata.isFile() || (metadata.mode & 0o077) !== 0 || metadata.uid !== process.getuid?.()) return;
+      const saved = ConnectionSchema.parse(JSON.parse(readFileSync(file, 'utf8')));
+      if (saved.cardMemberId === this.cardMemberId && isCardMemberActive(this.cardMemberId)) this.descriptor = saved;
+    } catch { /* Missing or invalid descriptors grant no access. */ }
   }
   private file() { return connectionFile(this.directory, this.memberFile ? this.cardMemberId : undefined); }
   private removeFile() {

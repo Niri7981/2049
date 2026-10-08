@@ -6,7 +6,7 @@ import { CodexIntegration } from '../../src/modules/mcp/codex-integration';
 
 const memberId = '11111111-1111-4111-8111-111111111111';
 const directories: string[] = [];
-afterEach(() => directories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })));
+afterEach(() => { vi.unstubAllEnvs(); directories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })); });
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'yosh-codex-')); directories.push(directory);
   const entries = new Map<string, unknown>([['unrelated', { name: 'unrelated', enabled: true, transport: { type: 'stdio', command: '/other' } }]]);
@@ -38,6 +38,22 @@ it('installs only a dedicated member-specific Codex configuration, without crede
   expect(adapter.configured).toBe(true);
   expect(statSync(adapter.recordPath).mode & 0o777).toBe(0o600);
   expect(JSON.parse(readFileSync(adapter.recordPath, 'utf8'))).toMatchObject({ provider: 'codex', memberId });
+});
+
+it('migrates only its owned canonical entry from repository scripts to the packaged bridge', async () => {
+  const { adapter, directory, entries, run } = fixture();
+  await adapter.connect();
+  const runtime = join(directory, 'packaged-runtime');
+  mkdirSync(runtime);
+  writeFileSync(join(runtime, 'mcp.cjs'), '// fixture');
+  vi.stubEnv('YOSH_PACKAGED_RUNTIME_DIR', runtime);
+  const reopened = new CodexIntegration(directory, memberId, { root: resolve('.'), node: process.execPath, run });
+  expect(reopened.needsMigration).toBe(true);
+  await reopened.migrateLegacy();
+  expect(entries.get(reopened.serverName)).toMatchObject({ transport: { args: [join(runtime, 'mcp.cjs')] } });
+  expect(existsSync(reopened.migrationPath)).toBe(false);
+  expect(reopened.needsMigration).toBe(false);
+  expect(run.mock.calls.filter(([args]) => args[1] === 'remove')).toHaveLength(1);
 });
 
 function legacyFixture() {

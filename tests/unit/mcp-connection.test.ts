@@ -38,7 +38,7 @@ it('separates Agent and management access, rejects browsers and publishes no tok
   expect(JSON.stringify(connection.status())).not.toContain(token);
 });
 
-it('revokes old credentials across disable, re-enable and backend restart', () => {
+it('revokes old credentials on disable/re-enable and preserves the current installation capability across restart', () => {
   const { dir, connection } = fixture();
   connection.setEnabled(true, origin);
   const first = readConnection(dir).token;
@@ -51,8 +51,8 @@ it('revokes old credentials across disable, re-enable and backend restart', () =
   expect(() => connection.authenticate(request(first))).toThrow();
   connection.authenticate(request(second));
   const restarted = new AgentConnection(dir, cardMemberId, () => true);
-  expect(() => restarted.authenticate(request(second))).toThrow();
-  expect(existsSync(connectionFile(dir))).toBe(false);
+  expect(() => restarted.authenticate(request(second))).not.toThrow();
+  expect(existsSync(connectionFile(dir))).toBe(true);
 });
 
 it('keeps purchase intent access across credential rotation without granting payment authority', () => {
@@ -100,7 +100,10 @@ it('uses the official MCP handshake and exposes a request-only purchase tool wit
   try {
     await server.connect(serverTransport); await client.connect(clientTransport);
     const tools = await client.listTools();
-    expect(tools.tools.map(tool => tool.name)).toEqual(['get_spending_status', 'get_market_quote', 'request_purchase']);
+    expect(tools.tools.map(tool => tool.name)).toEqual(['get_spending_status', 'get_market_quote',
+      'discover_x402_resource', 'get_purchase_delivery', 'quote_x402_resource', 'request_purchase']);
+    expect(tools.tools.find(tool => tool.name === 'discover_x402_resource')?.annotations?.readOnlyHint).toBe(false);
+    expect(tools.tools.find(tool => tool.name === 'get_purchase_delivery')?.annotations?.readOnlyHint).toBe(true);
     const purchaseResourceSchema = tools.tools.find(tool => tool.name === 'request_purchase')?.inputSchema.properties?.resourceId;
     expect(purchaseResourceSchema).toMatchObject({ type: 'string' });
     expect(purchaseResourceSchema).not.toHaveProperty('enum');

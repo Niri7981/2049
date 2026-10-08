@@ -131,7 +131,7 @@ it.skipIf(!executable)('uses the saved provider config in the real Codex host, o
     expect(app.spendGrantSummary(memberId)?.status).toBe('ACTIVE');
     const old = await host.request('mcpServer/tool/call', { threadId: started.thread.id, server: serverName,
       tool: 'get_spending_status', arguments: {} });
-    expect(JSON.stringify(old)).toContain('APP_UNAVAILABLE');
+    expect(JSON.stringify(old)).toContain('AGENT_UNAUTHORIZED');
     await host.request('config/mcpServer/reload', {});
     const renewed = z.object({ thread: z.object({ id: z.string() }) }).passthrough().parse(await host.request('thread/start', {
       cwd: tmpdir(), ephemeral: true, approvalPolicy: 'never', sandbox: 'read-only',
@@ -143,6 +143,18 @@ it.skipIf(!executable)('uses the saved provider config in the real Codex host, o
     expect(JSON.stringify(fresh)).toContain(memberId);
     expect(app.spendGrantSummary(memberId)?.status).toBe('ACTIVE');
 
+    // Preserve the real host and stdio child while replacing the backend core.
+    // Its volatile lease must recover without config reload or credential rotation.
+    await app.prepareQuit(); app.close();
+    app = new AppRuntime(directory); globals.__yosh = { runtime: app };
+    expect(app.agentConnection.status().integration?.connected).toBe(false);
+    expect(readConnection(directory, memberId).token).toBe(rotated.token);
+    await vi.waitFor(() => expect(app.agentConnection.status().integration?.connected).toBe(true), { timeout: 20_000 });
+    const resumed = await host.request('mcpServer/tool/call', { threadId: renewed.thread.id, server: serverName,
+      tool: 'get_spending_status', arguments: {} });
+    expect(JSON.stringify(resumed)).toContain(memberId);
+    expect(app.spendGrantSummary(memberId)?.status).toBe('ACTIVE');
+
     await host.close(); host = undefined;
     // Codex can kill stdio children without a close report. Their lease must still expire.
     await vi.waitFor(() => expect(app.agentConnection.status().integration?.connected).toBe(false), { timeout: 35_000, interval: 100 });
@@ -150,13 +162,13 @@ it.skipIf(!executable)('uses the saved provider config in the real Codex host, o
     app = new AppRuntime(directory); globals.__yosh = { runtime: app };
     expect(app.ledger.defaultCardMember().id).toBe(memberId);
     expect(app.memberOverview(other).member.label).toBe('Fixture Research');
-    expect(app.agentConnection.status()).toMatchObject({ enabled: false, integration: { configured: true, connected: false } });
-    expect(app.spendGrantSummary(memberId)?.status).toBe('REVOKED');
+    expect(app.agentConnection.status()).toMatchObject({ enabled: true, integration: { configured: true, connected: false } });
+    expect(app.spendGrantSummary(memberId)?.status).toBe('ACTIVE');
     expect(() => app.authenticateAgent(new Request(`${origin}/api/agent`, {
       headers: { authorization: `Bearer ${rotated.token}` },
-    }))).toThrow('AGENT_UNAUTHORIZED');
+    }))).not.toThrow();
     expect((await write(true)).status).toBe(200);
-    expect(readConnection(directory, memberId).token).not.toBe(rotated.token);
+    expect(readConnection(directory, memberId).token).toBe(rotated.token);
     expect((await write(false)).status).toBe(200);
     expect(app.spendGrantSummary(memberId)?.status).toBe('REVOKED');
     expect(app.agentConnection.status().integration).toMatchObject({ configured: false, connected: false, state: 'disconnected' });

@@ -103,3 +103,27 @@ it('returns policy denials as structured results while keeping backend failures 
     rmSync(directory, { recursive: true, force: true });
   }
 }, 15_000);
+
+it('does not label a backend read failure as a disconnected App', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'yosh-stdio-read-error-'));
+  const connection = new AgentConnection(directory, cardMemberId, () => true);
+  const http = createServer((incoming, outgoing) => {
+    const address = http.address(); if (!address || typeof address === 'string') throw new Error();
+    try {
+      connection.authenticate(new Request(`http://127.0.0.1:${address.port}${incoming.url}`, { headers: { authorization: incoming.headers.authorization ?? '' } }));
+      outgoing.writeHead(503, { 'content-type': 'application/json' }); outgoing.end(JSON.stringify({ code: 'AGENT_READ_FAILED' }));
+    } catch { outgoing.writeHead(401); outgoing.end(); }
+  });
+  const client = new Client({ name: 'stdio-read-error-test', version: '1' });
+  try {
+    http.listen(0, '127.0.0.1'); await once(http, 'listening');
+    const address = http.address(); if (!address || typeof address === 'string') throw new Error();
+    connection.setEnabled(true, `http://127.0.0.1:${address.port}`);
+    await client.connect(new StdioClientTransport({ command: process.execPath,
+      args: ['--import', resolve('node_modules/tsx/dist/loader.mjs'), resolve('scripts/mcp.ts')], cwd: tmpdir(),
+      env: { YOSH_DATA_DIR: directory }, stderr: 'pipe' }));
+    const result = await client.callTool({ name: 'get_market_quote', arguments: {} });
+    expect(result.isError).toBe(true); expect(JSON.stringify(result)).toContain('AGENT_READ_FAILED');
+    expect(JSON.stringify(result)).not.toContain('APP_UNAVAILABLE');
+  } finally { await client.close(); await new Promise<void>(done => http.close(() => done())); rmSync(directory, { recursive: true, force: true }); }
+});

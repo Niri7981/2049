@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { EmptyResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
-import { createAgentServer } from '../src/modules/mcp/server';
+import { AgentPostApprovalError, AgentPurchaseInputError, AgentReadError, createAgentServer } from '../src/modules/mcp/server';
 import { readConnection } from '../src/modules/mcp/connection';
 import { appRequestTimeout } from '../src/modules/mcp/request-timeout';
 import { resolveYoshConfiguration } from '../src/modules/app/yosh-configuration';
@@ -21,7 +21,18 @@ async function callApp(path: string, init?: RequestInit) {
     redirect: 'error', signal: AbortSignal.timeout(appRequestTimeout(path)), ...init,
     ...(init?.body ? { headers: { authorization: `Bearer ${connection.token}`, 'content-type': 'application/json' } } : {}),
   });
-  if (!response.ok) throw new Error('APP_UNAVAILABLE');
+  if (!response.ok) {
+    if (response.status === 401) throw new AgentReadError('AGENT_UNAUTHORIZED');
+    if (path.startsWith('/api/agent?')) throw new AgentReadError('AGENT_READ_FAILED');
+    if (['/api/agent/discovery', '/api/agent/quote'].includes(path) && response.status === 409) throw new AgentPostApprovalError();
+    if (path === '/api/agent/purchases' && response.status === 400) {
+      const body = await response.json().catch(() => null) as { code?: unknown } | null;
+      if (body?.code === 'RESOURCE_REQUEST_INPUT_REQUIRED' || body?.code === 'RESOURCE_REQUEST_INPUT_UNSUPPORTED' || body?.code === 'RESOURCE_REQUEST_INPUT_INVALID' || body?.code === 'RESOURCE_POST_APPROVAL_REQUIRED') {
+        throw new AgentPurchaseInputError(body.code);
+      }
+    }
+    throw new Error('APP_UNAVAILABLE');
+  }
   const reader = response.body?.getReader();
   if (!reader) throw new Error('APP_UNAVAILABLE');
   const chunks: Uint8Array[] = []; let size = 0;
@@ -34,10 +45,14 @@ async function callApp(path: string, init?: RequestInit) {
 const server = createAgentServer(
   operation => callApp(`/api/agent?operation=${operation}`),
   input => callApp('/api/agent/purchases', { method: 'POST', body: JSON.stringify(input) }),
+  input => callApp('/api/agent/discovery', { method: 'POST', body: JSON.stringify(input) }),
+  (purchaseId, offset) => callApp(`/api/agent/purchases/${encodeURIComponent(purchaseId)}/delivery?offset=${offset}`),
+  (resourceId, sample) => callApp('/api/agent/quote', { method: 'POST', body: JSON.stringify({ resourceId, sample }) }),
 );
 if (configuration.mcpProvider === 'codex') {
-  const sessionId = randomUUID();
+  let sessionId = randomUUID();
   let sequence = 0;
+  let failures = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   const report = (phase: 'initialized' | 'heartbeat' | 'closed') => callApp('/api/agent/session', {
@@ -48,13 +63,29 @@ if (configuration.mcpProvider === 'codex') {
     try {
       // A running bridge alone is not host liveness: require a fresh MCP host response.
       await server.server.request({ method: 'ping' }, EmptyResultSchema, { timeout: 5_000 });
-      if (closed) return;
-      await report(initial ? 'initialized' : 'heartbeat');
-      if (!closed) timer = setTimeout(() => { void pulse(); }, 10_000);
     } catch {
       stop();
-      // Backend loss, revocation or a dead host ends this capability; never reload a new token here.
       await server.close().catch(() => {});
+      return;
+    }
+    if (closed) return;
+    try {
+      await report(initial ? 'initialized' : 'heartbeat');
+      failures = 0;
+      if (!closed) timer = setTimeout(() => { void pulse(); }, 10_000);
+    } catch (error) {
+      if (error instanceof AgentReadError && error.code === 'AGENT_UNAUTHORIZED') {
+        stop();
+        await server.close().catch(() => {});
+        return;
+      }
+      // Backend loss or a lost volatile lease is retryable. Re-prove host liveness
+      // and create a fresh session, retaining only the originally captured capability.
+      // Never reload a rotated/revoked token or retry a purchase here.
+      sessionId = randomUUID();
+      sequence = 0;
+      failures++;
+      if (!closed) timer = setTimeout(() => { void pulse(true); }, Math.min(10_000, 1000 * 2 ** Math.min(failures, 4)));
     }
   };
   server.server.oninitialized = () => { void pulse(true); };
