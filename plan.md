@@ -12,12 +12,12 @@ Yosh 是自主 Agent 的经济权威与消费控制面：**x402 让 Agent 能付
 
 v1 的目标产品是原生 macOS App、本地随 App 提供的后端，以及面向兼容 Agent（首先是 Codex）的 MCP 接入。付款目标限定为官方 x402 V2 JavaScript SDK、Solana Mainnet、原生 USDC 和受支持的 `exact` 流程，配合专用 Keychain 钱包、Spend Grant、Daily Authority、原子预占、账本与恢复。HTTP Resource 目标支持静态 GET、参数化 GET、固定 JSON POST、参数化 JSON POST、声明式请求头/参数约束/交付策略，以及有明确大小限制的 JSON 与文本响应。**这段描述目标范围，不表示这些能力都已实现或通过安装版验收。** v1 不承诺支持所有网络、资产、x402 scheme 或任意 HTTP 响应格式。
 
-能力状态必须逐项按证据标为：已实现并测试、部分实现、缺失、等待安装版验证、v1 有意不支持。单元测试通过不等于完整生命周期、真实 Agent 宿主或安装版验收完成。历史 Devnet 购买仅是 Devnet 证据；当前不记录任何真实 Mainnet 购买验收。
+能力状态必须逐项按证据标为：已实现并测试、部分实现、缺失、等待安装版验证、v1 有意不支持。单元测试通过不等于完整生命周期、真实 Agent 宿主或安装版验收完成。历史 Devnet 购买仅是 Devnet 证据；首笔真实 Mainnet GET 购买的实际证据见 [2026-10-08 验收记录](docs/demo/first-mainnet-purchase-20261008.md)，不外推到其它资源或恢复场景。
 
 ### 端到端用户生命周期
 
 ```text
-Agent 发现候选 x402 API → 提议注册 → 用户审阅并批准 Resource
+Agent 发现候选 x402 API → MCP 注册已验证 Resource → Yosh 自动展示供用户审阅
 → 用户创建 Spend Grant → Agent 请求购买 → Yosh 授权并通过 x402 付款
 → Agent 收到购买结果 → Yosh 记账并在需要时恢复原交易/交付
 ```
@@ -27,7 +27,7 @@ Agent 发现候选 x402 API → 提议注册 → 用户审阅并批准 Resource
 | 阶段 | 输入与输出 | 权限边界及状态 |
 |---|---|---|
 | Discovery | Agent 提交候选 origin/endpoint、HTTP 方法及必要输入；Yosh 以安全的未付款请求取得响应或 402 payment requirements，并返回兼容性分析 | 支持 GET 与 JSON POST 的目标能力。POST 必须受显式字段约束并满足副作用安全策略；不得对不可信端点盲目提交任意数据。Discovery 永不签名或付款。它是 Agent 驱动的候选端点发现，不是全网搜索引擎 |
-| Registration Proposal / Approval | Agent 提议 Resource Definition；App 展示规范化端点、方法、固定/动态 query 与 JSON body 字段、必需/允许输入及约束、允许的相关 headers、网络/资产/付款能力、交付格式/响应限制/恢复能力 | Agent 只能提议；只有用户能批准注册。注册是持久运行时数据，不是源码，也不赋予消费权限 |
+| Resource Registration / Review | 成功发现生成绑定当前认证 Agent 的后端发现凭据；Agent 通过受限 MCP 创建入口注册该凭据中的不可变 Resource Definition。App 自动展示端点、方法、固定/动态输入、约束、样例、交付配置及 Agent 提交来源和未确认事项 | 本轮用户指示允许 Agent 创建已验证资源，替代此前仅提议/用户登记流程。Agent 无通用管理权限；注册不创建 Grant 或消费权。用户在 Yosh 审阅后独立创建 Spend Grant |
 | Quote / Grant | 用户选择动态 Resource 的有效样例请求；Yosh 进行只读报价，不付款；用户创建 Grant | Grant 绑定 Agent 身份、Resource 身份、经济范围、允许的收款方约束、网络/资产、总额度、单笔上限和到期时间。同一 Agent 可对不同 Resource 持有独立有效 Grant，但共享 Daily Authority。注册和 Grant 是不同授权 |
 | Purchase / Authorization | Agent 提交已注册 Resource ID、允许的请求输入、用途和稳定 request ID；Yosh 返回购买状态与可安全交付的结果 | Yosh 构造唯一不可变 Authorized Request Instance。每笔新购买取新鲜 x402 quote，并在签名前检查授权和经济约束；复用同一实例进行 Grant 检查、preflight、reserve、sign、paid-request retry。官方 SDK 处理所支持的协议语义与付款构造；Yosh 管经济授权、签名边界、请求身份、账务、幂等和恢复 |
 | Delivery / Ledger / Recovery | 成功 HTTP 响应、付款/结算证据、持久购买与交付状态 | 付款成功不等于资源交付成功。接受 Resource 声明的成功响应（目标含 200/201），并确保 Agent 可检索交付内容；HTTP 响应上限、持久结果存储和 MCP 输出上限必须一致。未知付款只能核对/恢复原交易；交付失败绝不自动创建第二笔付款 |
@@ -35,7 +35,7 @@ Agent 发现候选 x402 API → 提议注册 → 用户审阅并批准 Resource
 ### 必须保持的架构不变量
 
 - 不按商家名称分支执行付款；不接受 Agent 提供的任意钱包交易，不让 Agent 控制私钥。
-- 不隐式注册 Resource 或授权消费。用户批准注册与创建 Grant 是分开的明确操作。
+- MCP 注册是 Agent 显式调用的受限资源创建操作，必须消费后端保存的成功发现凭据；不得隐式登记或授予消费权。用户创建 Grant 是独立的明确授权操作。
 - 已安装产品不要求开发者 `.env.local` 才能运行。
 - Discovery、注册、Grant 样例请求、购买与恢复必须遵循同一 Resource / Authorized Request 合同。
 - 资源 readiness、预算 reservation、执行权 claim 和签名提交必须采用一致且原子的规则。
@@ -375,3 +375,16 @@ M6 前必须再次取得具体主网交易授权（API/收款方、用途、金�
 本轮安装证据：已正常退出旧版并确认 loopback listener 停止；现有脚本更新同一安装位置，strict deep 签名及安装/Release 逐文件比对通过。新版 App PID 70730 从安装路径运行；14 条购买、10 个 Grant、3 个资源、原配置/连接及其它账本表的旧列摘要保持一致。当前 macOS 钥匙串 App Lock 确认与原 PIN 解锁等待用户完成，后端尚未监听；不把原生进程存活当作后台 ready。安装版新门禁/MCP、重启后钱包身份及增量迁移实际就绪验收待解锁后补核对，当前测试证据与实际运行限制分开报告。
 
 2026-10-08 解锁后安装版补验收：用户完成系统确认及解锁后，App PID 71143、后端 PID 71151 均从安装 bundle 运行，后端 cwd 为 bundle 内 Runtime/backend，仅监听 `127.0.0.1:3049`；生命周期记录管理认证、coreReady 和 walletAvailable。签名和安装/Release 比对仍通过；原生 Authority 加载完成，显示 Connected、Mainnet 和 Grant expired。当前桌面 MCP 及使用安装版 MCP 的新真实 Codex app-server 宿主均读取到原主网钱包身份和就绪服务，过期 Grant 保持拒绝付款资格。新宿主未确认 POST 返回 `RESOURCE_POST_APPROVAL_REQUIRED`，伪造批准字段被 schema 拒绝；无认证管理请求返回 401。实际数据库已应用 `014_post_grant_consent`，旧 10 个 Grant 无自动 POST 授权；购买、Grant、事件、资源、成员、monetary 旧列及配置/连接摘要与安装前一致。上条解锁等待现已解除。未创建资源/Grant，未签名、提交或付款；安装版正向 POST 确认发送及实际商家购买未执行，不将隔离测试作为该项运行证据。冻结决定仍留给独立只读审计。
+
+## 2026-10-08：Agent-driven MCP Resource Registration
+
+用户明确授权替代此前“仅返回提案、由用户手工登记”的流程。新增 `register_x402_resource`：只接受当前 Agent 成功发现后端保存的 `discoveryId` 和资源身份标签；不接受端点、付款或权限覆盖。共享 Registry 原子消费凭据并持久保存不可变定义、Agent 来源、样例及文档/未确认事项。原生 Registered APIs / Authority selector 自动刷新，Grant 样例自动填入；注册不创建任何消费授权。新增 `015_agent_resource_registration` 仅追加发现/来源元数据表，保留原注册、Grant、账本与原付款证据。现有 POST 副作用确认、SSRF、SDK、签名和付款/恢复架构不变。
+
+当前验证：77 文件 / 940 测试、typecheck、lint、production build、原生 Debug/Release 及 Grant/确认/样例模型测试通过。已正常退出旧版并通过现有脚本更新 `/Users/irin/Applications/Yosh.app`；strict deep 签名与安装/Release 逐文件一致。用户解锁后，App PID 77413、后端 PID 77426 从安装 bundle 运行，2026-10-08 21:43:30 后端 ready，仅监听 loopback。新真实 Codex app-server 宿主通过已安装 MCP 成功发现并注册 `agent402-crypto-price`，原生列表与 Authority selector 已显示 Agent-submitted、正确端点、0.001 USDC 和预填样例。该资源 Grant 缺失；实际 MCP 购买返回 `DENIED / SPEND_GRANT_REQUIRED / NOT_STARTED`，没有交易、签名 payload 或付款证据。旧 14 条购买、10 个 Grant、原付款、钱包 scope、配置及旧资源指纹保持；新增一条拒绝验收记录（非付款），Grant 数量仍为 10。无真实签名/付款、创建 Grant、设置修改、提交或推送。当前已连接宿主可能需要重连刷新工具列表；新工具已经由新的真实宿主验收。详细范围、证据及未验证的付费交付/恢复限制见 [MCP registration](docs/architecture/resources/agent-mcp-registration.md)。
+
+
+## 2026-10-08：首笔真实 Mainnet 购买与冻结后归档
+
+用户在真实 Codex 对话中明确授权一次 Agent402 BTC、ETH、SOL USD 数据购买，上限 0.001 USDC，使用既有 Spend Grant，并要求任何阻碍或未知付款即停止。实际 MCP 返回 PAID / CONFIRMED / COMPLETE；只读账本确认相同交易签名、原付款 CONFIRMED 和交付重试次数 0。交易签名、购买 ID、状态字段的准确区别和结果见 [首笔主网验收](docs/demo/first-mainnet-purchase-20261008.md)。这只是该笔 GET 的验收，不证明商家恢复、真实 POST 购买或其它资源能力。
+
+冻结提交 `e7ef99e8029509355f105edd8013606a05934aaf` 之后的已完成工作按通用 Agent MCP 注册、Spend Grant/连接生命周期修正、原生接线及回归、真实 Mainnet 验收文档拆分签名提交。Grant 创建、替换和撤销不再轮换 MCP 连接凭据；显式断开/轮换仍使旧凭据失效，购买仍逐笔检查 Grant。归档验证为 77 文件 / 941 项测试、typecheck、lint、production build、原生资源模型测试、安装签名及已有 Release 产物比对通过。公共 RPC 独立查询网络失败，未新增链上确认主张。此归档任务不改产品代码，不重装/重启，不登记资源、不创建 Grant、不付款；付款、Authority 与购买/恢复核心目录和冻结提交一致。Git 推送及桌面同步结果以本次完成回复为准；到同步为止，不进入 UI polish。
