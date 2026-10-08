@@ -10,6 +10,8 @@ import { resolve } from 'node:path';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, expect, it, vi } from 'vitest';
+import { discoverResource } from '../../src/modules/resources/mainnet-resource-discovery';
+import { POST as registerAgentResourcePOST } from '../../src/app/api/agent/resources/route';
 import { AppRuntime } from '../../src/modules/app/app-runtime';
 import { createAgentServer } from '../../src/modules/mcp/server';
 import { readConnection } from '../../src/modules/mcp/connection';
@@ -61,6 +63,29 @@ async function fixture(enabled = true) {
   const call = async (id = 'purchase', token = readConnection(dir).token, extra = {}) => POST(new Request(`${origin}/api/agent/purchases`, { method: 'POST', headers: { host: '127.0.0.1:3049', authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ requestId: id, resourceId: resource.resourceId, reason: 'fixture', ...extra }) }));
   return { app, dir, grant, daily, call, quoteFetch, resource, signer };
 }
+it('Agent-created resources appear in both read models but cannot spend without a resource Grant', async () => {
+  const f = await fixture(); await f.daily();
+  const descriptor = readConnection(f.dir);
+  const principal = f.app.authenticateAgent(new Request(`${origin}/api/agent`, { headers: { authorization: `Bearer ${descriptor.token}` } }));
+  const input = { url: 'https://generic.example/price', requestInputs: { query: { coins: { type: 'string', required: true } } }, sample: { query: { coins: 'SOL' } } };
+  const read = vi.fn(async (url: string) => new Headers({ 'payment-required': encodePaymentRequiredHeader({ x402Version: 2,
+    resource: { url }, accepts: [{ scheme: 'exact', network: f.resource.network, asset: f.resource.mint,
+      amount: '10000', payTo: f.resource.recipient, maxTimeoutSeconds: 300, extra: { feePayer: f.signer.address } }] }) }));
+  const discovered = f.app.ledger.resources.recordDiscovery(await discoverResource(input, read), principal);
+  const response = await registerAgentResourcePOST(new Request(`${origin}/api/agent/resources`, { method: 'POST',
+    headers: { authorization: `Bearer ${descriptor.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ discoveryId: discovered.discoveryId, resourceId: 'agent-generic-price', providerId: 'generic.example', displayName: 'Generic price' }) }));
+  expect(response.status).toBe(201); expect(await response.json()).toMatchObject({ registrationStatus: 'REGISTERED', spendingAuthorityCreated: false });
+  expect(f.app.listRegisteredResources().find(item => item.resourceId === 'agent-generic-price')).toMatchObject({ source: 'agent', submission: { sample: input.sample } });
+  expect(f.app.registeredResources().find(item => item.resourceId === 'agent-generic-price')).toMatchObject({ source: 'agent', submission: { sample: input.sample } });
+  expect(f.app.ledger.spendGrantSummary(Date.now(), 'live_mainnet', principal.cardMemberId, 'agent-generic-price')).toBeNull();
+  expect(f.app.ledger.list()).toHaveLength(0);
+  f.quoteFetch.mockImplementation(async (url) => new Response(null, { status: 402, headers: await read(String(url)) }));
+  const denied = await f.call('agent-without-grant', descriptor.token, { resourceId: 'agent-generic-price', request: input.sample });
+  expect(denied.status).toBe(200);
+  expect(await denied.json()).toMatchObject({ status: 'DENIED', grant: null, decision: { reason: 'SPEND_GRANT_REQUIRED' }, paymentStatus: 'NOT_STARTED' });
+  expect(loadBuyerSigner).not.toHaveBeenCalled(); expect(prepareSolanaPayment).not.toHaveBeenCalled();
+});
 it('real App management and MCP tool reach the shared Mainnet signing boundary; replay preserves original payment', async () => {
   const f = await fixture(); await f.daily(); await f.grant();
   const server = createAgentServer(async () => f.app.overview(), async input => { const response = await f.call(input.requestId); if (!response.ok) throw new Error(); return response.json(); });
@@ -217,7 +242,10 @@ it('the shipped stdio MCP bridge uses a registered member capability and the pro
     expect(prepareSolanaPayment).toHaveBeenCalledOnce(); expect(f.app.ledger.list()).toHaveLength(1);
     f.app.revokeSpendGrant();
     const stale = await client.callTool({ name: 'request_purchase', arguments: { ...args, requestId: 'stale' } });
-    expect(stale.isError).toBe(true); expect(prepareSolanaPayment).toHaveBeenCalledOnce();
+    expect(stale.isError).not.toBe(true);
+    expect(JSON.stringify(stale)).toContain('SPEND_GRANT_REVOKED');
+    expect(prepareSolanaPayment).toHaveBeenCalledOnce();
+    expect(f.app.agentConnection.status().integration).toMatchObject({ connected: true, state: 'connected' });
   } finally { await client.close(); http.closeAllConnections(); await new Promise<void>(resolveClose => http.close(() => resolveClose())); }
 });
 

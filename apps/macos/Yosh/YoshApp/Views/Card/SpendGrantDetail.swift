@@ -85,6 +85,12 @@ struct SpendGrantDetail: View {
                 }, onCancel: { pendingPostGrant = nil; postReview = nil })
         }
         .foregroundStyle(ink)
+        .onChange(of: selectedResourceID) { _, id in
+            let sample = overview.service.registeredResources?.first(where: { $0.resourceId == id })?.submission?.sample
+            sampleQuery = sample?.queryText ?? ""
+            sampleBody = sample?.bodyText ?? ""
+            inputError = nil
+        }
         .onChange(of: overview.scopedGrant?.id) { _, _ in
             draft = SpendGrantDraft(grant: overview.scopedGrant)
             inputError = nil
@@ -181,7 +187,7 @@ struct SpendGrantDetail: View {
                 Picker("Registered API", selection: $selectedResourceID) {
                     Text("Choose an API").tag("")
                     ForEach(overview.service.registeredResources ?? []) { resource in
-                        Text(resource.name ?? resource.resourceId).tag(resource.resourceId)
+                        Text((resource.name ?? resource.resourceId) + (resource.source == "agent" ? " · Agent-submitted" : "")).tag(resource.resourceId)
                     }
                 }
                 .disabled(isSaving)
@@ -193,6 +199,13 @@ struct SpendGrantDetail: View {
                         .padding(.top, 6)
                 }
                 if isMainnet, let resource = overview.service.registeredResources?.first(where: { $0.resourceId == selectedResourceID }) {
+                    if resource.source == "agent" {
+                        Text("Agent-submitted · review before authorizing spending").font(.caption).foregroundStyle(secondaryInk)
+                    }
+                    if let submission = resource.submission, !submission.documentation.uncertainties.isEmpty {
+                        Text("Unconfirmed: " + submission.documentation.uncertainties.joined(separator: "\n"))
+                            .font(.caption).foregroundStyle(secondaryInk).fixedSize(horizontal: false, vertical: true)
+                    }
                     if let policy = resource.requestInputs?.description {
                         Text("Input policy: \(policy)").font(.caption).textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)

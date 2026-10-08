@@ -63,6 +63,8 @@ struct AppOverview: Decodable {
             var basePriceDisplay: String? = nil
             var maximumPriceDisplay: String? = nil
             var requestInputs: RegisterAPIRequest.Inputs? = nil
+            var source: String? = nil
+            var submission: RegisteredAPI.Submission? = nil
             let network: String
             let assetId: String
             let assetDecimals: Int

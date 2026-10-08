@@ -20,7 +20,7 @@ struct RegisteredAPIsView: View {
                 Text("Registration makes an API available for a Spend Grant. It does not authorize spending.")
                     .font(.system(size: 12)).foregroundStyle(YoshShellPalette.secondaryInk)
                 ForEach(resources.filter { $0.state != "REMOVED" }) { resource in
-                    SettingsRow(title: resource.name, value: resource.state == "ACTIVE" ? (resource.isUserAdded ? "Added" : "Built-in") : "Disabled", showsChevron: true,
+                    SettingsRow(title: resource.name, value: resource.state == "ACTIVE" ? resource.sourceLabel : "Disabled", showsChevron: true,
                         action: { navigation.show(.inspect(resource.id)) })
                     Divider()
                 }
@@ -71,6 +71,26 @@ struct RegisteredAPIsView: View {
         Text(resource.name).font(.headline)
         fact("Resource ID", resource.resourceId)
         fact("Provider", resource.providerId)
+        fact("Source", resource.sourceLabel)
+        if let submission = resource.submission {
+            fact("Submitted by Agent", submission.cardMemberId)
+            Text("Review this resource before creating a Spend Grant. Registration grants no spending authority.")
+                .font(.system(size: 12)).foregroundStyle(YoshShellPalette.secondaryInk)
+            fact("Sample query", submission.sample.queryText.isEmpty ? "None" : submission.sample.queryText)
+            fact("Sample JSON body", submission.sample.bodyText.isEmpty ? "None" : submission.sample.bodyText)
+            fact("Documentation supplied by Agent", submission.documentation.urls.isEmpty ? "Not supplied" : submission.documentation.urls.joined(separator: "\n"))
+            if !submission.documentation.uncertainties.isEmpty {
+                fact("Unconfirmed", submission.documentation.uncertainties.joined(separator: "\n"))
+            }
+        }
+        if let inputs = resource.definition.requestInputs?.description { fact("Dynamic input policy", inputs) }
+        if let request = resource.definition.request {
+            if let body = request.body { fact("Fixed JSON body", body) }
+            if !request.headers.isEmpty { fact("Request headers", request.headers.keys.sorted().map { "\($0): \(request.headers[$0] ?? "")" }.joined(separator: "\n")) }
+        }
+        if let delivery = resource.definition.deliveryPolicy {
+            fact("Delivery", "\(delivery.format) · \(delivery.mimeTypes.joined(separator: ", ")) · up to \(delivery.maxBytes) bytes")
+        }
         fact("Endpoint", resource.url)
         fact("Method", resource.method)
         fact("Network", "Solana Mainnet")
@@ -78,7 +98,7 @@ struct RegisteredAPIsView: View {
         fact("Mint", resource.assetId)
         fact("Base price", resource.basePriceDisplay ?? "Not specified")
         fact("Maximum price", resource.maximumPriceDisplay ?? "Not specified")
-        fact("Recovery", resource.definition.deliveryRecovery?.kind ?? "none")
+        fact("Recovery", resource.definition.deliveryRecovery?.details ?? "Not declared")
         fact("Status", resource.state)
         Text("Recipient and payment requirements are checked from the live challenge when creating a Grant and purchasing.")
             .font(.system(size: 12)).foregroundStyle(YoshShellPalette.secondaryInk)

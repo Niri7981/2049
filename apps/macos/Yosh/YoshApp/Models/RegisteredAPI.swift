@@ -14,14 +14,39 @@ struct RegisteredAPI: Decodable, Identifiable {
     let source: String
     let state: String
     let definition: Definition
-    var isUserAdded: Bool { source == "user" }
+    let submission: Submission?
+    var isUserAdded: Bool { source == "user" || source == "agent" }
+    var sourceLabel: String { source == "agent" ? "Agent-submitted" : (isUserAdded ? "Added" : "Built-in") }
+
+    struct Submission: Decodable, Sendable {
+        let cardMemberId: String
+        let discoveryId: String
+        let discoveredAt: Int64
+        let sample: ResourceRequestSample
+        let documentation: Documentation
+    }
+    struct Documentation: Decodable, Sendable {
+        let urls: [String]
+        let uncertainties: [String]
+    }
 
     struct Definition: Decodable {
+        let request: RegisterAPIRequest.HTTPRequest?
+        let deliveryPolicy: RegisterAPIRequest.DeliveryPolicy?
         let deliveryRecovery: Recovery?
         let requestInputs: RegisterAPIRequest.Inputs?
     }
     struct Recovery: Codable {
         let kind: String
+        var replayHeader: [String: String]? = nil
+        var request: RegisterAPIRequest.HTTPRequest? = nil
+        var identifier: String? = nil
+        var location: String? = nil
+        var name: String? = nil
+        var details: String? {
+            guard let data = try? JSONEncoder().encode(self) else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
     }
     struct List: Decodable { let resources: [RegisteredAPI] }
 }
@@ -41,7 +66,7 @@ struct RegisterAPIRequest: Encodable {
     let deliveryPolicy: DeliveryPolicy
     let requestInputs: Inputs?
 
-    struct DeliveryPolicy: Encodable {
+    struct DeliveryPolicy: Codable, Sendable {
         let format: String
         let mimeTypes: [String]
         let maxBytes: Int
@@ -109,6 +134,16 @@ enum ResourceJSONValue: Codable, Sendable {
 struct ResourceRequestSample: Codable, Sendable {
     var query: [String: String]?
     var jsonBody: [String: ResourceJSONValue]?
+
+    var queryText: String { Self.jsonText(query) }
+    var bodyText: String { Self.jsonText(jsonBody) }
+    private static func jsonText<T: Encodable>(_ value: T?) -> String {
+        guard let value else { return "" }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(value) else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
 
     static func parse(queryText: String, bodyText: String) throws -> Self {
         let query = queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil
