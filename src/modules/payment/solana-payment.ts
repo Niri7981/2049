@@ -71,7 +71,9 @@ export async function prepareSolanaPayment(
   if (requirement.scheme !== "exact" || requirement.network !== config.network || requirement.asset !== config.mint ||
       requirement.payTo !== config.merchant || requirement.amount !== authorized.amount || !PositiveAtomicAmountSchema.safeParse(authorized.amount).success
       || !SolanaPublicKeySchema.safeParse(requirement.extra?.feePayer).success || !validX402Memo(requirement.extra?.memo)
-      || !Number.isSafeInteger(requirement.maxTimeoutSeconds) || requirement.maxTimeoutSeconds <= 0 || requirement.maxTimeoutSeconds > 300) {
+      || !Number.isSafeInteger(requirement.maxTimeoutSeconds) || requirement.maxTimeoutSeconds <= 0 || requirement.maxTimeoutSeconds > (authorized.challenge ? 600 : 300)
+      || (requirement.extra?.paymentFlow != null && requirement.extra.paymentFlow !== 'authorization')
+      || (requirement.extra?.assetTransferMethod != null && requirement.extra.assetTransferMethod !== 'default')) {
     throw new Error("Signer rejected a payment outside the fixed payment configuration");
   }
   if (signer.address !== config.buyer || !("signTransactions" in signer)) {
@@ -117,8 +119,12 @@ export async function prepareSolanaPayment(
   for (const key of ['blockhash', 'recentBlockhash', 'lastValidBlockHeight', 'rpcUrl', 'feePayerRpcUrl']) delete safeExtra[key];
   const safeRequirement = { ...requirement, network: config.cluster === "localnet" ? DEVNET_NETWORK : requirement.network, extra: safeExtra };
   const challenge = authorized.challenge ? X402ChallengeSchema.parse(authorized.challenge) : undefined;
-  if (challenge && (challenge.resource.url !== authorized.resource || challenge.accepts.length !== 1
-    || !isDeepStrictEqual(challenge.accepts[0], requirement))) throw new Error('Approval challenge changed');
+  if (challenge && (challenge.accepts.filter(item => isDeepStrictEqual(item, requirement)).length !== 1
+    || !(challenge.resource.url === authorized.resource || (() => {
+      try { const route = new URL(challenge.resource.url); const request = new URL(authorized.resource);
+        return route.origin === request.origin && route.pathname === request.pathname && !route.search && !route.hash; }
+      catch { return false; }
+    })()))) throw new Error('Approval challenge changed');
   const scheme = new ExactSvmScheme(checkedSigner, { rpcUrl: config.rpcUrl });
   const client = new x402Client()
     .register(safeRequirement.network, scheme)
@@ -131,7 +137,7 @@ export async function prepareSolanaPayment(
     x402Version: 2,
     resource: challenge?.resource ?? { url: authorized.resource },
     ...(challenge?.extensions ? { extensions: challenge.extensions } : {}),
-    accepts: [safeRequirement],
+    accepts: challenge ? challenge.accepts.map(item => isDeepStrictEqual(item, requirement) ? safeRequirement : item) : [safeRequirement],
   });
   return { ...created, accepted: requirement };
 }

@@ -7,6 +7,7 @@ import { MarketSnapshotInputSchema, type ResourceMetadata } from './resource-sch
 import { DEMO_MARKET_DATA_PROVIDER_ID, PREMIUM_SOL_MARKET_SNAPSHOT_ID } from './static-resource-registry';
 import { X402ResourceSchema, type X402Resource } from './http-resource';
 import { resourcePaymentBinding, validateResourceChallenge } from '../payment/resource-challenge';
+import { readPaymentRequiredHeader } from '../payment/x402-client';
 import type { PaymentEnvironment } from '../payment/payment-environment';
 import { TEST_CACHED_DELIVERY } from './delivery-capability';
 
@@ -14,18 +15,25 @@ import { TEST_CACHED_DELIVERY } from './delivery-capability';
 export function createX402SpendIntent(input: {
   idempotencyKey: string; resource: X402Resource; challenge: unknown; environment: PaymentEnvironment;
   buyer: string; reason?: string; now?: number; authority?: SpendAuthorityBinding;
+  requestInputFingerprint?: string;
+  paymentRequiredHeader?: string;
 }): SpendIntent {
   const resource = X402ResourceSchema.parse(input.resource);
   const { challenge, quote } = validateResourceChallenge(input.challenge, resource, input.environment);
+  if (input.paymentRequiredHeader && hash(readPaymentRequiredHeader(input.paymentRequiredHeader)) !== hash(challenge))
+    throw new Error('MERCHANT_QUOTE_EVIDENCE_MISMATCH');
   const now = input.now ?? Date.now();
   return SpendIntentSchema.parse({ id: randomUUID(), idempotencyKey: input.idempotencyKey,
     requestHash: hash({ resourceId: resource.resourceId, providerId: resource.providerId, request: resource.request, reason: input.reason }),
+    ...(input.requestInputFingerprint ? { requestInputFingerprint: input.requestInputFingerprint } : {}),
     resourceId: resource.resourceId, providerId: resource.providerId, httpRequest: resource.request, x402Challenge: challenge,
+    ...(input.paymentRequiredHeader ? { paymentRequiredHeader: input.paymentRequiredHeader } : {}),
     ...(resource.deliveryRecovery ? { deliveryRecovery: resource.deliveryRecovery } : {}),
+    ...(resource.deliveryPolicy ? { deliveryPolicy: resource.deliveryPolicy } : {}),
     ...(input.reason ? { reason: input.reason } : {}), amount: quote.amount, currency: 'USDC', assetDecimals: resource.decimals,
     assetId: quote.asset, network: quote.network, payTo: quote.payTo, paymentScheme: quote.scheme, quoteFingerprint: hash(quote),
     createdAt: now, expiresAt: now + quote.maxTimeoutSeconds * 1000,
-    executionBinding: resourcePaymentBinding(input.environment, input.buyer, resource.request, challenge, resource.deliveryRecovery),
+    executionBinding: resourcePaymentBinding(input.environment, input.buyer, resource.request, challenge, resource.deliveryRecovery, input.paymentRequiredHeader),
     ...(input.authority ? { authority: input.authority } : {}) });
 }
 

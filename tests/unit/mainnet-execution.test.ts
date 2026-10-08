@@ -1,3 +1,4 @@
+import { postRequestPolicyHash } from '../../src/modules/resources/post-request-authorization';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,8 +12,11 @@ import { loadPaymentConfig, type PaymentConfig } from '../../src/modules/payment
 import { createX402SpendIntent } from '../../src/modules/resources/market-spend-adapter';
 import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';
 import { PAID_RESOURCE_PURCHASE_OPERATION } from '../../src/modules/authority/spend-grant';
-import { executeApprovedPayment, recoverApprovedPayment } from '../../src/modules/purchases/approved-payment';
+import { checkPaymentBinding, executeApprovedPayment, recoverApprovedPayment } from '../../src/modules/purchases/approved-payment';
 import { requestRegisteredResourcePurchase } from '../../src/modules/purchases/request-registered-resource-purchase';
+import { requestForPurchase } from '../../src/modules/purchases/request-registered-resource-purchase';
+import { assertProductionPaymentGate } from '../../src/modules/payment/production-execution-gate';
+import { resourcePaymentBinding } from '../../src/modules/payment/resource-challenge';
 import { loadBuyerSigner } from '../../src/modules/payment/wallet';
 import { prepareSolanaPayment } from '../../src/modules/payment/solana-payment';
 import { reconcileStoredOriginalPayment } from '../../src/modules/payment/reconcile-transaction';
@@ -31,7 +35,7 @@ afterEach(() => { vi.resetAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
 async function fixture(path = ':memory:') {
   const signer = await generateKeyPairSigner(); const recipient = await generateKeyPairSigner(); const sponsor = await generateKeyPairSigner();
   const environment = resolvePaymentEnvironment({ YOSH_EXECUTION_MODE: 'live_mainnet', YOSH_ENABLE_MAINNET_EXECUTION: '1' });
-  const resource: X402Resource = { resourceId: 'registered-data', providerId: 'provider', network: environment.network,
+  const resource: X402Resource & { recipient: string } = { resourceId: 'registered-data', providerId: 'provider', network: environment.network,
     mint: environment.asset.mint, decimals: 6, recipient: recipient.address, amount: '10000', deliveryRecovery: { kind: 'idempotent_replay' },
     request: { url: 'https://api.provider.example/v1/data', method: 'POST', access: 'https', headers: { 'content-type': 'application/json' }, body: '{"asset":"SOL"}' } };
   const config: PaymentConfig = { ...environment, mint: environment.asset.mint, buyer: signer.address, merchant: recipient.address,
@@ -39,7 +43,7 @@ async function fixture(path = ':memory:') {
   const ledger = new PurchaseLedger(path, { managed: true, requireSpendGrant: true, mode: 'live_mainnet' });
   const principal = { cardMemberId: ledger.defaultCardMember().id, connectionId: randomUUID(), connectionGeneration: 1 };
   const scope = { resourceId: resource.resourceId, providerId: resource.providerId, operation: PAID_RESOURCE_PURCHASE_OPERATION,
-    network: config.network, assetId: config.mint, assetDecimals: 6, payTo: resource.recipient, paymentScheme: 'exact' };
+    network: config.network, assetId: config.mint, assetDecimals: 6, payTo: resource.recipient, paymentScheme: 'exact', postPolicyHash: postRequestPolicyHash(resource) };
   const now = Date.now();
   const grantInput = { totalLimit: '100000', singleLimit: '10000', expiresAt: now + 3600_000 };
   const challenge = { x402Version: 2 as const, resource: { url: resource.request.url }, accepts: [{ scheme: 'exact', network: config.network,
@@ -76,17 +80,18 @@ it('requires an explicit unambiguous production enablement, with no cluster/wall
   expect(() => resolvePaymentEnvironment({ YOSH_ENABLE_MAINNET_EXECUTION: '1' })).toThrow('production execution mode');
 });
 
-it('loads explicit production wallet/resource/facilitator facts without any Demo fallback', async () => {
+it('loads production wallet/resource facts with an optional validated facilitator override and no Demo fallback', async () => {
   const f = await fixture();
   try {
     const env = { YOSH_EXECUTION_MODE: 'live_mainnet', YOSH_ENABLE_MAINNET_EXECUTION: '1', YOSH_MAINNET_WALLET_PUBLIC_KEY: f.config.buyer,
-      YOSH_MAINNET_RESOURCES: JSON.stringify([f.resource]), X402_FACILITATOR_URL: f.config.facilitatorUrl };
-    expect(loadPaymentConfig(env)).toMatchObject(f.config);
-    expect(() => loadPaymentConfig({ ...env, YOSH_MAINNET_WALLET_PUBLIC_KEY: undefined })).toThrow('YOSH_MAINNET_WALLET_PUBLIC_KEY');
-    expect(() => loadPaymentConfig({ ...env, YOSH_MAINNET_RESOURCES: undefined })).toThrow('MAINNET_RESOURCE_REGISTRATION_REQUIRED');
-    expect(() => loadPaymentConfig({ ...env, X402_FACILITATOR_URL: undefined })).toThrow('required for Mainnet');
+      YOSH_MAINNET_RESOURCES: JSON.stringify([f.resource]), X402_FACILITATOR_URL: f.config.facilitatorUrl ?? undefined };
+    expect(loadPaymentConfig(env, 'live_devnet', f.config.buyer)).toMatchObject(f.config);
+    expect(() => loadPaymentConfig({ ...env, YOSH_MAINNET_WALLET_PUBLIC_KEY: undefined })).toThrow('Mainnet wallet identity');
+    expect(() => loadPaymentConfig({ ...env, YOSH_MAINNET_RESOURCES: undefined }, 'live_devnet', f.config.buyer)).toThrow('MAINNET_RESOURCE_REGISTRATION_REQUIRED');
+    expect(loadPaymentConfig({ ...env, X402_FACILITATOR_URL: undefined }, 'live_devnet', f.config.buyer).facilitatorUrl).toBeNull();
+    expect(() => loadPaymentConfig({ ...env, X402_FACILITATOR_URL: 'http://facilitator.example' }, 'live_devnet', f.config.buyer)).toThrow('must use HTTPS');
     expect(() => loadPaymentConfig({ ...env, DEMO_MERCHANT_PUBLIC_KEY: f.resource.recipient })).toThrow('Demo configuration is forbidden');
-    expect(() => loadPaymentConfig({ ...env, YOSH_MAINNET_RESOURCES: JSON.stringify([{ ...f.resource, mint: DEVNET_USDC_MINT }]) })).toThrow('REGISTRATION_INVALID');
+    expect(() => loadPaymentConfig({ ...env, YOSH_MAINNET_RESOURCES: JSON.stringify([{ ...f.resource, mint: DEVNET_USDC_MINT }]) }, 'live_devnet', f.config.buyer)).toThrow('REGISTRATION_INVALID');
   } finally { f.ledger.close(); }
 });
 
@@ -234,4 +239,93 @@ it('activation migration quarantines pre-enablement Mainnet authority without mo
       expect(reopened.get('pre-enablement', f.principal.cardMemberId)?.status).toBe('PAYMENT_UNKNOWN');
     } finally { reopened.close(); }
   } finally { if (!closed) f.ledger.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+it('challenge-derived recipients still enforce the Grant payee and immutable production payment gate', async () => {
+  const f = await fixture(); f.enableAuthority();
+  const { recipient, amount, ...base } = f.resource;
+  expect(recipient).toBe(f.scope.payTo); expect(amount).toBe('10000');
+  const resource: X402Resource = { ...base, recipientSource: 'live_challenge', maximumAmount: '10000' };
+  const config: PaymentConfig = { ...f.config, merchant: '', registeredResources: [resource] };
+  try {
+    const { assertProductionPaymentGate } = await import('../../src/modules/payment/production-execution-gate');
+    const record = f.request('challenge-bound-approved');
+    expect(() => assertProductionPaymentGate(f.ledger, record, config, resource.request.url)).not.toThrow();
+    expect(() => assertProductionPaymentGate(f.ledger, record, { ...config, registeredResources: [{ ...resource, maximumAmount: '9999' }] }, resource.request.url)).toThrow();
+    const changed = { ...f.challenge, accepts: [{ ...f.challenge.accepts[0], payTo: f.signer.address }] };
+    const intent = createX402SpendIntent({ idempotencyKey: 'changed-live-recipient', resource, challenge: changed, environment: config,
+      buyer: config.buyer, authority: f.ledger.spendAuthorityForDecision(f.principal, PAID_RESOURCE_PURCHASE_OPERATION, f.now, 'live_mainnet'), now: f.now });
+    expect(f.ledger.reserve(intent, changed.accepts[0], f.now, 'live_mainnet', f.principal.cardMemberId,
+      f.ledger.paymentScope(config, 'live_mainnet')).decision.reason).toBe('SPEND_GRANT_SCOPE_MISMATCH');
+    expect(loadBuyerSigner).not.toHaveBeenCalled(); expect(prepareSolanaPayment).not.toHaveBeenCalled();
+  } finally { f.ledger.close(); }
+});
+
+it.each(['GET', 'POST'] as const)('production gate accepts only the registered dynamic %s request instance', async method => {
+  const f = await fixture(); f.enableAuthority();
+  try {
+    const registered: X402Resource = { ...f.resource, request: { url: 'https://api.provider.example/v1/data', method,
+      access: 'https', headers: method === 'POST' ? { 'content-type': 'application/json' } : {} },
+      requestInputs: method === 'GET' ? { query: ['query'] } : { jsonBody: ['query'] } };
+    if (method === 'POST') f.ledger.createSpendGrant(f.grantInput, f.principal, { ...f.scope, postPolicyHash: postRequestPolicyHash(registered) }, f.now, 'live_mainnet');
+    const instance = requestForPurchase(registered, { requestId: 'dynamic', resourceId: registered.resourceId, reason: 'fixture',
+      request: method === 'GET' ? { query: { query: 'SOL' } } : { jsonBody: { query: 'SOL' } } });
+    const challenge = { ...f.challenge, resource: { url: registered.request.url } };
+    const intent = createX402SpendIntent({ idempotencyKey: `dynamic-${method}`, resource: instance, challenge,
+      environment: f.config, buyer: f.config.buyer, authority: f.ledger.spendAuthorityForDecision(f.principal,
+        PAID_RESOURCE_PURCHASE_OPERATION, f.now, 'live_mainnet'), now: f.now });
+    const record = f.ledger.reserve(intent, challenge.accepts[0], f.now, 'live_mainnet', f.principal.cardMemberId,
+      f.ledger.paymentScope(f.config, 'live_mainnet'));
+    const config = { ...f.config, registeredResources: [registered] };
+    expect(() => assertProductionPaymentGate(f.ledger, record, config, instance.request.url)).not.toThrow();
+    if (method === 'GET') expect(() => assertProductionPaymentGate(f.ledger, record, config, registered.request.url)).toThrow('MAINNET_RESOURCE_BINDING_MISMATCH');
+    expect(() => assertProductionPaymentGate(f.ledger, record, { ...config, registeredResources: [{ ...registered,
+      requestInputs: undefined }] }, instance.request.url)).toThrow();
+  } finally { f.ledger.close(); }
+});
+it.each(['HEAD', 'PUT', 'PATCH', 'DELETE'] as const)('historical %s resource cannot reach the Mainnet execution boundary', async method => {
+  const f = await fixture(); f.enableAuthority();
+  try {
+    const original = f.request(`historical-${method}`);
+    const request = { ...f.resource.request, method, ...(method === 'HEAD' ? { body: undefined } : {}) };
+    const historical = { ...f.resource, request };
+    const record = { ...original, intent: { ...original.intent, httpRequest: request,
+      executionBinding: resourcePaymentBinding(f.config, f.config.buyer, request, f.challenge, historical.deliveryRecovery) } };
+    expect(() => assertProductionPaymentGate(f.ledger, record, { ...f.config, registeredResources: [historical] }, request.url))
+      .toThrow('MAINNET_RESOURCE_METHOD_UNSUPPORTED');
+    expect(loadBuyerSigner).not.toHaveBeenCalled(); expect(prepareSolanaPayment).not.toHaveBeenCalled();
+    expect(f.ledger.get(original.intent.idempotencyKey, f.principal.cardMemberId)).toEqual(original);
+  } finally { f.ledger.close(); }
+});
+it('accepts a 600-second route quote through the approval gate and expires it before signing', async () => {
+  const f = await fixture(); f.enableAuthority();
+  try {
+    const registered: X402Resource = { ...f.resource, request: { url: 'https://api.you.com/v1/search',
+      method: 'GET', access: 'https', headers: {} }, requestInputs: { query: ['query'] } };
+    const instance = requestForPurchase(registered, { requestId: 'you-600', resourceId: registered.resourceId,
+      reason: 'fixture', query: 'solana' });
+    const challenge = { ...f.challenge, resource: { url: registered.request.url },
+      accepts: [{ ...f.challenge.accepts[0], maxTimeoutSeconds: 600 }] };
+    const intent = createX402SpendIntent({ idempotencyKey: 'you-600', resource: instance, challenge,
+      environment: f.config, buyer: f.config.buyer, authority: f.ledger.spendAuthorityForDecision(f.principal,
+        PAID_RESOURCE_PURCHASE_OPERATION, f.now, 'live_mainnet'), now: f.now });
+    const record = f.ledger.reserve(intent, challenge.accepts[0], f.now, 'live_mainnet', f.principal.cardMemberId,
+      f.ledger.paymentScope(f.config, 'live_mainnet'));
+    const config = { ...f.config, registeredResources: [registered] };
+    expect(() => checkPaymentBinding(record, config, instance.request.url)).not.toThrow();
+    expect(() => assertProductionPaymentGate(f.ledger, record, config, instance.request.url)).not.toThrow();
+    expect(() => f.ledger.claim(record.approvalId, f.now + 600_001, undefined, 'live_mainnet')).toThrow('Approval inactive or expired');
+    expect(prepareSolanaPayment).not.toHaveBeenCalled();
+  } finally { f.ledger.close(); }
+});
+
+it.each(['HEAD', 'PUT', 'PATCH', 'DELETE'] as const)('rejects historical %s definitions at Mainnet execution before signer access', async method => {
+  const f = await fixture(); f.enableAuthority();
+  try {
+    const record = f.request(`unsupported-${method}`);
+    const historical = { ...f.resource, request: { ...f.resource.request, method, ...(method === 'HEAD' ? { body: undefined } : {}) } };
+    expect(() => assertProductionPaymentGate(f.ledger, record, { ...f.config, registeredResources: [historical] }, f.resource.request.url))
+      .toThrow('MAINNET_RESOURCE_METHOD_UNSUPPORTED');
+    expect(loadBuyerSigner).not.toHaveBeenCalled(); expect(prepareSolanaPayment).not.toHaveBeenCalled();
+  } finally { f.ledger.close(); }
 });

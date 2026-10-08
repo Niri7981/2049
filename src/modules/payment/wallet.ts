@@ -22,8 +22,8 @@ export async function loadBuyerSigner(expectedAddress: string, env: Record<strin
     const forbidden = ['DEMO_BUYER_PRIVATE_KEY', 'DEMO_BUYER_KEYPAIR', 'DEMO_BUYER_KEYCHAIN_SERVICE',
       'DEMO_BUYER_PUBLIC_KEY', 'DEMO_MERCHANT_PUBLIC_KEY'];
     if (forbidden.some(key => env[key] !== undefined)) throw new Error('MAINNET_WALLET_ISOLATION: Demo configuration is forbidden');
-    if (!env.YOSH_MAINNET_WALLET_PUBLIC_KEY || env.YOSH_MAINNET_WALLET_PUBLIC_KEY !== expectedAddress) {
-      throw new Error('MAINNET_WALLET_ISOLATION: explicit Mainnet wallet identity required');
+    if (env.YOSH_MAINNET_WALLET_PUBLIC_KEY !== undefined && env.YOSH_MAINNET_WALLET_PUBLIC_KEY !== expectedAddress) {
+      throw new Error('MAINNET_WALLET_ISOLATION: Mainnet wallet identity assertion mismatch');
     }
     const { loadEnvironmentWalletSigner } = await import('../app-wallet/product-wallet');
     const signer = await loadEnvironmentWalletSigner(expectedAddress, selected);

@@ -10,7 +10,7 @@ import { assertUnsignedPaymentBindings, createSignedPaymentIdentity } from '../.
 import { createX402SpendIntent } from '../../src/modules/resources/market-spend-adapter';
 import { PurchaseLedger } from '../../src/modules/purchases/purchase-ledger';
 import { PAID_RESOURCE_PURCHASE_OPERATION } from '../../src/modules/authority/spend-grant';
-import type { X402Resource } from '../../src/modules/resources/http-resource';
+import type { X402Challenge, X402Resource } from '../../src/modules/resources/http-resource';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -21,8 +21,11 @@ it('the real locked official x402 SDK constructs and signs Mainnet USDC using fi
     method: 'GET', access: 'https', headers: {} }, network: environment.network, mint: environment.asset.mint, decimals: 6, recipient: recipient.address };
   const config: PaymentConfig = { ...environment, mint: environment.asset.mint, buyer: signer.address, merchant: recipient.address,
     facilitatorUrl: 'https://facilitator.fixture.example', registeredResources: [resource] };
-  const challenge = { x402Version: 2 as const, resource: { url: resource.request.url }, accepts: [{ scheme: 'exact', network: config.network,
-    asset: config.mint, payTo: recipient.address, amount: '10000', maxTimeoutSeconds: 300, extra: { feePayer: sponsor.address } }] };
+  const challenge: X402Challenge = { x402Version: 2, resource: { url: resource.request.url }, accepts: [
+    { scheme: 'exact', network: 'eip155:8453', asset: '0x0000000000000000000000000000000000000001',
+      payTo: '0x0000000000000000000000000000000000000002', amount: '10000', maxTimeoutSeconds: 300, extra: {} },
+    { scheme: 'exact', network: config.network,
+      asset: config.mint, payTo: recipient.address, amount: '10000', maxTimeoutSeconds: 300, extra: { feePayer: sponsor.address } }] };
   const ledger = new PurchaseLedger(':memory:', { managed: true, requireSpendGrant: true, mode: 'live_mainnet' });
   const principal = { cardMemberId: ledger.defaultCardMember().id, connectionId: randomUUID(), connectionGeneration: 1 };
   const now = Date.now();
@@ -33,7 +36,7 @@ it('the real locked official x402 SDK constructs and signs Mainnet USDC using fi
         network: config.network, assetId: config.mint, assetDecimals: 6, payTo: recipient.address, paymentScheme: 'exact' }, now, 'live_mainnet');
     const intent = createX402SpendIntent({ idempotencyKey: 'real-sdk-fixture', resource, challenge, environment, buyer: signer.address,
       authority: ledger.spendAuthority(principal, PAID_RESOURCE_PURCHASE_OPERATION, now, 'live_mainnet'), now });
-    const record = ledger.reserve(intent, challenge.accepts[0], now, 'live_mainnet', principal.cardMemberId, ledger.paymentScope(config, 'live_mainnet'));
+    const record = ledger.reserve(intent, challenge.accepts[1], now, 'live_mainnet', principal.cardMemberId, ledger.paymentScope(config, 'live_mainnet'));
     ledger.claim(record.approvalId, now, undefined, 'live_mainnet');
     const mintBytes = Buffer.alloc(MintLayout.span);
     MintLayout.encode({ mintAuthorityOption: 0, mintAuthority: new PublicKey(signer.address), supply: 1_000_000n,

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEVNET_GENESIS, DEVNET_NETWORK, DEVNET_USDC_MINT, loadPaymentConfig, TOKEN_PROGRAM } from "../../src/modules/payment/payment-config";
-import { getStandardTokenAccount, runPaymentPreflight } from "../../src/modules/payment/payment-preflight";
+import { DEVNET_GENESIS, DEVNET_NETWORK, DEVNET_USDC_MINT, MAINNET_GENESIS, MAINNET_NETWORK,
+  MAINNET_USDC_MINT, loadPaymentConfig, TOKEN_PROGRAM } from "../../src/modules/payment/payment-config";
+import { classifyPaymentPreflightError, getStandardTokenAccount, runPaymentPreflight } from "../../src/modules/payment/payment-preflight";
 
 const BUYER = "11111111111111111111111111111111";
 const MERCHANT = TOKEN_PROGRAM;
@@ -72,6 +73,41 @@ describe("Payment network and wallet configuration", () => {
 });
 
 describe("Payment read-only preflight", () => {
+  it("uses the bound Mainnet quote sponsor without a merchant facilitator URL", async () => {
+    const resource = { resourceId: 'registered', providerId: 'provider', request: {
+      url: 'https://provider.example/data', method: 'GET', access: 'https', headers: {} },
+      network: MAINNET_NETWORK, mint: MAINNET_USDC_MINT, decimals: 6, recipient: MERCHANT, amount: '5000' };
+    const config = loadPaymentConfig({ YOSH_EXECUTION_MODE: 'live_mainnet', YOSH_ENABLE_MAINNET_EXECUTION: '1',
+      YOSH_MAINNET_RESOURCES: JSON.stringify([resource]) }, 'live_devnet', BUYER);
+    expect(config.facilitatorUrl).toBeNull();
+    const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+      expect(String(url)).toBe(config.rpcUrl);
+      const request = JSON.parse(String(init?.body));
+      const token = (owner: string, amount: string) => ({ owner: TOKEN_PROGRAM, data: { parsed: { type: 'account',
+        info: { owner, mint: MAINNET_USDC_MINT, state: 'initialized', tokenAmount: { amount, decimals: 6 } } } } });
+      const results: Record<string, unknown> = {
+        getGenesisHash: MAINNET_GENESIS,
+        getMultipleAccounts: { value: [{ owner: TOKEN_PROGRAM, data: { parsed: { type: 'mint', info: { decimals: 6, isInitialized: true } } } },
+          token(BUYER, '10000'), token(MERCHANT, '0')] },
+        getBalance: { value: 100_000 },
+      };
+      return Response.json({ result: results[request.method] });
+    });
+    await expect(runPaymentPreflight(config, { fetch: fetcher, amount: '5000', feePayer: FEE_PAYER }))
+      .resolves.toMatchObject({ readyForSettlement: true, facilitator: { feePayer: FEE_PAYER } });
+    expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual([config.rpcUrl, config.rpcUrl, config.rpcUrl]);
+    await expect(runPaymentPreflight(config, { fetch: fetcher, amount: '5000' }))
+      .rejects.toThrow('bound Mainnet quote fee payer is required');
+  });
+
+  it('classifies a missing recipient ATA before signing or transaction simulation', async () => {
+    const test = fixture();
+    test.state.accounts[2] = null;
+    const error = await runPaymentPreflight(loadPaymentConfig(env), { fetch: test.fetcher }).catch(value => value);
+    expect(classifyPaymentPreflightError(error)).toBe('RECIPIENT_TOKEN_ACCOUNT_UNAVAILABLE');
+    expect(test.fetcher.mock.calls.some(([, init]) => String(init?.body).includes('simulateTransaction'))).toBe(false);
+  });
+
   it("accepts exactly 0.01 USDC with a sponsored fee payer and checks only standard ATAs", async () => {
     const test = fixture();
     const config = loadPaymentConfig({ ...env, SOLANA_DEVNET_RPC_URL: "https://rpc.example/private-key?token=secret" });

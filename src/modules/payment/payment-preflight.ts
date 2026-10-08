@@ -30,6 +30,22 @@ export type PaymentPreflightSummary = {
   readyForSettlement: true;
 };
 
+/** Stable, non-sensitive classifications for read-only quote inspection. */
+export function classifyPaymentPreflightError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (message.startsWith('Merchant standard associated token account')) return 'RECIPIENT_TOKEN_ACCOUNT_UNAVAILABLE';
+  if (message.startsWith('Buyer standard associated token account')) return 'BUYER_TOKEN_ACCOUNT_UNAVAILABLE';
+  if (message.startsWith('Buyer associated token account has less')) return 'INSUFFICIENT_USDC';
+  if (message.startsWith('Facilitator fee payer must have SOL')) return 'FEE_PAYER_SOL_INSUFFICIENT';
+  if (message.startsWith('Facilitator does not support')) return 'FACILITATOR_QUOTE_MISMATCH';
+  if (message.startsWith('Facilitator supported') || message.startsWith('A bound Mainnet quote fee payer')
+    || message.startsWith('Mainnet requires sponsored') || message.startsWith('Facilitator supported response')) return 'FACILITATOR_QUOTE_INVALID';
+  if (message.startsWith('RPC genesis hash')) return 'RPC_NETWORK_MISMATCH';
+  if (message.startsWith('RPC ') || message.startsWith('Payment mint')) return 'RPC_PAYMENT_ASSET_UNVERIFIED';
+  if (error instanceof Error && 'code' in error && typeof error.code === 'string') return error.code;
+  return 'PAYMENT_PREFLIGHT_FAILED';
+}
+
 /** Fail closed; never include RPC URLs, provider payloads, or credentials in errors. */
 export async function runPaymentPreflight(
   config: PaymentConfig,
@@ -68,15 +84,24 @@ export async function runPaymentPreflight(
     || (config.network !== "solana:localnet" && config.network !== `solana:${genesis.slice(0, 32)}`))) {
     throw new Error("RPC genesis hash does not match the configured local test chain");
   }
-  const supportedUrl = new URL(config.facilitatorUrl);
-  supportedUrl.pathname = `${supportedUrl.pathname.replace(/\/$/, "")}/supported`;
-  const supported = await json(supportedUrl.toString(), "Facilitator supported");
-  const kind = (Array.isArray(supported.kinds) ? supported.kinds : []).map(object).find(
-    (item) => item.x402Version === 2 && item.scheme === "exact" && item.network === config.network
-      && (dependencies.feePayer === undefined || object(item.extra).feePayer === dependencies.feePayer),
-  );
-  if (!kind) throw new Error("Facilitator does not support x402 v2 exact payments on the configured network");
-  const rawFeePayer = object(kind.extra).feePayer;
+  // A Mainnet buyer receives the fee payer in the merchant's bound 402 quote.
+  // The merchant, not Yosh, selects and calls its settlement facilitator. A
+  // separate public /supported endpoint may advertise another sponsor and is
+  // therefore not evidence that it will settle this merchant's transaction.
+  let rawFeePayer: unknown = dependencies.feePayer;
+  if (config.facilitatorUrl !== null) {
+    const supportedUrl = new URL(config.facilitatorUrl);
+    supportedUrl.pathname = `${supportedUrl.pathname.replace(/\/$/, "")}/supported`;
+    const supported = await json(supportedUrl.toString(), "Facilitator supported");
+    const kind = (Array.isArray(supported.kinds) ? supported.kinds : []).map(object).find(
+      (item) => item.x402Version === 2 && item.scheme === "exact" && item.network === config.network
+        && (dependencies.feePayer === undefined || object(item.extra).feePayer === dependencies.feePayer),
+    );
+    if (!kind) throw new Error("Facilitator does not support x402 v2 exact payments on the configured network");
+    rawFeePayer = object(kind.extra).feePayer;
+  } else if (config.mode !== 'live_mainnet' || dependencies.feePayer === undefined) {
+    throw new Error('A bound Mainnet quote fee payer is required');
+  }
   let feePayer: string;
   try {
     if (typeof rawFeePayer !== "string") throw new Error();

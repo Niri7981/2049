@@ -144,7 +144,7 @@ describe('no Mainnet or simulated execution side effects', () => {
   });
 
   it('blocks Mainnet before reading Demo wallet configuration or opening the App store', () => {
-    expect(() => loadPaymentConfig({ YOSH_EXECUTION_MODE: 'live_mainnet' })).toThrow('YOSH_MAINNET_WALLET_PUBLIC_KEY');
+    expect(() => loadPaymentConfig({ YOSH_EXECUTION_MODE: 'live_mainnet' })).toThrow('Mainnet wallet identity');
     expect(() => loadPaymentConfig({ ...wallets, YOSH_EXECUTION_MODE: 'live_mainnet' })).toThrow('Demo configuration is forbidden');
     vi.stubEnv('YOSH_EXECUTION_MODE', 'live_mainnet');
     vi.stubEnv('YOSH_ENABLE_DEVNET_PURCHASES', undefined);
@@ -152,8 +152,10 @@ describe('no Mainnet or simulated execution side effects', () => {
     const parent = mkdtempSync(join(tmpdir(), 'environment-disabled-')); dirs.push(parent);
     const directory = join(parent, 'never-opened');
     const initializeWallet = vi.fn();
-    expect(() => new AppRuntime(directory, { initializeWallet })).toThrow('YOSH_MAINNET_WALLET_PUBLIC_KEY');
-    expect(existsSync(directory)).toBe(false);
+    const app = new AppRuntime(directory, { initializeWallet });
+    expect(app.execution().configurationReady).toBe(false);
+    app.close();
+    expect(existsSync(directory)).toBe(true);
     expect(initializeWallet).not.toHaveBeenCalled();
   });
 

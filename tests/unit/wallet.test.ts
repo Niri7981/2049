@@ -114,10 +114,12 @@ describe('Mainnet signer source isolation', () => {
     expect(readAppWalletKeychain).not.toHaveBeenCalled();
     expect(readMainnetWalletKeychain).not.toHaveBeenCalled();
   });
-  it('requires a separately configured Mainnet public identity', async () => {
-    await expect(loadBuyerSigner(publicAddress, mainnet)).rejects.toThrow('explicit Mainnet wallet identity required');
+  it('rejects missing Keychain identity and mismatching optional Mainnet assertion', async () => {
+    await expect(loadBuyerSigner(publicAddress, mainnet)).rejects.toThrow('unavailable in Keychain');
+    expect(readMainnetWalletKeychain).toHaveBeenCalledOnce();
+    vi.mocked(readMainnetWalletKeychain).mockClear();
     await expect(loadBuyerSigner(publicAddress, { ...mainnet,
-      YOSH_MAINNET_WALLET_PUBLIC_KEY: '11111111111111111111111111111111' })).rejects.toThrow('explicit Mainnet wallet identity required');
+      YOSH_MAINNET_WALLET_PUBLIC_KEY: '11111111111111111111111111111111' })).rejects.toThrow('Mainnet wallet identity assertion mismatch');
     expect(readMainnetWalletKeychain).not.toHaveBeenCalled();
   });
   it('loads only the dedicated Mainnet item and proves its signer address', async () => {

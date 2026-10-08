@@ -67,7 +67,7 @@ it('rejects a challenge extension declaring the wrong HTTP method', () => {
 
 it.each([{ network: DEVNET_NETWORK }, { network: 'solana:mainnet' }, { asset: DEVNET_USDC_MINT },
   { payTo: buyer }, { amount: '1.5' }, { amount: '9223372036854775808' }, { amount: '010000' },
-  { scheme: 'upto' }, { maxTimeoutSeconds: 301 }, { maxTimeoutSeconds: 1.5 }])('rejects unsupported/changed production payment facts %j', change => {
+  { scheme: 'upto' }, { maxTimeoutSeconds: 601 }, { maxTimeoutSeconds: 1.5 }])('rejects unsupported/changed production payment facts %j', change => {
   const required = challenge();
   expect(() => validateResourceChallenge({ ...required, accepts: [{ ...required.accepts[0], ...change }] }, resource, mainnet)).toThrow('INVALID_X402_QUOTE');
 });

@@ -107,9 +107,15 @@ function decodePayment(header: string): PaymentPayload | undefined {
   } catch { return; }
 }
 
+function configuredTestFacilitator(config: PaymentConfig): FacilitatorClient {
+  // This local Paid API is a test server and always needs its own settlement service.
+  if (config.facilitatorUrl === null) throw new Error('FACILITATOR_CONFIGURATION_REQUIRED');
+  return new HTTPFacilitatorClient({ url: config.facilitatorUrl, timeoutMs: 30_000 });
+}
+
 export function createPaidMarketApi(
   config: PaymentConfig,
-  facilitator: FacilitatorClient = new HTTPFacilitatorClient({ url: config.facilitatorUrl, timeoutMs: 30_000 }),
+  facilitator: FacilitatorClient = configuredTestFacilitator(config),
   store = new SettlementStore(),
 ): (input: unknown, payment?: string, recoveryOnly?: boolean) => Promise<Response> {
   const server = new x402ResourceServer(facilitator).register(config.network, new ExactSvmScheme());

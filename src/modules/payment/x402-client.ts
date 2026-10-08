@@ -34,6 +34,7 @@ export function paymentSignatureHeaders(payload: PaymentPayload): Record<string,
 const receiptFields = {
   network: z.templateLiteral(['solana:', z.string().min(1).max(193)]),
   amount: z.string().refine(value => PositiveAtomicAmountSchema.safeParse(value).success).optional(), extensions: z.record(z.string(), z.json()).optional(),
+  extensionResponses: z.record(z.string(), z.json()).optional(),
   extra: z.record(z.string(), z.json()).optional(),
 };
 export const SettlementReceiptSchema = z.discriminatedUnion('success', [

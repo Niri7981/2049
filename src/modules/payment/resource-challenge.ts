@@ -5,15 +5,17 @@ import { validatePaymentEnvironment, type PaymentEnvironment } from './payment-e
 import { readPaymentRequiredHeader } from './x402-client';
 import { hash } from '../authority/authority-policy';
 import { HttpResourceRequestSchema, type HttpResourceRequest } from '../resources/http-resource';
+import { safeResourceFetch } from '../resources/safe-resource-fetch';
 import { validateDeliveryCapability, type DeliveryRecoveryCapability } from '../resources/delivery-capability';
+import { assertSupportedMainnetResourceRequest } from '../resources/supported-resource-request';
 
-export function resourcePaymentBinding(environment: PaymentEnvironment, buyer: string, request: HttpResourceRequest, challenge: X402Challenge, recovery?: DeliveryRecoveryCapability) {
+export function resourcePaymentBinding(environment: PaymentEnvironment, buyer: string, request: HttpResourceRequest, challenge: X402Challenge, recovery?: DeliveryRecoveryCapability, header?: string) {
   // Execution permission belongs to the immutable ledger scope. Presentation or
   // switching to simulation must not prevent read-only recovery of a paid Devnet request.
   return hash(['x402-http-v1', environment.cluster, environment.genesisHash, environment.network,
     { network: environment.asset.network, mint: environment.asset.mint, tokenProgram: environment.asset.tokenProgram, decimals: environment.asset.decimals },
     SolanaPublicKeySchema.parse(buyer), HttpResourceRequestSchema.parse(request), X402ChallengeSchema.parse(challenge),
-    ...(recovery ? [validateDeliveryCapability(recovery, request)] : [])]);
+    ...(recovery ? [validateDeliveryCapability(recovery, request)] : []), ...(header ? [header] : [])]);
 }
 
 /** Optional quote memo follows the SDK's UTF-8 limit; absence lets the SDK generate it. */
@@ -26,6 +28,7 @@ function validatedResource(declared: X402Resource, environment: PaymentEnvironme
   const { mode, cluster, genesisHash, rpcUrl, network, asset, isProduction, productionExecutionEnabled } = environment;
   const validated = validatePaymentEnvironment({ mode, cluster, genesisHash, rpcUrl, network, asset, isProduction, productionExecutionEnabled });
   const resource = X402ResourceSchema.parse(declared);
+  if (validated.isProduction) assertSupportedMainnetResourceRequest(resource.request);
   if (resource.deliveryRecovery) validateDeliveryCapability(resource.deliveryRecovery, resource.request);
   if (resource.network !== validated.network || resource.mint !== validated.asset.mint || resource.decimals !== validated.asset.decimals
     || (validated.isProduction && resource.request.access !== 'https')) throw new Error('RESOURCE_ENVIRONMENT_MISMATCH');
@@ -37,12 +40,28 @@ export function validateResourceChallenge(raw: unknown, declared: X402Resource, 
   const challenge = X402ChallengeSchema.parse(raw);
   const challengeUrl = resource.request.access === 'test_loopback' && challenge.resource.url.startsWith('/') && !challenge.resource.url.startsWith('//')
     ? new URL(challenge.resource.url, resource.request.url).href : challenge.resource.url;
-  if (challengeUrl !== resource.request.url || challenge.accepts.length !== 1) throw new Error('INVALID_X402_QUOTE');
-  const quote = challenge.accepts[0];
+  // V2 resource.url may identify a route. The saved HTTP request is the exact
+  // execution identity, including its query, body, method and approved headers.
+  let matchesRequest = challengeUrl === resource.request.url;
+  if (!matchesRequest) {
+    try {
+      const route = new URL(challengeUrl); const instance = new URL(resource.request.url);
+      matchesRequest = route.origin === instance.origin && route.pathname === instance.pathname
+        && !route.search && !route.hash && !route.username && !route.password;
+    } catch { /* Reject malformed resource identifiers. */ }
+  }
+  if (!matchesRequest) throw new Error('INVALID_X402_QUOTE');
+  const candidates = challenge.accepts.filter(item => item.scheme === 'exact' && item.network === validated.network && item.asset === validated.asset.mint
+    && (item.extra.paymentFlow == null || item.extra.paymentFlow === 'authorization')
+    && (item.extra.assetTransferMethod == null || item.extra.assetTransferMethod === 'default'));
+  if (candidates.length !== 1) throw new Error('INVALID_X402_QUOTE');
+  const quote = candidates[0];
   if (quote.scheme !== 'exact' || quote.network !== validated.network || quote.asset !== validated.asset.mint
-    || quote.payTo !== resource.recipient || !PositiveAtomicAmountSchema.safeParse(quote.amount).success
+    || !SolanaPublicKeySchema.safeParse(quote.payTo).success
+    || (resource.recipient !== undefined && quote.payTo !== resource.recipient) || !PositiveAtomicAmountSchema.safeParse(quote.amount).success
     || (resource.amount !== undefined && quote.amount !== resource.amount)
-    || !Number.isSafeInteger(quote.maxTimeoutSeconds) || quote.maxTimeoutSeconds <= 0 || quote.maxTimeoutSeconds > 300
+    || (resource.maximumAmount !== undefined && BigInt(quote.amount) > BigInt(resource.maximumAmount))
+    || !Number.isSafeInteger(quote.maxTimeoutSeconds) || quote.maxTimeoutSeconds <= 0 || quote.maxTimeoutSeconds > 600
     || !SolanaPublicKeySchema.safeParse(quote.extra.feePayer).success || !validX402Memo(quote.extra.memo)) throw new Error('INVALID_X402_QUOTE');
   // If discovery metadata declares an HTTP method, it cannot override this approved request.
   const bazaar = challenge.extensions?.bazaar;
@@ -52,17 +71,22 @@ export function validateResourceChallenge(raw: unknown, declared: X402Resource, 
     const method = input && typeof input === 'object' && !Array.isArray(input) ? input.method : undefined;
     if (method !== undefined && method !== resource.request.method) throw new Error('RESOURCE_METHOD_MISMATCH');
   }
+  // Persist every merchant alternative as quote evidence. Signing must select
+  // the separately authorized requirement without mutating this challenge.
   return { challenge, quote };
 }
 
 /** One fresh challenge for the exact approved request; no redirect or unsigned retry. */
-export async function fetchResourceChallenge(resource: X402Resource, environment: PaymentEnvironment, fetcher: typeof fetch = fetch) {
+export async function fetchResourceChallenge(resource: X402Resource, environment: PaymentEnvironment, fetcher?: typeof fetch) {
   const { resource: declared } = validatedResource(resource, environment);
   const { url, method, headers, body } = declared.request;
-  const response = await fetcher(url, { method, headers, ...(body === undefined ? {} : { body }), redirect: 'error', signal: AbortSignal.timeout(10_000) });
+  const response = declared.request.access === 'https'
+    ? await safeResourceFetch(url, { method, headers, ...(body === undefined ? {} : { body }), redirect: 'error', signal: AbortSignal.timeout(10_000) }, fetcher)
+    : await (fetcher ?? fetch)(url, { method, headers, ...(body === undefined ? {} : { body }), redirect: 'error', signal: AbortSignal.timeout(10_000) });
   try {
     if (response.status !== 402 || (response.url && response.url !== url)) throw new Error('INVALID_X402_QUOTE');
-    const parsed = validateResourceChallenge(readPaymentRequiredHeader(response.headers.get('PAYMENT-REQUIRED') ?? ''), declared, environment);
-    return { endpoint: url, request: declared.request, ...parsed };
+    const paymentRequiredHeader = response.headers.get('PAYMENT-REQUIRED') ?? '';
+    const parsed = validateResourceChallenge(readPaymentRequiredHeader(paymentRequiredHeader), declared, environment);
+    return { endpoint: url, request: declared.request, paymentRequiredHeader, ...parsed };
   } finally { await response.body?.cancel(); }
 }
