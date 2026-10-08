@@ -90,6 +90,13 @@ it('valid delivery can be complete while the independent receipt remains unavail
   await f.retry(vi.fn<typeof fetch>().mockResolvedValue(f.response(false)));
   expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', receiptStatus: 'UNAVAILABLE', deliveryStatus: 'COMPLETE' });
 });
+it('accepts a bounded JSON POST creation response with HTTP 201 as delivered data', async () => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  await f.retry(vi.fn<typeof fetch>().mockResolvedValue(new Response('{"created":true}', {
+    status: 201, headers: { 'content-type': 'application/json' },
+  })));
+  expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', deliveryStatus: 'COMPLETE', data: { created: true } });
+});
 it('claims only one concurrent retry and repeated completed calls send no request', async () => {
   const f = await fixture(); await expect(f.paid()).rejects.toThrow();
   let release!: (response: Response) => void;
@@ -160,10 +167,17 @@ it('delivery retry changes no daily paid/reserved/remaining amounts or grant com
   expect(nextGrant).toMatchObject({ committed: grant!.committed, remaining: grant!.remaining });
   expect(f.ledger.events(f.intent.idempotencyKey).filter(event => event.type === 'payment.PAID')).toHaveLength(1);
 });
-it.each(['not json', '[]', '1', ' '.repeat(16_385)])('malformed recovered delivery remains paid and consumes a bounded retry', async body => {
+it.each(['not json', ' '.repeat(16_385)])('malformed recovered delivery remains paid and consumes a bounded retry', async body => {
   const f = await fixture(); await expect(f.paid()).rejects.toThrow(); await f.retry(vi.fn<typeof fetch>().mockResolvedValue(f.response(true, body)));
   expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', receiptStatus: 'CONFIRMED', deliveryStatus: 'PENDING', deliveryRecovery: { retryCount: 1 } });
   expect(f.ledger.get(f.intent.idempotencyKey)?.data).toBeUndefined();
+});
+it.each(['[]', '1', '"text"'])('protocol-valid non-object JSON delivery survives recovery', async body => {
+  const f = await fixture(); await expect(f.paid()).rejects.toThrow();
+  await f.retry(vi.fn<typeof fetch>().mockResolvedValue(f.response(true, body)));
+  expect(f.ledger.get(f.intent.idempotencyKey)).toMatchObject({ status: 'PAID', deliveryStatus: 'COMPLETE' });
+  expect(f.ledger.get(f.intent.idempotencyKey)?.data).toEqual(JSON.parse(body));
+  expect(prepareSolanaPayment).toHaveBeenCalledOnce();
 });
 it('malformed/wrong transaction receipt cannot satisfy delivery and cannot erase confirmed payment', async () => {
   const f = await fixture(); await expect(f.paid()).rejects.toThrow();

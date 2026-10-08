@@ -64,9 +64,9 @@ it('isolates live member credentials and grants, then invalidates them on revoke
   const reopened = new AppRuntime(directory, { now: () => now });
   try {
     expect(reopened.memberOverview(id).member).toMatchObject({ label: 'Research', status: 'REVOKED' });
-    expect(reopened.memberOverview(defaultId).connection.enabled).toBe(false);
-    expect(reopened.spendGrantSummary(defaultId)?.status).toBe('REVOKED');
-    expect(existsSync(connectionFile(directory))).toBe(false);
+    expect(reopened.memberOverview(defaultId).connection.enabled).toBe(true);
+    expect(reopened.spendGrantSummary(defaultId)?.status).toBe('ACTIVE');
+    expect(existsSync(connectionFile(directory))).toBe(true);
   } finally { reopened.close(); }
 });
 

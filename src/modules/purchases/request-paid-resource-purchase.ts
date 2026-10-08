@@ -17,6 +17,9 @@ export const PurchaseRequestInputSchema = z.object({
   requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),
   resourceId: z.string().min(1).max(200),
   reason: z.string().trim().min(1).max(240),
+  query: z.string().trim().min(1).max(300).optional(),
+  request: z.object({ query: z.record(z.string(), z.string().min(1).max(300)).optional(),
+    jsonBody: z.record(z.string(), z.json()).optional() }).strict().optional(),
 }).strict();
 export type PurchaseRequestInput = z.infer<typeof PurchaseRequestInputSchema>;
 
@@ -28,7 +31,7 @@ export type PurchaseRequestResult = {
   paymentStatus: 'NOT_STARTED' | 'PAYING' | 'PAYMENT_UNKNOWN' | 'PAID' | 'FAILED';
   executionMode: PurchaseExecutionMode; deliveryStatus: Exclude<DeliveryStatus, 'NOT_PAID'> | 'NOT_DELIVERED';
   receiptStatus: ReceiptStatus; deliveryRecovery: DeliveryRecoveryState;
-  reused: boolean; resource?: Record<string, unknown>;
+  reused: boolean; resource?: unknown; deliveryRetrieval?: { purchaseId: string; totalBytes: number; chunkBytes: number };
 };
 
 function result(record: SpendReservation, reused: boolean, executionMode: PurchaseExecutionMode): PurchaseRequestResult {
@@ -37,7 +40,8 @@ function result(record: SpendReservation, reused: boolean, executionMode: Purcha
   const authority = record.intent.authority;
   if (!authority && (record.decision.decision !== 'DENIED' || record.decision.reason !== 'SPEND_GRANT_REQUIRED')) throw new Error('SPEND_GRANT_REQUIRED');
   const resource = record.status === 'PAID' && record.deliveryStatus === 'COMPLETE'
-    ? mainnet ? z.record(z.string(), z.unknown()).parse(record.data) : parsePaidResourceDelivery(PaidResourceIdSchema.parse(id), record.data) : undefined;
+    ? mainnet ? record.data : parsePaidResourceDelivery(PaidResourceIdSchema.parse(id), record.data) : undefined;
+  const encoded = resource === undefined ? undefined : Buffer.from(JSON.stringify(resource));
   return { purchaseId: record.intent.idempotencyKey, resourceId: id, amount: String(record.intent.amount),
     display: displayAmount(String(record.intent.amount)).replace('test USDC', mainnet ? 'USDC' : 'test USDC'), status: record.status, decision: record.decision,
     quote: { resourceId: id, resourceUrl: mainnet ? record.intent.httpRequest!.url : paidResource(PaidResourceIdSchema.parse(id)).path, providerId: record.intent.providerId, network: record.intent.network,
@@ -47,7 +51,8 @@ function result(record: SpendReservation, reused: boolean, executionMode: Purcha
     paymentStatus: record.status === 'PAID' ? 'PAID' : record.status === 'PAYING' ? 'PAYING' : record.status === 'PAYMENT_UNKNOWN' ? 'PAYMENT_UNKNOWN' : record.status === 'FAILED' ? 'FAILED' : 'NOT_STARTED',
     executionMode, deliveryStatus: record.deliveryStatus === 'NOT_PAID' ? 'NOT_DELIVERED' : record.deliveryStatus, reused,
     receiptStatus: record.receiptStatus, deliveryRecovery: record.deliveryRecovery,
-    ...(resource ? { resource } : {}) };
+    ...(encoded && encoded.length > 32_768 ? { deliveryRetrieval: { purchaseId: record.intent.idempotencyKey,
+      totalBytes: encoded.length, chunkBytes: 16_384 } } : resource !== undefined ? { resource } : {}) };
 }
 
 /** The Agent selects only a registered resource. Fresh server terms own the price. */
@@ -64,6 +69,7 @@ export async function requestPaidResourcePurchase(raw: unknown, options: {
   }
   if (options.execute === true) assertPaymentConfigExecutionEnabled(options.config);
   const input = PurchaseRequestInputSchema.extend({ resourceId: PaidResourceIdSchema }).parse(raw);
+  if (input.query !== undefined || input.request !== undefined) throw new Error('RESOURCE_REQUEST_INPUT_UNSUPPORTED');
   const principal = SpendPrincipalSchema.parse(options.principal);
   options.ledger.assertCardMemberActive(principal.cardMemberId);
   const clock = options.now ?? Date.now;

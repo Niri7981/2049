@@ -36,7 +36,7 @@ it('authenticated selection reaches backend truth, never provisions Mainnet or c
   expect(app.ledger.controls('live_mainnet')).toMatchObject({ dailyBudget: null, paused: true });
   expect(app.spendGrantSummary()).toBeNull(); expect(app.ledger.list()).toEqual([]);
   expect((await app.overview()).service).toMatchObject({ purchaseMode: 'live_mainnet', paymentEnabled: false });
-  expect(initializeWallet).not.toHaveBeenCalled(); expect(process.env.DEMO_MERCHANT_PUBLIC_KEY).toBeUndefined();
+  expect(initializeWallet).toHaveBeenCalledOnce(); expect(process.env.DEMO_MERCHANT_PUBLIC_KEY).toBeUndefined();
   expect(resolvePaymentEnvironment().productionExecutionEnabled).toBe(false);
   expect(JSON.parse(readFileSync(join(dir, 'execution-selection.json'), 'utf8'))).toEqual({ version: 1, mode: 'live_mainnet' });
   expect(statSync(join(dir, 'execution-selection.json')).mode & 0o777).toBe(0o600);
@@ -49,7 +49,17 @@ it('selection survives restart without enabling execution or initializing a Main
   const { app, dir, initializeWallet } = fixture(); app.setExecution('live_mainnet'); app.close(); context.app = undefined;
   const restored = new AppRuntime(dir, { initializeWallet }); context.app = restored;
   expect(restored.execution()).toMatchObject({ mode: 'live_mainnet', productionExecutionEnabled: false, spendingAuthorized: false });
-  await restored.overview(); expect(initializeWallet).not.toHaveBeenCalled();
+  await restored.overview(); expect(initializeWallet).toHaveBeenCalledOnce();
+});
+it('loads the persisted profile before validating a product operator gate without an ambient execution mode', () => {
+  const { app, dir } = fixture(); app.setExecution('live_mainnet'); app.close(); context.app = undefined;
+  vi.stubEnv('YOSH_EXECUTION_MODE', undefined);
+  vi.stubEnv('YOSH_ENABLE_MAINNET_EXECUTION', '1');
+  context.app = new AppRuntime(dir);
+  expect(context.app.execution()).toMatchObject({ mode: 'live_mainnet', productionExecutionEnabled: true, spendingAuthorized: false });
+  context.app.setExecution('simulated'); context.app.close(); context.app = undefined;
+  context.app = new AppRuntime(dir);
+  expect(context.app.execution()).toMatchObject({ mode: 'simulated', productionExecutionEnabled: false });
 });
 it('Devnet selection keeps the existing test wallet and isolated controls', async () => {
   const { app, initializeWallet } = fixture();
@@ -89,7 +99,7 @@ it('corrupt persisted selection fails closed and releases the directory owner', 
 it('existing test SpendGrant and credentials cannot become Mainnet authority on selection', async () => {
   const { app } = fixture(); await app.overview();
   app.setDailyLimit('100000'); app.setPaused(false); app.setAgentConnection(true, origin);
-  const grant = app.createSpendGrant({ totalLimit: '100000', singleLimit: '10000', expiresAt: Date.now() + 3600000 });
+  const grant = await app.createSpendGrant({ totalLimit: '100000', singleLimit: '10000', expiresAt: Date.now() + 3600000 });
   app.setExecution('live_mainnet'); expect(app.spendGrantSummary()).toBeNull();
   expect(app.execution().spendingAuthorized).toBe(false);
   app.setExecution('simulated'); expect(app.spendGrantSummary()?.id).toBe(grant.id);

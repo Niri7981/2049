@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateKeyPairSigner } from '@solana/kit';
@@ -23,7 +23,10 @@ import { POST } from '../../src/app/api/agent/purchases/route';
 import { POST as sessionPOST } from '../../src/app/api/agent/session/route';
 import { GET as agentGET } from '../../src/app/api/agent/route';
 import { PUT as grantPUT } from '../../src/app/api/app/grant/route';
+import { POST as prepareResourcePOST } from '../../src/app/api/app/resources/prepare/route';
+import { POST as registerResourcePOST } from '../../src/app/api/app/resources/route';
 import { PUT as settingsPUT } from '../../src/app/api/app/settings/route';
+import { PUT as executionPUT } from '../../src/app/api/app/execution/route';
 import type { X402Resource } from '../../src/modules/resources/http-resource';
 
 vi.mock('../../src/modules/payment/wallet', () => ({ loadBuyerSigner: vi.fn() }));
@@ -38,7 +41,7 @@ afterEach(async () => { await context.app?.prepareQuit(); context.app?.close(); 
 async function fixture(enabled = true) {
   const signer = await generateKeyPairSigner(); const recipient = await generateKeyPairSigner(); const sponsor = await generateKeyPairSigner();
   const env = resolvePaymentEnvironment({ YOSH_EXECUTION_MODE: 'live_mainnet' });
-  const resource: X402Resource = { resourceId: 'production-data', providerId: 'registered-provider', network: env.network, mint: env.asset.mint,
+  const resource: X402Resource & { recipient: string } = { resourceId: 'production-data', providerId: 'registered-provider', network: env.network, mint: env.asset.mint,
     decimals: 6, recipient: recipient.address, amount: '10000', request: { url: 'https://provider.example/data', method: 'GET', access: 'https', headers: {} }, deliveryRecovery: { kind: 'idempotent_replay' } };
   vi.stubEnv('YOSH_EXECUTION_MODE', 'live_mainnet'); vi.stubEnv('YOSH_ENABLE_MAINNET_EXECUTION', enabled ? '1' : '');
   vi.stubEnv('YOSH_MAINNET_WALLET_PUBLIC_KEY', signer.address); vi.stubEnv('YOSH_MAINNET_RESOURCES', JSON.stringify([resource]));
@@ -56,7 +59,7 @@ async function fixture(enabled = true) {
   vi.mocked(prepareSolanaPayment).mockImplementation(async (config, _signer, quote, guard, authorized) => { guard?.(); return { ...await signedPaymentFixture(signer, config, quote), resource: authorized?.challenge?.resource }; });
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('fixture submission unknown')));
   const call = async (id = 'purchase', token = readConnection(dir).token, extra = {}) => POST(new Request(`${origin}/api/agent/purchases`, { method: 'POST', headers: { host: '127.0.0.1:3049', authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ requestId: id, resourceId: resource.resourceId, reason: 'fixture', ...extra }) }));
-  return { app, dir, grant, daily, call, quoteFetch, resource };
+  return { app, dir, grant, daily, call, quoteFetch, resource, signer };
 }
 it('real App management and MCP tool reach the shared Mainnet signing boundary; replay preserves original payment', async () => {
   const f = await fixture(); await f.daily(); await f.grant();
@@ -70,6 +73,94 @@ it('real App management and MCP tool reach the shared Mainnet signing boundary; 
     expect(prepareSolanaPayment).toHaveBeenCalledOnce(); expect(f.quoteFetch).toHaveBeenCalledOnce(); expect(f.app.ledger.list()).toHaveLength(1);
     expect((await f.app.overview()).service).toMatchObject({ network: 'Solana Mainnet', testEnvironment: false });
   } finally { await client.close(); await server.close(); }
+});
+it('authenticated product control enables Mainnet persistently without creating authority or entering payment', async () => {
+  const f = await fixture(false);
+  expect(f.app.execution()).toMatchObject({ productionExecutionEnabled: false, spendingAuthorized: false });
+  const request = signedManagementRequest(`${origin}/api/app/execution`, secret, { method: 'PUT',
+    headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ productionExecutionEnabled: true }) });
+  const response = await executionPUT(request);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ productionExecutionEnabled: true, spendingAuthorized: false });
+  expect(JSON.parse(readFileSync(join(f.dir, 'product-configuration.json'), 'utf8'))).toEqual({ YOSH_ENABLE_MAINNET_EXECUTION: '1' });
+  expect(f.app.ledger.spendGrantSummary(Date.now(), 'live_mainnet', f.app.ledger.defaultCardMember().id)).toBeNull();
+  expect(loadBuyerSigner).not.toHaveBeenCalled();
+  expect(prepareSolanaPayment).not.toHaveBeenCalled();
+});
+it('quote readiness reports a balance blocker independently of active resource and grant', async () => {
+  const f = await fixture(); await f.daily(); await f.grant();
+  const preview = await f.app.quotePaidResources(origin);
+  expect(preview.resources[0]).toMatchObject({ resourceId: f.resource.resourceId,
+    quoteStatus: 'available', preflight: { ready: false, code: 'USDC_BALANCE_UNVERIFIED' } });
+  expect(f.app.authority().readiness).toMatchObject({ resourceRegistration: { ready: true },
+    spendGrantAuthorization: { ready: true } });
+  expect(loadBuyerSigner).not.toHaveBeenCalled();
+  expect(prepareSolanaPayment).not.toHaveBeenCalled();
+});
+it('You.com search requires a bounded query and binds it to the exact paid request', async () => {
+  const f = await fixture();
+  const missing = await f.call('you-missing', undefined, { resourceId: 'you-web-search' });
+  expect(missing.status).toBe(400);
+  expect(await missing.json()).toMatchObject({ code: 'RESOURCE_REQUEST_INPUT_REQUIRED' });
+  expect(f.quoteFetch).not.toHaveBeenCalled();
+  const queryURL = 'https://api.you.com/v1/search?query=Solana+payments';
+  const env = resolvePaymentEnvironment({ YOSH_EXECUTION_MODE: 'live_mainnet' });
+  f.quoteFetch.mockResolvedValueOnce(new Response(null, { status: 402, headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader({
+    x402Version: 2, resource: { url: queryURL }, accepts: [{ scheme: 'exact', network: env.network,
+      asset: env.asset.mint, amount: '5000', payTo: f.resource.recipient,
+      maxTimeoutSeconds: 300, extra: { feePayer: f.signer.address } }],
+  }) } }));
+  const quoted = await f.call('you-query', undefined, { resourceId: 'you-web-search', query: 'Solana payments' });
+  expect(quoted.status).toBe(200);
+  expect(await quoted.json()).toMatchObject({ status: 'DENIED', quote: { resourceUrl: queryURL } });
+  expect(f.quoteFetch.mock.calls[0][0]).toBe(queryURL);
+  const changed = await f.call('you-query', undefined, { resourceId: 'you-web-search', query: 'different search' });
+  expect(changed.status).toBe(409);
+  expect(f.quoteFetch).toHaveBeenCalledOnce();
+  expect(prepareSolanaPayment).not.toHaveBeenCalled();
+});
+it('registers an unknown JSON POST through management and creates a sample-bound Grant without a rebuild or payment', async () => {
+  const f = await fixture(); await f.daily();
+  const env = resolvePaymentEnvironment({ YOSH_EXECUTION_MODE: 'live_mainnet' });
+  const endpoint = 'https://new-synthetic-merchant.example/v1/analyze';
+  const definition = { resourceId: 'new-json-merchant', providerId: 'synthetic.example', displayName: 'New JSON Merchant',
+    request: { url: endpoint, method: 'POST', access: 'https', headers: { 'content-type': 'application/json' } },
+    requestInputs: { jsonBody: { prompt: { type: 'string', required: true, maxLength: 300 } } }, network: env.network, mint: env.asset.mint, decimals: 6,
+    recipientSource: 'live_challenge', maximumAmount: '10000', deliveryRecovery: { kind: 'none' },
+    deliveryPolicy: { format: 'json', mimeTypes: ['application/json'], maxBytes: 32768 } };
+  const registration = await registerResourcePOST(signedManagementRequest(`${origin}/api/app/resources`, secret, {
+    method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify(definition) }));
+  expect(registration.status).toBe(201);
+  f.quoteFetch.mockImplementation(async () => new Response(null, { status: 402, headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader({
+    x402Version: 2, resource: { url: endpoint }, accepts: [{ scheme: 'exact', network: env.network,
+      asset: env.asset.mint, amount: '5000', payTo: f.resource.recipient, maxTimeoutSeconds: 300,
+      extra: { feePayer: f.signer.address } }] }) } }));
+  const grantInput = { action: 'create', resourceId: definition.resourceId, sample: { jsonBody: { prompt: 'sample' } },
+    totalLimit: '20000', singleLimit: '10000', expiresAt: Date.now() + 3600000 };
+  const rejected = await grantPUT(signedManagementRequest(`${origin}/api/app/grant`, secret, { method: 'PUT',
+    headers: { 'content-type': 'application/json', origin }, body: JSON.stringify(grantInput) }));
+  expect(rejected.status).toBe(409);
+  expect(await rejected.json()).toMatchObject({ code: 'RESOURCE_POST_APPROVAL_REQUIRED' });
+  await expect(f.app.quoteRegisteredResource(definition.resourceId, { jsonBody: { prompt: 'sample' } }, f.app.ledger.defaultCardMember().id))
+    .rejects.toThrow('RESOURCE_POST_APPROVAL_REQUIRED');
+  expect(f.quoteFetch).not.toHaveBeenCalled();
+  const reviewResponse = await prepareResourcePOST(signedManagementRequest(`${origin}/api/app/resources/prepare`, secret, { method: 'POST',
+    headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ kind: 'grant', resourceId: definition.resourceId, sample: grantInput.sample }) }));
+  expect(reviewResponse.status).toBe(200);
+  const review = await reviewResponse.json();
+  const changed = await grantPUT(signedManagementRequest(`${origin}/api/app/grant`, secret, { method: 'PUT',
+    headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ ...grantInput,
+      sample: { jsonBody: { prompt: 'changed' } }, postApprovalHash: review.requestHash }) }));
+  expect(changed.status).toBe(409); expect(f.quoteFetch).not.toHaveBeenCalled();
+  const grant = await grantPUT(signedManagementRequest(`${origin}/api/app/grant`, secret, { method: 'PUT',
+    headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ action: 'create', resourceId: definition.resourceId, postApprovalHash: review.requestHash,
+      sample: { jsonBody: { prompt: 'sample' } }, totalLimit: '20000', singleLimit: '10000', expiresAt: Date.now() + 3600000 }) }));
+  expect(grant.status).toBe(200);
+  expect(f.app.ledger.spendGrantSummary(Date.now(), 'live_mainnet', f.app.ledger.defaultCardMember().id, definition.resourceId)?.status).toBe('ACTIVE');
+  const quote = await f.app.quoteRegisteredResource(definition.resourceId, { jsonBody: { prompt: 'actual request' } }, f.app.ledger.defaultCardMember().id);
+  expect(quote).toMatchObject({ resourceId: definition.resourceId, amount: '5000', paymentSent: false });
+  expect(f.quoteFetch.mock.calls.map(call => (call[1] as RequestInit).body)).toEqual(['{"prompt":"sample"}', '{"prompt":"actual request"}']);
+  expect(loadBuyerSigner).not.toHaveBeenCalled(); expect(prepareSolanaPayment).not.toHaveBeenCalled();
 });
 it.each(['unauthorized', 'daily', 'grant', 'paused', 'disabled', 'extra', 'debug'] as const)('product Mainnet gate rejects %s without signing', async condition => {
   const f = await fixture(condition !== 'disabled');
@@ -190,4 +281,131 @@ it('Mainnet balance reads verify network identity and never supply spending auth
   expect(await f.app.balance(overview.wallet.address, rpc)).toMatchObject({ available: false });
   expect(f.app.ledger.controls('live_mainnet')).toMatchObject({ dailyBudget: null, paused: true });
   expect(prepareSolanaPayment).not.toHaveBeenCalled();
+});
+
+it('lists production registration while paused and disabled, even when live quote discovery fails', async () => {
+  const f = await fixture(false);
+  f.app.setPaused(true);
+  f.quoteFetch.mockRejectedValue(new Error('fixture upstream unavailable'));
+  const before = await f.app.overview();
+  const response = await agentGET(new Request(`${origin}/api/agent?operation=quote`, { headers: { authorization: `Bearer ${readConnection(f.dir).token}` } }));
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  expect(result.registeredResources).toEqual(before.service.registeredResources);
+  expect(result.resources[0]).toMatchObject({ resourceId: f.resource.resourceId, quoteStatus: 'unavailable', code: 'RESOURCE_QUOTE_UNAVAILABLE' });
+  expect(f.app.spendGrantSummary()).toBeNull();
+  expect(f.app.ledger.list()).toHaveLength(0);
+  expect((await f.app.overview()).budget.paused).toBe(true);
+  expect(loadBuyerSigner).not.toHaveBeenCalled(); expect(prepareSolanaPayment).not.toHaveBeenCalled();
+});
+
+function challengeBoundRegistration(f: Awaited<ReturnType<typeof fixture>>) {
+  const { recipient, amount, ...resource } = f.resource;
+  expect(recipient).toBeDefined(); expect(amount).toBe('10000');
+  const declared = { ...resource, displayName: 'You.com Web Search', recipientSource: 'live_challenge', baseAmount: '5000', maximumAmount: '5000' };
+  declared.resourceId = 'runtime-data';
+  f.resource.resourceId = declared.resourceId;
+  f.app.addRegisteredResource(declared);
+  return declared;
+}
+function readOnlyChallenge(f: Awaited<ReturnType<typeof fixture>>, payTo = f.resource.recipient, timeout = 600) {
+  return new Response(null, { status: 402, headers: { 'payment-required': encodePaymentRequiredHeader({
+    x402Version: 2, resource: { url: f.resource.request.url }, accepts: [
+      { scheme: 'exact', network: 'eip155:8453', asset: 'other-asset', amount: '5000', payTo: 'other-payee', maxTimeoutSeconds: 600, extra: {} },
+      { scheme: 'exact', network: f.resource.network, asset: f.resource.mint, amount: '5000', payTo, maxTimeoutSeconds: timeout,
+        extra: { feePayer: 'ComputeBudget111111111111111111111111111111' } },
+    ],
+  }) } });
+}
+it('only an explicit management request creates a challenge-bound Mainnet grant, without enabling payments', async () => {
+  const f = await fixture(false); challengeBoundRegistration(f); vi.stubEnv('X402_FACILITATOR_URL', undefined);
+  f.quoteFetch.mockImplementation(async () => readOnlyChallenge(f));
+  const overview = await f.app.overview();
+  expect(overview.service.registeredResources.find(r => r.resourceId === 'runtime-data')).toMatchObject({ name: 'You.com Web Search', recipient: null, method: 'GET', maximumAmount: '5000' });
+  expect(f.app.spendGrantSummary()).toBeNull(); expect(f.quoteFetch).not.toHaveBeenCalled();
+  const create = () => f.app.createSpendGrant({ resourceId: f.resource.resourceId, totalLimit: '10000', singleLimit: '5000', expiresAt: Date.now() + 3600000 });
+  await create();
+  expect(f.app.spendGrantSummary()).toMatchObject({ totalLimit: '10000', singleLimit: '5000', payTo: f.resource.recipient, status: 'ACTIVE' });
+  expect(f.app.execution().productionExecutionEnabled).toBe(false); expect((await f.app.overview()).budget.paused).toBe(true);
+  expect(f.app.ledger.list()).toHaveLength(0); expect(loadBuyerSigner).not.toHaveBeenCalled(); expect(prepareSolanaPayment).not.toHaveBeenCalled();
+});
+it('a failed challenge cannot create a grant or rotate the member credential', async () => {
+  const f = await fixture(false); challengeBoundRegistration(f);
+  const connection = readConnection(f.dir); f.quoteFetch.mockRejectedValue(new Error('upstream details must not be returned'));
+  const response = await grantPUT(signedManagementRequest(`${origin}/api/app/grant`, secret, { method: 'PUT',
+    headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ action: 'create', resourceId: f.resource.resourceId,
+      totalLimit: '10000', singleLimit: '5000', expiresAt: Date.now() + 3600000 }) }));
+  expect(response.status).toBe(500); expect(await response.text()).not.toContain('upstream details');
+  expect(readConnection(f.dir)).toEqual(connection); expect(f.app.spendGrantSummary()).toBeNull();
+  expect(f.app.ledger.list()).toHaveLength(0); expect(loadBuyerSigner).not.toHaveBeenCalled();
+});
+it('revoking the connection during challenge discovery prevents the pending Grant from being created', async () => {
+  const f = await fixture(false); challengeBoundRegistration(f);
+  let resolve!: (response: Response) => void;
+  f.quoteFetch.mockImplementation(() => new Promise<Response>(done => { resolve = done; }));
+  const creating = f.app.createSpendGrant({ resourceId: f.resource.resourceId, totalLimit: '10000', singleLimit: '5000', expiresAt: Date.now() + 3600000 });
+  await vi.waitFor(() => expect(f.quoteFetch).toHaveBeenCalledOnce());
+  f.app.setAgentConnection(false, origin); resolve(readOnlyChallenge(f));
+  await expect(creating).rejects.toThrow('GRANT_CONNECTION_CHANGED');
+  expect(f.app.spendGrantSummary()).toBeNull(); expect(loadBuyerSigner).not.toHaveBeenCalled();
+});
+
+it('runtime registration immediately enters the App selector and cannot be performed by an Agent', async () => {
+  const f = await fixture(false); const before = f.app.registeredResources().length;
+  const { POST: add, GET: list } = await import('../../src/app/api/app/resources/route');
+  const definition = { ...f.resource, resourceId: 'managed-runtime', recipient: undefined, amount: undefined, displayName: 'User runtime API',
+    recipientSource: 'live_challenge', maximumAmount: '10000' };
+  const bearer = new Request(`${origin}/api/app/resources`, { method: 'POST', headers: { host: '127.0.0.1:3049', origin, authorization: `Bearer ${readConnection(f.dir).token}`, 'content-type': 'application/json' }, body: JSON.stringify(definition) });
+  expect((await add(bearer)).status).toBe(401); expect(f.app.registeredResources()).toHaveLength(before);
+  const response = await add(signedManagementRequest(`${origin}/api/app/resources`, secret, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(definition) }));
+  expect(response.status).toBe(201);
+  expect((await f.app.overview()).service.registeredResources.some(r => r.resourceId === 'managed-runtime')).toBe(true);
+  expect((await list(signedManagementRequest(`${origin}/api/app/resources`, secret))).status).toBe(200);
+  expect(f.app.spendGrantSummary()).toBeNull(); expect(f.app.execution().productionExecutionEnabled).toBe(false);
+  expect((await f.app.overview()).budget.paused).toBe(true); expect(loadBuyerSigner).not.toHaveBeenCalled();
+  f.app.disableRegisteredResource('managed-runtime', 'DISABLED');
+  expect(() => f.app.createSpendGrant({ resourceId: 'managed-runtime', totalLimit: '10000', singleLimit: '5000', expiresAt: Date.now() + 3600000 })).toThrow('MAINNET_REGISTERED_RESOURCE_REQUIRED');
+});
+it('disabling a resource while its Grant challenge is in flight fails closed', async () => {
+  const f = await fixture(false); challengeBoundRegistration(f);
+  let resolve!: (response: Response) => void;
+  f.quoteFetch.mockImplementation(() => new Promise<Response>(done => { resolve = done; }));
+  const creating = f.app.createSpendGrant({ resourceId: f.resource.resourceId, totalLimit: '10000', singleLimit: '5000', expiresAt: Date.now() + 3600000 });
+  await vi.waitFor(() => expect(f.quoteFetch).toHaveBeenCalledOnce()); f.app.disableRegisteredResource(f.resource.resourceId, 'REMOVED');
+  resolve(readOnlyChallenge(f)); await expect(creating).rejects.toThrow('RESOURCE_REGISTRATION_CHANGED');
+  expect(f.app.spendGrantSummary()).toBeNull(); expect(loadBuyerSigner).not.toHaveBeenCalled();
+});
+it('removing a user resource keeps real ledger records and Grants intact and blocks later signing', async () => {
+  const f = await fixture(); challengeBoundRegistration(f); f.quoteFetch.mockImplementation(async () => readOnlyChallenge(f, f.resource.recipient, 300));
+  await f.daily(); await f.grant(); expect(await (await f.call('historical-runtime')).json()).toMatchObject({ paymentStatus: 'PAYMENT_UNKNOWN' });
+  const member = f.app.ledger.defaultCardMember().id;
+  const purchase = f.app.ledger.get('historical-runtime', member); const grant = f.app.spendGrantSummary();
+  f.app.disableRegisteredResource(f.resource.resourceId, 'REMOVED');
+  expect(f.app.ledger.get('historical-runtime', member)).toEqual(purchase); expect(f.app.spendGrantSummary()).toEqual(grant);
+  expect((await f.call('after-removal')).status).toBe(400); expect(prepareSolanaPayment).toHaveBeenCalledOnce();
+});
+it('resource disable between quote and signing aborts before producing a payment', async () => {
+  const f = await fixture(); challengeBoundRegistration(f); f.quoteFetch.mockImplementation(async () => readOnlyChallenge(f, f.resource.recipient, 300));
+  await f.daily(); await f.grant();
+  let resume!: () => void; const signed = vi.fn();
+  vi.mocked(prepareSolanaPayment).mockImplementation(async (config, _signer, quote, guard, approved) => {
+    await new Promise<void>(done => { resume = done; }); guard?.(); signed();
+    return { ...await signedPaymentFixture(f.signer, config, quote), resource: approved?.challenge?.resource };
+  });
+  const requesting = f.call('disable-before-sign');
+  await vi.waitFor(() => expect(prepareSolanaPayment).toHaveBeenCalledOnce());
+  f.app.disableRegisteredResource(f.resource.resourceId, 'DISABLED'); resume(); await requesting;
+  expect(signed).not.toHaveBeenCalled();
+  const record = f.app.ledger.get('disable-before-sign', f.app.ledger.defaultCardMember().id)!;
+  expect(record.status).toBe('FAILED'); expect(record.transaction).toBeUndefined(); expect(f.app.ledger.savedOriginalPayment(record.approvalId)).toBeUndefined();
+});
+it('runtime resource selection survives an App backend restart and ignores later installation configuration', async () => {
+  const f = await fixture(false); challengeBoundRegistration(f);
+  const id = f.resource.resourceId; const before = f.app.inspectRegisteredResource(id);
+  await f.app.prepareQuit(); f.app.close(); context.app = undefined;
+  vi.stubEnv('YOSH_MAINNET_RESOURCES', undefined);
+  const restarted = new AppRuntime(f.dir, { initializeWallet: async () => ({ address: '11111111111111111111111111111111', reused: true }) }); context.app = restarted;
+  expect(restarted.inspectRegisteredResource(id)).toEqual(before);
+  expect((await restarted.overview()).service.registeredResources.some(resource => resource.resourceId === id)).toBe(true);
+  expect(restarted.spendGrantSummary()).toBeNull(); expect(restarted.ledger.list()).toHaveLength(0);
 });

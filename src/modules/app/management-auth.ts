@@ -1,3 +1,4 @@
+import { MAX_LOCAL_REQUEST_BYTES } from '../http/request-size-limits';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { ZodError } from 'zod';
 import { LocalRequestError, RequestBodyError, requireLocalRequest } from '../http/local-request';
@@ -43,7 +44,7 @@ export function requireManagementRequest(request: Request, mutation = false) {
 }
 
 /** Authenticate exact body bytes before handlers run; sign success and authenticated errors. */
-export async function managementRoute(request: Request, mutation: boolean, handle: (request: Request) => Promise<Response>) {
+export async function managementRoute(request: Request, mutation: boolean, handle: (request: Request) => Promise<Response>, maximumBytes = MAX_LOCAL_REQUEST_BYTES) {
   let identity: ReturnType<typeof requireManagementRequest> | undefined;
   let response: Response;
   try {
@@ -57,7 +58,7 @@ export async function managementRoute(request: Request, mutation: boolean, handl
           const { done, value } = await reader.read();
           if (done) break;
           size += value.length;
-          if (size > 8192) throw new RequestBodyError('管理请求过长。');
+          if (size > maximumBytes) throw new RequestBodyError('管理请求过长。');
           chunks.push(value);
         }
       } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }

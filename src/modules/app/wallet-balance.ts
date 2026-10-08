@@ -1,11 +1,11 @@
 import { getStandardTokenAccount } from '../payment/payment-preflight';
 import { readPaymentJson } from '../payment/read-payment-json';
-import { resolvePaymentEnvironment } from '../payment/payment-environment';
+import { resolvePaymentEnvironment, type PaymentEnvironment } from '../payment/payment-environment';
 
 /** Wallet balance is best-effort network data, separate from local spending authority. */
-export async function readWalletBalance(address: string, fetcher: typeof fetch = fetch) {
+export async function readWalletBalance(address: string, fetcher: typeof fetch = fetch, selectedEnvironment?: PaymentEnvironment) {
   try {
-    const environment = resolvePaymentEnvironment();
+    const environment = selectedEnvironment ?? resolvePaymentEnvironment();
     const unit = environment.isProduction ? environment.asset.symbol : `Test ${environment.asset.symbol}`;
     const display = (amount: string) => { const cents = (BigInt(amount) + 5_000n) / 10_000n; return `${cents / 100n}.${String(cents % 100n).padStart(2, '0')} ${unit}`; };
     const asset = environment.asset;

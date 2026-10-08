@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { SpendAuthorityBindingSchema } from './spend-grant';
 import { PositiveAtomicAmountSchema } from './atomic-money';
-import { HttpResourceRequestSchema, X402ChallengeSchema, DeliveryRecoveryCapabilitySchema } from '../resources/http-resource';
+import { HttpResourceRequestSchema, X402ChallengeSchema, DeliveryRecoveryCapabilitySchema, ResourceDeliveryPolicySchema } from '../resources/http-resource';
 
 const boundedIdentifier = z.string().min(1).max(200);
 
@@ -13,6 +13,7 @@ export const SpendIntentSchema = z.object({
   id: z.string().uuid(),
   idempotencyKey: z.string().min(1).max(80),
   requestHash: z.string().min(1),
+  requestInputFingerprint: z.string().min(1).optional(),
   resourceId: boundedIdentifier,
   /** Registered scope for new resources; absent in historical exact-resource rows. */
   resourceScopeId: boundedIdentifier.optional(),
@@ -21,7 +22,10 @@ export const SpendIntentSchema = z.object({
   /** New approvals bind the full HTTP request and challenge; old rows remain readable. */
   httpRequest: HttpResourceRequestSchema.optional(),
   x402Challenge: X402ChallengeSchema.optional(),
+  /** Original bounded wire header, retained alongside the SDK-normalized V2 DTO. */
+  paymentRequiredHeader: z.string().min(1).max(16_384).optional(),
   deliveryRecovery: DeliveryRecoveryCapabilitySchema.optional(),
+  deliveryPolicy: ResourceDeliveryPolicySchema.optional(),
   providerId: boundedIdentifier,
   offerId: boundedIdentifier.optional(),
   reason: z.string().trim().min(1).max(240).optional(),

@@ -32,9 +32,9 @@ function runtime(timeZone = 'America/Los_Angeles', now?: () => number) {
   return new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }), timeZone: () => timeZone, now });
 }
 const origin = 'http://127.0.0.1:3049';
-function authorize(app: AppRuntime, now = Date.now(), totalLimit = '1000000') {
+async function authorize(app: AppRuntime, now = Date.now(), totalLimit = '1000000') {
   app.setAgentConnection(true, origin);
-  const grant = app.createSpendGrant({ totalLimit, singleLimit: totalLimit, expiresAt: now + 24 * 60 * 60 * 1000 });
+  const grant = await app.createSpendGrant({ totalLimit, singleLimit: totalLimit, expiresAt: now + 24 * 60 * 60 * 1000 });
   const principal = app.agentConnection.principal('request_purchase');
   if (!principal) throw new Error('test connection was not authorized');
   return { grant, principal, authority: app.ledger.spendAuthority(principal, PAID_RESOURCE_PURCHASE_OPERATION, now) };
@@ -61,12 +61,12 @@ describe('authenticated local management boundary', () => {
 });
 
 describe('managed budget and Devnet test records', () => {
-  it('rejects Mainnet authority changes before rotating a connection or using the test recipient default', () => {
+  it('rejects Mainnet authority changes before rotating a connection or using the test recipient default', async () => {
     const now = Date.now();
     const app = runtime('Asia/Shanghai', () => now);
     try {
       app.setDailyLimit('1000000');
-      const { grant, principal } = authorize(app, now);
+      const { grant, principal } = await authorize(app, now);
       vi.stubEnv('YOSH_EXECUTION_MODE', 'live_mainnet');
       expect(() => app.createSpendGrant({ totalLimit: '1000000', singleLimit: '100000', expiresAt: now + 3600_000 })).toThrow('Restart Yosh');
       expect(() => app.setDailyLimit('2000000')).toThrow('Restart Yosh');
@@ -151,7 +151,7 @@ describe('managed budget and Devnet test records', () => {
     try {
       await expect(app.createTestPurchase('app-canonical-without-grant', origin)).rejects.toThrow('消费授权');
       expect(app.ledger.get('app-canonical-without-grant')).toBeUndefined();
-      const { grant } = authorize(app, Date.now(), '1000000');
+      const { grant } = await authorize(app, Date.now(), '1000000');
       const purchase = await app.createTestPurchase('app-canonical-with-grant', origin);
       expect(purchase).toMatchObject({ status: 'PAID', simulated: true });
       expect(app.ledger.get('app-canonical-with-grant')?.intent.authority?.grantId).toBe(grant.id);
@@ -170,13 +170,13 @@ describe('managed budget and Devnet test records', () => {
     } finally { app.close(); }
   });
 
-  it('binds a finite grant to the current Agent and reports successful authorization', () => {
+  it('binds a finite grant to the current Agent and reports successful authorization', async () => {
     const app = runtime(); const now = Date.now();
     try {
       app.setAgentConnection(true, origin);
       const intentCredential = readConnection(app.directory);
       expect(intentCredential.capabilities).toEqual(['read', 'request_purchase']);
-      const grant = app.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 8 * 60 * 60 * 1000 });
+      const grant = await app.createSpendGrant({ totalLimit: '5000000', singleLimit: '500000', expiresAt: now + 8 * 60 * 60 * 1000 });
       expect(grant.operation).toBe(PAID_RESOURCE_PURCHASE_OPERATION);
       const authorized = readConnection(app.directory);
       expect(authorized).toMatchObject({ connectionId: intentCredential.connectionId, generation: intentCredential.generation + 1, capabilities: ['read', 'request_purchase'] });
@@ -226,7 +226,7 @@ describe('managed budget and Devnet test records', () => {
     } });
     try {
       app.setDailyLimit('100000');
-      authorize(app);
+      await authorize(app);
       const payment = app.createTestPurchase('quit-race', 'http://127.0.0.1:3049');
       const rejected = expect(payment).rejects.toThrow('正在退出');
       await loading;
@@ -249,7 +249,7 @@ describe('managed budget and Devnet test records', () => {
     const quote = { scheme: 'exact', network: config.network, asset: config.mint, amount: '10000', payTo: config.merchant, maxTimeoutSeconds: 300, extra: {} };
     const now = Date.now();
     app.setDailyLimit('100000');
-    const { authority } = authorize(app, now);
+    const { authority } = await authorize(app, now);
     const intent = createMarketSnapshotSpendIntent({ idempotencyKey: 'startup-original', request: { asset: 'SOL' }, requestHash: hash('task'), resource, quote,
       executionBinding: paymentBinding(config, paymentEndpoint(origin)), authority, now });
     const record = app.ledger.reserve(intent, quote, now, 'live_devnet');
@@ -289,7 +289,7 @@ describe('managed budget and Devnet test records', () => {
   it('starts without an implicit limit and blocks zero-limit and paused purchases', async () => {
     const app = runtime();
     try {
-      authorize(app);
+      await authorize(app);
       expect(app.ledger.managedSummary().dailyLimit).toBeNull();
       let result = await app.createTestPurchase(`app-${randomUUID()}`, 'http://127.0.0.1:3049');
       expect(result.policy.reason).toBe('DAILY_LIMIT_NOT_SET');
@@ -308,7 +308,7 @@ describe('managed budget and Devnet test records', () => {
     const app = create(); const id = `app-${randomUUID()}`;
     try {
       app.setDailyLimit('20000');
-      authorize(app);
+      await authorize(app);
       const first = await app.createTestPurchase(id, 'http://127.0.0.1:3049');
       const replay = await app.createTestPurchase(id, 'http://127.0.0.1:3049');
       expect(first.status).toBe('PAID'); expect(replay.status).toBe('PAID');
@@ -335,7 +335,7 @@ describe('managed budget and Devnet test records', () => {
     const now = Date.now();
     try {
       app.setDailyLimit('20000');
-      const { authority } = authorize(app, now);
+      const { authority } = await authorize(app, now);
       const intent = createMarketSnapshotSpendIntent({ idempotencyKey: id, request: { asset: 'SOL' }, requestHash: hash('2049 App test purchase'), resource, quote,
         executionBinding: hash(['simulated-devnet', address, merchant]), authority, now });
       const reserved = app.ledger.reserve(intent, quote, now, 'simulated');
@@ -371,7 +371,7 @@ describe('managed budget and Devnet test records', () => {
     const first = make();
     try {
       first.setDailyLimit('10000');
-      authorize(first, Date.now(), '20000');
+      await authorize(first, Date.now(), '20000');
       const results = await Promise.all([first.createTestPurchase(`app-${randomUUID()}`, origin), first.createTestPurchase(`app-${randomUUID()}`, origin)]);
       expect(results.map(result => result.status).sort()).toEqual(['DENIED', 'PAID']);
       expect(first.ledger.managedSummary()).toMatchObject({ paid: '10000', remaining: '0' });

@@ -16,6 +16,7 @@ export async function GET(request: Request, context: Context) {
     const id = await memberId(context);
     const app = appRuntime();
     if (!app.ledger.cardMember(id)) throw new ManagementApiError('CARD_MEMBER_NOT_FOUND', 404, '找不到该 Agent。');
+    void app.refreshMainnetWallet();
     return Response.json(app.memberOverview(id), { headers: { 'cache-control': 'no-store' } });
   });
 }

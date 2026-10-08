@@ -13,9 +13,10 @@ import { PurchaseLedger, type PurchaseRecord } from './purchase-ledger';
 import { hash } from './spending-policy';
 import { runPaymentPreflight } from '../payment/payment-preflight';
 import { MarketOfferIdSchema, marketOffer } from '../resources/market-offers';
-import { paymentSignatureHeaders, readSettlementTransactionHint } from '../payment/x402-client';
+import { paymentSignatureHeaders, readPaymentRequiredHeader, readSettlementTransactionHint } from '../payment/x402-client';
 import { resourcePaymentBinding, validateResourceChallenge } from '../payment/resource-challenge';
 import { HttpResourceRequestSchema } from '../resources/http-resource';
+import { prepareSafeResourceFetch } from '../resources/safe-resource-fetch';
 import { assertProductionPaymentGate } from '../payment/production-execution-gate';
 import { observeDeliveryReceipt, receiveOriginalDelivery, recoverPaidDelivery } from './delivery-recovery';
 
@@ -46,11 +47,14 @@ export function paymentBinding(config: PaymentConfig, endpoint: string, quote?: 
 export function checkPaymentBinding(record: PurchaseRecord, config: PaymentConfig, endpoint: string) {
   const intent = record.intent;
   if (intent.httpRequest && intent.x402Challenge) {
+    if (intent.paymentRequiredHeader && hash(readPaymentRequiredHeader(intent.paymentRequiredHeader)) !== hash(intent.x402Challenge))
+      throw new Error('Approval quote evidence changed');
     const { quote } = validateResourceChallenge(intent.x402Challenge, { resourceId: intent.resourceId, providerId: intent.providerId,
-      request: intent.httpRequest, network: config.network, mint: intent.assetId, decimals: 6, recipient: intent.payTo, amount: intent.amount }, config);
+      request: intent.httpRequest, network: config.network, mint: intent.assetId, decimals: 6,
+      recipientSource: 'live_challenge', maximumAmount: intent.amount }, config);
     if (intent.paymentScheme !== quote.scheme || intent.assetDecimals !== config.asset.decimals || intent.network !== config.network || endpoint !== intent.httpRequest.url
       || hash(quote) !== intent.quoteFingerprint || hash(record.quote) !== intent.quoteFingerprint
-      || intent.executionBinding !== resourcePaymentBinding(config, config.buyer, intent.httpRequest, intent.x402Challenge, intent.deliveryRecovery)) throw new Error('Approval binding changed');
+      || intent.executionBinding !== resourcePaymentBinding(config, config.buyer, intent.httpRequest, intent.x402Challenge, intent.deliveryRecovery, intent.paymentRequiredHeader)) throw new Error('Approval binding changed');
     return;
   }
   if (intent.executionBinding !== paymentBinding(config, endpoint, intent.offerId || intent.resourcePath ? record.quote : undefined) || intent.quoteFingerprint !== hash(record.quote) || String(intent.amount) !== record.quote.amount
@@ -137,7 +141,7 @@ export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId:
     beforeSign();
     let lifetime: OriginalPaymentLifetime | undefined;
     const payload = await prepareSolanaPayment(signerConfig, signer, record.quote, beforeSign,
-      record.intent.httpRequest ? { amount: record.quote.amount, resource: record.intent.x402Challenge!.resource.url, challenge: record.intent.x402Challenge }
+      record.intent.httpRequest ? { amount: record.quote.amount, resource: record.intent.httpRequest.url, challenge: record.intent.x402Challenge }
         : record.intent.offerId || record.intent.resourcePath ? { amount: record.quote.amount, resource: new URL(endpoint).pathname + new URL(endpoint).search } : undefined,
       value => { lifetime = value; }, ...(config.mode === 'live_mainnet' ? [{ ledger, approvalId, endpoint }] : []));
     ledger.savePayload(approvalId, payload, validate, originalEvidence(record, payload, signerConfig, lifetime));
@@ -146,9 +150,11 @@ export async function executeApprovedPayment(ledger: PurchaseLedger, approvalId:
     // are synchronous neighbors; pause/exit cannot start a new submission after acknowledgement.
     const request = record.intent.httpRequest;
     const headers = { ...request?.headers, ...paymentSignatureHeaders(payload) };
+    const init = { headers, ...(request ? { method: request.method, ...(request.body === undefined ? {} : { body: request.body }) } : {}),
+      signal: AbortSignal.timeout(55_000), redirect: 'error' as const };
+    const submit = request?.access === 'https' ? await prepareSafeResourceFetch(endpoint, init) : () => fetch(endpoint, init);
     ledger.markSubmissionAttempt(approvalId, validate);
-    const pendingResponse = fetch(endpoint, { headers, ...(request ? { method: request.method, ...(request.body === undefined ? {} : { body: request.body }) } : {}),
-      signal: AbortSignal.timeout(55_000), redirect: 'error' });
+    const pendingResponse = submit();
     trace('SUBMITTED');
     const response = await pendingResponse;
     try {

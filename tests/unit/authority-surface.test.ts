@@ -11,10 +11,10 @@ import { resolvePaymentEnvironment } from '../../src/modules/payment/payment-env
 import { storeMonetaryScope } from '../../src/modules/purchases/monetary-migration';
 import { SpendIntentSchema } from '../../src/modules/authority/spend-intent';
 import { AppRuntime } from '../../src/modules/app/app-runtime';
-import { initializeProductWallet, loadEnvironmentWalletSigner } from '../../src/modules/app-wallet/product-wallet';
+import { initializeProductWallet, readExistingProductWallets } from '../../src/modules/app-wallet/product-wallet';
 import { loadPaymentConfig } from '../../src/modules/payment/payment-config';
 
-vi.mock('../../src/modules/app-wallet/product-wallet', () => ({ initializeProductWallet: vi.fn(), loadEnvironmentWalletSigner: vi.fn() }));
+vi.mock('../../src/modules/app-wallet/product-wallet', () => ({ initializeProductWallet: vi.fn(), readExistingProductWallets: vi.fn() }));
 const dirs: string[] = [];
 const now = Date.now();
 const unavailable = { address: '', status: 'unavailable' as const, balance: null };
@@ -69,6 +69,10 @@ it('test grants never appear as Mainnet delegation and a member does not borrow 
   } finally { ledger.close(); }
 });
 function runtimeFixture(walletAddress?: string) {
+  vi.mocked(readExistingProductWallets).mockResolvedValue([
+    { id: 'mainnet', label: 'Mainnet', address: null, status: 'missing' },
+    { id: 'devnet', label: 'Devnet', address: null, status: 'missing' },
+  ]);
   for (const key of Object.keys(process.env)) if (key.startsWith('YOSH_') || key.startsWith('APP2049_') || key.startsWith('SOLANA_') || key === 'USDC_MINT') vi.stubEnv(key, undefined);
   vi.stubEnv('YOSH_EXECUTION_MODE', 'simulated'); if (walletAddress) vi.stubEnv('YOSH_MAINNET_WALLET_PUBLIC_KEY', walletAddress);
   const app = new AppRuntime(directory()); app.setDailyLimit('3000000'); app.setPaused(false); app.setExecution('live_mainnet'); return app;
@@ -79,22 +83,25 @@ it('selecting and reading missing Mainnet wallet fails closed without creating o
     expect((await app.overview()).authority).toMatchObject({ available: null, dailyState: 'required', wallet: { address: '', status: 'unavailable' } });
     expect(await app.readAuthorityBalance()).toMatchObject({ available: false, display: 'Mainnet wallet unavailable' });
     expect(app.ledger.controls('live_mainnet')).toMatchObject({ dailyBudget: null, paused: true });
-    expect(initializeProductWallet).not.toHaveBeenCalled(); expect(loadEnvironmentWalletSigner).not.toHaveBeenCalled();
+    expect(initializeProductWallet).not.toHaveBeenCalled(); expect(readExistingProductWallets).toHaveBeenCalledTimes(1);
   } finally { app.close(); }
 });
 it('configured but missing dedicated signer never falls back to a test wallet or reads RPC', async () => {
   const signer = await generateKeyPairSigner(); const app = runtimeFixture(signer.address); const rpc = vi.fn<typeof fetch>(); vi.stubGlobal('fetch', rpc);
-  vi.mocked(loadEnvironmentWalletSigner).mockRejectedValue(new Error('fixture missing Keychain item'));
+  vi.mocked(readExistingProductWallets).mockRejectedValue(new Error('fixture missing Keychain item'));
   try {
-    expect(app.authority().wallet.status).toBe('unverified');
+    expect(app.authority().wallet.status).toBe('unavailable');
     expect(await app.readAuthorityBalance()).toMatchObject({ available: false, display: 'Mainnet wallet unavailable' });
-    expect(app.authority().wallet).toMatchObject({ address: signer.address, status: 'unavailable', network: 'Solana Mainnet' });
+    expect(app.authority().wallet).toMatchObject({ address: '', status: 'unavailable', network: 'Solana Mainnet' });
     expect(initializeProductWallet).not.toHaveBeenCalled(); expect(rpc).not.toHaveBeenCalled();
   } finally { app.close(); }
 });
 it('read-only verified Mainnet balance uses its own mint, reports insufficient USDC, and exposes no signing material', async () => {
   const signer = await generateKeyPairSigner(); const app = runtimeFixture(signer.address);
-  vi.mocked(loadEnvironmentWalletSigner).mockResolvedValue(signer);
+  vi.mocked(readExistingProductWallets).mockResolvedValue([
+    { id: 'mainnet', label: 'Mainnet', address: signer.address, status: 'available' },
+    { id: 'devnet', label: 'Devnet', address: null, status: 'missing' },
+  ]);
   const rpc = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ result: mainnet.genesisHash })).mockResolvedValueOnce(Response.json({ result: { value: null } }));
   vi.stubGlobal('fetch', rpc);
   try {
@@ -107,11 +114,12 @@ it('read-only verified Mainnet balance uses its own mint, reports insufficient U
 });
 it('Mainnet grant reports registered API, commitment, expiration and inactive states from its own scope', async () => {
   const buyer = await generateKeyPairSigner(); const payee = await generateKeyPairSigner();
-  const resource = { resourceId: 'registered-api', providerId: 'provider', network: mainnet.network, mint: mainnet.asset.mint, decimals: 6, recipient: payee.address,
-    amount: '10000', request: { url: 'https://provider.example/data', method: 'GET', access: 'https', headers: {} } };
-  const config = loadPaymentConfig({ YOSH_EXECUTION_MODE: 'live_mainnet', YOSH_MAINNET_WALLET_PUBLIC_KEY: buyer.address, YOSH_MAINNET_RESOURCES: JSON.stringify([resource]), X402_FACILITATOR_URL: 'https://facilitator.example' });
+  const resource = { resourceId: 'registered-api', providerId: 'provider', network: mainnet.network, mint: mainnet.asset.mint, decimals: 6 as const, recipient: payee.address,
+    amount: '10000', request: { url: 'https://provider.example/data', method: 'GET' as const, access: 'https' as const, headers: {} } };
+  const config = loadPaymentConfig({ YOSH_EXECUTION_MODE: 'live_mainnet', YOSH_MAINNET_WALLET_PUBLIC_KEY: buyer.address, YOSH_MAINNET_RESOURCES: JSON.stringify([resource]), X402_FACILITATOR_URL: 'https://facilitator.example' }, 'live_devnet', buyer.address);
   const ledger = ledgerFixture(); const memberId = ledger.defaultCardMember().id;
   try {
+    ledger.resources.initialize([resource]);
     ledger.createSpendGrant({ totalLimit: '1000000', singleLimit: '10000', expiresAt: now + 3600000 }, { cardMemberId: memberId, connectionId: randomUUID(), connectionGeneration: 1 },
       { resourceId: resource.resourceId, providerId: resource.providerId, operation: 'paid.resource.purchase', network: mainnet.network, assetId: mainnet.asset.mint, assetDecimals: 6, payTo: payee.address, paymentScheme: 'exact' }, now, 'live_mainnet');
     const read = (time = now) => authoritySurface(ledger, mainnet, memberId, unavailable, config, time);
@@ -121,5 +129,39 @@ it('Mainnet grant reports registered API, commitment, expiration and inactive st
       { resourceId: resource.resourceId, providerId: resource.providerId, operation: 'paid.resource.purchase', network: mainnet.network, assetId: mainnet.asset.mint, assetDecimals: 6, payTo: payee.address, paymentScheme: 'exact' }, now + 3600002, 'live_mainnet');
     ledger.revokeActiveSpendGrant(now + 3600003, 'fixture-revoked', memberId);
     expect(read(now + 3600004).grant).toMatchObject({ status: 'REVOKED', usable: false });
+  } finally { ledger.close(); }
+});
+
+it('keeps registry and Grant ready when only facilitator configuration is invalid', async () => {
+  const buyer = await generateKeyPairSigner(); const payee = await generateKeyPairSigner();
+  const environment = resolvePaymentEnvironment({ YOSH_EXECUTION_MODE: 'live_mainnet', YOSH_ENABLE_MAINNET_EXECUTION: '1' });
+  const resource = { resourceId: 'readiness-resource', providerId: 'provider', network: environment.network,
+    mint: environment.asset.mint, decimals: 6 as const, recipient: payee.address, amount: '5000',
+    request: { url: 'https://provider.example/data', method: 'GET' as const, access: 'https' as const, headers: {} } };
+  const ledger = ledgerFixture(); const memberId = ledger.defaultCardMember().id;
+  try {
+    ledger.resources.initialize([resource]); ledger.setDailyLimit('10000', 'live_mainnet'); ledger.setPaused(false, 'live_mainnet');
+    ledger.createSpendGrant({ totalLimit: '10000', singleLimit: '5000', expiresAt: now + 3600000 },
+      { cardMemberId: memberId, connectionId: randomUUID(), connectionGeneration: 1 },
+      { resourceId: resource.resourceId, providerId: resource.providerId, operation: 'paid.resource.purchase',
+        network: environment.network, assetId: environment.asset.mint, assetDecimals: 6, payTo: payee.address,
+        paymentScheme: 'exact' }, now, 'live_mainnet');
+    const wallet = { address: buyer.address, status: 'available' as const, balance: '10000' };
+    const broken = authoritySurface(ledger, environment, memberId, wallet, undefined, now, {
+      facilitator: { ready: false, code: 'FACILITATOR_CONFIGURATION_INVALID', mode: 'configured_endpoint' },
+      configurationCode: 'FACILITATOR_CONFIGURATION_INVALID', connectionEnabled: true });
+    expect(broken.readiness).toMatchObject({ environment: { ready: true }, wallet: { ready: true },
+      dailyAuthority: { ready: true }, resourceRegistration: { ready: true }, spendGrantAuthorization: { ready: true },
+      facilitator: { ready: false, code: 'FACILITATOR_CONFIGURATION_INVALID' },
+      transactionExecution: { eligible: false, code: 'FACILITATOR_CONFIGURATION_INVALID', quotePreflightRequired: true } });
+    expect(broken.grant).toMatchObject({ usable: true, api: resource.request.url });
+    expect(broken.blockers).toContain('Payment facilitator configuration invalid');
+    expect(broken.blockers).not.toContain('Spend Grant required');
+    expect(broken.blockers).not.toContain('Registered API setup required');
+
+    const merchantManaged = authoritySurface(ledger, environment, memberId, wallet, undefined, now, {
+      facilitator: { ready: true, code: null, mode: 'merchant_quote' }, connectionEnabled: true });
+    expect(merchantManaged.readiness.facilitator).toMatchObject({ ready: true, mode: 'merchant_quote', verification: 'quote_required' });
+    expect(merchantManaged.readiness.transactionExecution).toEqual({ eligible: true, code: null, quotePreflightRequired: true });
   } finally { ledger.close(); }
 });

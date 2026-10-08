@@ -1,12 +1,12 @@
-import { z } from 'zod';
 import type { Trace } from '../demo/trace';
 import type { PaymentConfig } from '../payment/payment-config';
 import { createSignedPaymentIdentity } from '../payment/original-payment-evidence';
 import { paymentSignatureHeaders, readSettlementResponse } from '../payment/x402-client';
 import { validateDeliveryCapability } from '../resources/delivery-capability';
 import { parsePaidResourceDelivery, PaidResourceIdSchema } from '../resources/paid-resources';
-import { readBoundedResourceJson, readMarketSnapshot } from '../resources/read-market-snapshot';
+import { readBoundedResourceDelivery, readBoundedResourceJson, readMarketSnapshot } from '../resources/read-market-snapshot';
 import type { HttpResourceRequest } from '../resources/http-resource';
+import { safeResourceFetch } from '../resources/safe-resource-fetch';
 import type { PurchaseLedger, PurchaseRecord } from './purchase-ledger';
 
 /** Receipt observation is independent of both chain accounting and delivered data. */
@@ -28,13 +28,13 @@ async function consumeDelivery(ledger: PurchaseLedger, record: PurchaseRecord, r
   expectedUrl: string, token: string, trace: Trace) {
   try {
     const receipt = observeDeliveryReceipt(ledger, record, response, config);
-    if (response.status !== 200 || (response.url && response.url !== expectedUrl)) throw new Error('DELIVERY_RESPONSE_UNAVAILABLE');
+    if (![200, 201].includes(response.status) || (response.url && response.url !== expectedUrl)) throw new Error('DELIVERY_RESPONSE_UNAVAILABLE');
     // Chain proof already established PAID. Missing receipts do not prevent a
     // valid resource delivery; a contradictory/malformed receipt is rejected.
     if (receipt === 'INVALID' || receipt === 'FAILED') throw new Error('DELIVERY_RECEIPT_INVALID');
     const data = record.intent.resourcePath
       ? parsePaidResourceDelivery(PaidResourceIdSchema.parse(record.intent.resourceId), await readBoundedResourceJson(response))
-      : record.intent.httpRequest ? z.record(z.string(), z.unknown()).parse(await readBoundedResourceJson(response)) : await readMarketSnapshot(response);
+      : record.intent.httpRequest ? await readBoundedResourceDelivery(response, record.intent.deliveryPolicy) : await readMarketSnapshot(response);
     ledger.finish(record.approvalId, { transaction: record.transaction!, data }, undefined, token);
     trace('DATA_VALIDATED');
     return { transaction: record.transaction!, data };
@@ -51,7 +51,7 @@ export async function receiveOriginalDelivery(ledger: PurchaseLedger, record: Pu
 /** Delivery-only transport: imports no wallet, signer, payment constructor or
  * settlement API. It can only replay the saved bytes or query a declared cache. */
 export async function recoverPaidDelivery(ledger: PurchaseLedger, record: PurchaseRecord, config: PaymentConfig, endpoint: string,
-  validate: (record: PurchaseRecord) => void, trace: Trace = () => {}, fetcher: typeof fetch = fetch) {
+  validate: (record: PurchaseRecord) => void, trace: Trace = () => {}, fetcher?: typeof fetch) {
   if (record.status !== 'PAID' || !['live_devnet', 'live_mainnet'].includes(record.executionMode) || record.deliveryStatus !== 'PENDING') return;
   const capability = ledger.deliveryCapability(record.approvalId);
   if (capability.kind === 'none') { ledger.blockDeliveryRecovery(record.approvalId, 'DELIVERY_RECOVERY_UNSUPPORTED'); return; }
@@ -86,8 +86,9 @@ export async function recoverPaidDelivery(ledger: PurchaseLedger, record: Purcha
   const token = ledger.claimDelivery(record.approvalId, 'retry', validate);
   if (!token) return;
   try {
-    const response = await fetcher(request.url, { method: request.method, headers,
-      ...(request.body === undefined ? {} : { body: request.body }), signal: AbortSignal.timeout(55_000), redirect: 'error' });
+    const init = { method: request.method, headers,
+      ...(request.body === undefined ? {} : { body: request.body }), signal: AbortSignal.timeout(55_000), redirect: 'error' as const };
+    const response = request.access === 'https' ? await safeResourceFetch(request.url, init, fetcher) : await (fetcher ?? fetch)(request.url, init);
     return await consumeDelivery(ledger, record, response, config, request.url, token, trace);
   } catch { ledger.failDeliveryAttempt(record.approvalId, token); }
 }

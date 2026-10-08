@@ -24,7 +24,11 @@ export function writeExecutionSelection(directory: string, mode: PurchaseExecuti
 /** Select a pinned profile; never carry test identity or cross-network overrides into Mainnet. */
 export function executionProfile(source: YoshEnvironment, mode: PurchaseExecutionMode): Record<string, string | undefined> {
   const configuration = resolveYoshConfiguration(source);
-  const original = resolvePaymentEnvironment(source);
+  // The operator flag is policy retained across profile changes, not permission
+  // to execute in the source/default test profile. Validate that profile with
+  // production execution inactive, then apply the unchanged flag to Mainnet only.
+  const original = resolvePaymentEnvironment({ ...source, YOSH_ENABLE_MAINNET_EXECUTION: '0',
+    ...(source.APP2049_ENABLE_MAINNET_EXECUTION !== undefined ? { APP2049_ENABLE_MAINNET_EXECUTION: '0' } : {}) });
   const profile = { ...source };
   for (const key of ['YOSH_EXECUTION_MODE', 'APP2049_EXECUTION_MODE', 'YOSH_ENABLE_DEVNET_PURCHASES',
     'APP2049_ENABLE_DEVNET_PURCHASES', 'YOSH_ENABLE_MAINNET_EXECUTION', 'APP2049_ENABLE_MAINNET_EXECUTION']) delete profile[key];

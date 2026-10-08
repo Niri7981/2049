@@ -8,7 +8,9 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   return managementRoute(request, false, async () => {
-    return Response.json({ members: appRuntime().membersOverview() }, { headers: { 'cache-control': 'no-store' } });
+    const app = appRuntime();
+    void app.refreshMainnetWallet();
+    return Response.json({ members: app.membersOverview() }, { headers: { 'cache-control': 'no-store' } });
   });
 }
 

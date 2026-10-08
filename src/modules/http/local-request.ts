@@ -1,3 +1,4 @@
+import { MAX_LOCAL_REQUEST_BYTES } from './request-size-limits';
 export class LocalRequestError extends Error {}
 export class RequestBodyError extends Error {}
 
@@ -35,7 +36,7 @@ export function localRequestOrigin(request: Request) {
   const url = new URL(request.url);
   return new URL(`http://${request.headers.get("host") ?? url.host}`).origin;
 }
-export async function smallJson(request: Request) {
+export async function smallJson(request: Request, maximumBytes = MAX_LOCAL_REQUEST_BYTES) {
   const reader = request.body?.getReader();
   if (!reader) throw new RequestBodyError("缺少请求内容。");
   let size = 0;
@@ -45,7 +46,7 @@ export async function smallJson(request: Request) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > 8192) throw new RequestBodyError("任务内容过长。");
+      if (size > maximumBytes) throw new RequestBodyError("任务内容过长。");
       chunks.push(value);
     }
     try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }

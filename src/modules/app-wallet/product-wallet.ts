@@ -11,6 +11,24 @@ const macOSWalletStores: ProductWalletStores = {
   mainnet: { read: readMainnetWalletKeychain, create: createMainnetWalletKeychain },
 };
 
+export async function readExistingProductWallets(
+  stores: Readonly<{ test: Pick<WalletSecretStore, 'read'>; mainnet: Pick<WalletSecretStore, 'read'> }> = macOSWalletStores,
+) {
+  const identities = [
+    { id: 'mainnet', label: 'Mainnet', store: stores.mainnet },
+    { id: 'devnet', label: 'Devnet · Test', store: stores.test },
+  ];
+  return Promise.all(identities.map(async ({ id, label, store }) => {
+    try {
+      const secret = await store.read();
+      if (secret === undefined) return { id, label, address: null, status: 'missing' as const };
+      return { id, label, address: (await signerFromSecret(secret)).address, status: 'available' as const };
+    } catch {
+      return { id, label, address: null, status: 'unavailable' as const };
+    }
+  }));
+}
+
 async function signerFromSecret(secret: string) {
   let bytes: Uint8Array | undefined;
   try {
@@ -52,11 +70,11 @@ async function initializeStoredWallet(store: WalletSecretStore) {
   } finally { seed.fill(0); }
 }
 
-async function loadStoredSigner(expectedAddress: string, store: WalletSecretStore) {
+async function loadStoredSigner(expectedAddress: string | undefined, store: WalletSecretStore) {
   const secret = await store.read();
   if (!secret) throw new Error('The Yosh wallet is unavailable in Keychain');
   const signer = await signerFromSecret(secret);
-  if (signer.address !== expectedAddress) throw new Error('The Yosh signer does not match the configured wallet');
+  if (expectedAddress !== undefined && signer.address !== expectedAddress) throw new Error('The Yosh signer does not match the configured wallet');
   return signer;
 }
 
@@ -103,13 +121,16 @@ export async function initializeEnvironmentWallet(environment: PaymentEnvironmen
 }
 
 /** Loading never creates/replaces a missing item and proves the configured public identity. */
-export async function loadEnvironmentWalletSigner(expectedAddress: string, environment: PaymentEnvironment,
+export async function loadEnvironmentWalletSigner(expectedAddress: string | undefined, environment: PaymentEnvironment,
   stores: ProductWalletStores = macOSWalletStores) {
   const selected = validatePaymentEnvironment(environment);
-  if (selected.mode !== 'live_mainnet') return loadStoredSigner(expectedAddress, stores.test);
+  if (selected.mode !== 'live_mainnet') {
+    if (!expectedAddress) throw new Error('Test wallet identity required');
+    return loadStoredSigner(expectedAddress, stores.test);
+  }
   if (stores.test === stores.mainnet) throw new Error('MAINNET_WALLET_ISOLATION: separate Keychain stores required');
   const testAddress = await testWalletAddress(stores);
-  assertDistinctWallet(expectedAddress, testAddress);
+  if (expectedAddress !== undefined) assertDistinctWallet(expectedAddress, testAddress);
   const signer = await loadStoredSigner(expectedAddress, stores.mainnet);
   assertDistinctWallet(signer.address, testAddress);
   return signer;

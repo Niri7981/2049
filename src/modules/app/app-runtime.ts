@@ -1,10 +1,9 @@
 import { join } from 'node:path';
-import { address as solanaAddress } from '@solana/kit';
 import { authoritySurface, type AuthorityWalletState } from './authority-surface';
 import { homedir } from 'node:os';
-import { loadEnvironmentWalletSigner, initializeProductWallet } from '../app-wallet/product-wallet';
+import { initializeProductWallet, readExistingProductWallets } from '../app-wallet/product-wallet';
 import { atomicAmount } from '../authority/atomic-money';
-import { DEVNET_USDC_MINT, loadPaymentConfig } from '../payment/payment-config';
+import { DEVNET_USDC_MINT, inspectFacilitatorConfiguration, loadPaymentConfig, PaymentConfigurationError } from '../payment/payment-config';
 import { PurchaseLedger } from '../purchases/purchase-ledger';
 import { paymentEndpointForIntent, recoverApprovedPayment } from '../purchases/approved-payment';
 import { purchaseMarketSnapshot } from '../purchases/purchase-market-snapshot';
@@ -18,22 +17,29 @@ import { DEMO_MARKET_DATA_PROVIDER_ID } from '../resources/static-resource-regis
 import { PAID_RESOURCE_SCOPE_ID } from '../resources/paid-resources';
 import { DEVNET_NETWORK } from '../payment/payment-config';
 import { requestPaidResourcePurchase, type PurchaseRequestResult } from '../purchases/request-paid-resource-purchase';
+import { loadRegisteredResources, registeredResourceSummary } from '../resources/registered-resources';
+import { resourceEntrySummary } from '../resources/runtime-resource-registry';
+import { ResourceRequestInputSchema, resourceInputNames, authorizedRequestInstance } from '../resources/http-resource';
+import { assertGrantPostScope, assertPostRequestApproval, postRequestPolicyHash, postRequestReview } from '../resources/post-request-authorization';
 import { fetchResourceChallenge } from '../payment/resource-challenge';
+import { classifyPaymentPreflightError, runPaymentPreflight } from '../payment/payment-preflight';
 import { displayAmount } from '../purchases/paid-resource-quote';
 import { z } from 'zod';
+import type { PaymentRequirements } from '@x402/core/types';
 import { readPaidResourceQuotes } from '../purchases/paid-resource-quote';
 import { acquireDataDirectoryOwnership } from './data-directory-owner';
 import { readWalletBalance } from './wallet-balance';
 import { assembleAuthorityOverview } from './authority-overview';
 import { resolveYoshConfiguration } from './yosh-configuration';
 import { readExecutionSelection, writeExecutionSelection, executionProfile } from './execution-selection';
-import { PaymentEnvironmentError, resolvePaymentEnvironment, PurchaseExecutionModeSchema, type PurchaseExecutionMode } from '../payment/payment-environment';
+import { writeProductionExecutionSetting } from './product-configuration';
+import { PaymentEnvironmentError, resolvePaymentEnvironment, PurchaseExecutionModeSchema, type PaymentEnvironment, type PurchaseExecutionMode } from '../payment/payment-environment';
 
 type RuntimeState = { runtime?: AppRuntime };
 export type TestPurchaseResult = { purchaseId: string; status: string; deliveryStatus: string; policy: { decision: string; reason: string }; transaction: string | null; simulated: boolean; warning?: string };
 const globals = globalThis as typeof globalThis & { __yosh?: RuntimeState };
 
-function dataDirectory() {
+export function runtimeDataDirectory() {
   const configured = resolveYoshConfiguration().dataDirectory;
   // Reuse the installation's ledger, member identities and pending-payment evidence.
   return configured || join(homedir(), 'Library', 'Application Support', '2049');
@@ -56,10 +62,14 @@ export class AppRuntime {
   private deliveryRecoveryTimer?: ReturnType<typeof setTimeout>;
   private recoveryStatus: 'idle' | 'running' | 'complete' | 'pending' = 'idle';
   private wallet?: Promise<{ address: string; reused: boolean }>;
+  private walletInventory?: ReturnType<typeof readExistingProductWallets>;
+  private walletInventoryExpiresAt = 0;
   private walletAddress?: string;
+  private mainnetIdentity?: string;
   private authorityWalletStatus: AuthorityWalletState = 'unverified';
+  private walletRetryAfter = 0;
   private authorityWalletBalance: string | null = null;
-  private environment = resolvePaymentEnvironment();
+  private environment: PaymentEnvironment;
   private readonly configuredEnvironment = { ...process.env };
   private readonly profileKeys = new Set<string>();
   private purchaseExecutionMode() {
@@ -69,17 +79,22 @@ export class AppRuntime {
     this.environment = current;
     return current.mode;
   }
-  constructor(readonly directory = dataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number; fetcher?: typeof fetch; codex?: CodexIntegrationOptions } = {}) {
+  constructor(readonly directory = runtimeDataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number; fetcher?: typeof fetch; codex?: CodexIntegrationOptions } = {}) {
     resolveYoshConfiguration();
-    this.purchaseExecutionMode();
-    if (this.environment.mode === 'live_mainnet') loadPaymentConfig(process.env);
     this.owner = acquireDataDirectoryOwnership(directory);
     let ledger: PurchaseLedger | undefined;
     try {
+      // Product configuration holds operator policy; the persisted selection is
+      // the active profile. Resolve it before validating the active environment.
       const selection = readExecutionSelection(directory);
       if (selection) this.applyExecutionProfile(selection);
-      ledger = new PurchaseLedger(join(directory, 'app-ledger.sqlite'), { managed: true, requireSpendGrant: true, mode: this.purchaseExecutionMode(), timeZone: dependencies.timeZone ?? localTimeZone, now: dependencies.now });
+      this.environment = resolvePaymentEnvironment();
+      this.purchaseExecutionMode();
+      ledger = new PurchaseLedger(join(directory, 'app-ledger.sqlite'), { managed: true, requireRegisteredResource: true, requireSpendGrant: true, mode: this.purchaseExecutionMode(), timeZone: dependencies.timeZone ?? localTimeZone, now: dependencies.now });
       this.ledger = ledger;
+      // Import installation configuration once; subsequent reads use durable product data.
+      if (!ledger.resources.list().length) ledger.resources.initialize(loadRegisteredResources(process.env, resolvePaymentEnvironment({ YOSH_EXECUTION_MODE: 'live_mainnet' })));
+      else ledger.resources.initialize([]);
       const defaultMemberId = this.ledger.defaultCardMember().id;
       for (const member of this.ledger.cardMembers()) {
         this.memberConnections.set(member.id, new AgentConnection(directory, member.id, id => this.ledger.isCardMemberActive(id), member.id !== defaultMemberId, dependencies.now));
@@ -87,9 +102,8 @@ export class AppRuntime {
       this.agentConnection = this.memberConnections.get(defaultMemberId)!;
       this.codexIntegration = new CodexIntegration(directory, defaultMemberId, dependencies.codex);
       this.agentConnection.setIntegration(this.codexIntegration.configured, this.codexIntegration.serverName);
-      // Connection tokens intentionally do not survive a backend restart. The
-      // stable CardMember keeps ownership, but the previous spend delegation is revoked.
-      this.ledger.revokeActiveSpendGrant(dependencies.now?.() ?? Date.now(), 'grant.REVOKED_BACKEND_RESTART');
+      // A verified persisted connection survives a service restart. Host-session
+      // liveness is still reset by AgentConnection, and purchase checks remain server-side.
     } catch (error) {
       ledger?.close();
       this.owner.release();
@@ -113,33 +127,83 @@ export class AppRuntime {
   }
   execution() {
     this.purchaseExecutionMode();
-    const budget = this.ledger.managedSummary(this.dependencies.now?.() ?? Date.now(), this.environment.mode);
-    const grants = this.ledger.cardMembers().some(member => this.spendGrantSummary(member.id)?.status === 'ACTIVE');
+    const defaultMemberId = this.ledger.defaultCardMember().id;
+    const readiness = this.authority(defaultMemberId).readiness;
+    const resources = this.environment.isProduction ? this.activeResourceDefinitions().map(resource => resource.resourceId) : [undefined];
+    const anyEligibleMember = this.ledger.cardMembers().some(member => resources.some(resourceId =>
+      this.authority(member.id, resourceId).readiness.transactionExecution.eligible));
     return { mode: this.environment.mode, cluster: this.environment.cluster, network: this.environment.network,
       asset: this.environment.asset, productionExecutionEnabled: this.environment.productionExecutionEnabled,
-      spendingAuthorized: budget.dailyLimit !== null && !budget.paused && grants,
-      configurationReady: this.environment.mode !== 'live_mainnet' || this.mainnetConfiguration() !== undefined };
+      spendingAuthorized: anyEligibleMember,
+      configurationReady: this.environment.mode === 'simulated' || readiness.paymentConfiguration.ready,
+      transactionExecutionEligible: anyEligibleMember, quotePreflightRequired: this.environment.mode === 'live_mainnet',
+      readinessCardMemberId: defaultMemberId, readiness };
   }
-  private mainnetConfiguration() {
-    try { return loadPaymentConfig(process.env); } catch { return undefined; }
+  private paymentConfiguration(defaultMode: PurchaseExecutionMode = 'live_devnet') {
+    if (this.environment.mode === 'live_mainnet' && this.authorityWalletStatus !== 'available') throw new Error('Mainnet wallet unavailable');
+    return loadPaymentConfig(this.resourceConfiguration(), defaultMode, this.walletAddress);
+  }
+  private paymentConfigurationSnapshot() {
+    if (this.environment.mode === 'simulated') return { config: undefined, code: null };
+    try { return { config: this.paymentConfiguration(), code: null }; }
+    catch (error) {
+      if (error instanceof PaymentConfigurationError || error instanceof PaymentEnvironmentError) return { config: undefined, code: error.code };
+      const message = error instanceof Error ? error.message : '';
+      const code = message === 'Mainnet wallet unavailable' || message === 'DEMO_BUYER_PUBLIC_KEY is required'
+        ? 'WALLET_UNAVAILABLE'
+        : message === 'DEMO_MERCHANT_PUBLIC_KEY is required' ? 'TEST_MERCHANT_CONFIGURATION_REQUIRED'
+          : message === 'MAINNET_RESOURCE_REGISTRATION_REQUIRED' ? 'REGISTERED_RESOURCE_REQUIRED'
+            : message === 'MAINNET_RESOURCE_REGISTRATION_INVALID' ? 'REGISTERED_RESOURCE_INVALID'
+              : message === 'MAINNET_WALLET_IDENTITY_MISMATCH' || message.startsWith('Mainnet wallet identity')
+                ? 'WALLET_IDENTITY_INVALID' : 'PAYMENT_CONFIGURATION_INVALID';
+      return { config: undefined, code };
+    }
   }
   setExecution(mode: PurchaseExecutionMode) {
     this.purchaseExecutionMode();
     if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, 'Yosh is stopping.');
     if (mode === this.environment.mode) return this.execution();
+    this.assertExecutionChangeIdle();
+    executionProfile(this.configuredEnvironment, mode);
+    writeExecutionSelection(this.directory, mode);
+    this.applyExecutionProfile(mode);
+    this.wallet = undefined;
+    this.walletAddress = undefined;
+    this.walletRetryAfter = 0;
+    this.walletInventory = undefined;
+    this.walletInventoryExpiresAt = 0;
+    this.authorityWalletStatus = 'unverified';
+    this.authorityWalletBalance = null;
+    return this.execution();
+  }
+  private assertExecutionChangeIdle() {
     // No signing, quotes, wallet initialization or original-payment recovery may straddle a switch.
     if (this.active.size || this.ledger.pendingRecovery().length ||
       PurchaseExecutionModeSchema.options.some(mode => BigInt(this.ledger.managedSummary(
         this.dependencies.now?.() ?? Date.now(), mode).reserved) > 0n)) {
       throw new ManagementApiError('EXECUTION_BUSY', 409, 'Finish pending purchases before changing execution.');
     }
-    executionProfile(this.configuredEnvironment, mode);
-    writeExecutionSelection(this.directory, mode);
-    this.applyExecutionProfile(mode);
-    this.wallet = undefined;
-    this.walletAddress = undefined;
-    this.authorityWalletStatus = 'unverified';
-    this.authorityWalletBalance = null;
+  }
+  setProductionExecutionEnabled(enabled: boolean) {
+    this.purchaseExecutionMode();
+    if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, 'Yosh is stopping.');
+    if (this.environment.mode !== 'live_mainnet') {
+      throw new ManagementApiError('MAINNET_SELECTION_REQUIRED', 409, 'Select Mainnet before changing production execution.');
+    }
+    if (this.environment.productionExecutionEnabled === enabled) return this.execution();
+    this.assertExecutionChangeIdle();
+    const proposed = { ...this.configuredEnvironment, YOSH_ENABLE_MAINNET_EXECUTION: enabled ? '1' : '0',
+      ...(this.configuredEnvironment.APP2049_ENABLE_MAINNET_EXECUTION !== undefined
+        ? { APP2049_ENABLE_MAINNET_EXECUTION: enabled ? '1' : '0' } : {}) };
+    executionProfile(proposed, 'live_mainnet');
+    writeProductionExecutionSetting(this.directory, enabled);
+    this.configuredEnvironment.YOSH_ENABLE_MAINNET_EXECUTION = enabled ? '1' : '0';
+    if (this.configuredEnvironment.APP2049_ENABLE_MAINNET_EXECUTION !== undefined) {
+      this.configuredEnvironment.APP2049_ENABLE_MAINNET_EXECUTION = enabled ? '1' : '0';
+    }
+    this.profileKeys.add('YOSH_ENABLE_MAINNET_EXECUTION');
+    if (this.configuredEnvironment.APP2049_ENABLE_MAINNET_EXECUTION !== undefined) this.profileKeys.add('APP2049_ENABLE_MAINNET_EXECUTION');
+    this.applyExecutionProfile('live_mainnet');
     return this.execution();
   }
   private restoreExecutionProfile() {
@@ -152,31 +216,50 @@ export class AppRuntime {
     if (this.active.size) throw new Error('Cannot close the backend while operations are active');
     this.accepting = false;
     clearTimeout(this.deliveryRecoveryTimer);
-    for (const connection of this.memberConnections.values()) connection.setEnabled(false, '');
     this.ledger.close();
     this.owner.release();
     this.restoreExecutionProfile();
   }
+  healthStatus() {
+    return { coreReady: true,
+      wallet: this.authorityWalletStatus === 'available' ? 'walletAvailable'
+        : this.authorityWalletStatus === 'unavailable' ? 'walletUnavailable' : 'walletChecking',
+      recovery: this.recoveryStatus === 'running' ? 'recoveryRunning'
+        : this.recoveryStatus === 'complete' ? 'recoveryComplete' : 'recoveryPending' };
+  }
   async initializeWallet() {
     resolveYoshConfiguration();
     this.purchaseExecutionMode();
+    if (this.environment.mode === 'live_mainnet' && !this.wallet && Date.now() < this.walletRetryAfter) throw new Error('WALLET_RETRY_PENDING');
     this.wallet ??= this.track((this.dependencies.initializeWallet ?? (async () => {
       if (this.environment.mode !== 'live_mainnet') return initializeProductWallet();
-      const config = loadPaymentConfig(process.env);
-      // Existing, separately provisioned Mainnet Keychain item only; startup cannot create a wallet.
-      const signer = await loadEnvironmentWalletSigner(config.buyer, config);
-      return { address: signer.address, reused: true };
+      // Status retains public identities only. The payment signer independently
+      // loads protected material and checks its identity immediately before use.
+      const inventory = await this.readWalletInventory();
+      const mainnet = inventory.find(wallet => wallet.id === 'mainnet');
+      const test = inventory.find(wallet => wallet.id === 'devnet');
+      if (mainnet?.status !== 'available' || !mainnet.address || test?.status === 'unavailable'
+        || mainnet.address === test?.address) throw new Error('MAINNET_WALLET_UNAVAILABLE');
+      return { address: mainnet.address, reused: true };
     }))().then(wallet => {
       this.purchaseExecutionMode();
       this.walletAddress = wallet.address;
       if (this.environment.mode === 'live_mainnet') {
-        if (wallet.address !== loadPaymentConfig(process.env).buyer) throw new Error('Mainnet wallet mismatch');
+        if (process.env.YOSH_MAINNET_WALLET_PUBLIC_KEY !== undefined && wallet.address !== process.env.YOSH_MAINNET_WALLET_PUBLIC_KEY) throw new Error('Mainnet wallet mismatch');
+        if (this.mainnetIdentity !== undefined && wallet.address !== this.mainnetIdentity) throw new Error('Mainnet wallet identity changed');
+        this.mainnetIdentity = wallet.address;
         this.authorityWalletStatus = 'available';
+        this.walletRetryAfter = 0;
       } else process.env.DEMO_BUYER_PUBLIC_KEY = wallet.address;
       process.env.YOSH_USE_PRODUCT_WALLET = '1';
       if (process.env.APP2049_USE_PRODUCT_WALLET !== undefined) process.env.APP2049_USE_PRODUCT_WALLET = '1';
+      // Cache only the verified public identity for status reads. Payment signing
+      // obtains and revalidates the Keychain secret independently.
       return wallet;
-    }).catch(error => { this.wallet = undefined; throw error; }));
+    }).catch(error => { this.wallet = undefined; this.walletAddress = undefined; this.authorityWalletStatus = 'unavailable';
+      this.authorityWalletBalance = null; if (this.environment.mode === 'live_mainnet') {
+        this.walletRetryAfter = Date.now() + 30_000; this.walletInventoryExpiresAt = this.walletRetryAfter;
+      } throw error; }));
     return this.wallet;
   }
   private track<T>(operation: Promise<T>): Promise<T> {
@@ -201,7 +284,7 @@ export class AppRuntime {
       const pending = this.ledger.pendingRecovery();
       if (pending.length) {
         const wallet = await this.initializeWallet();
-        const config = loadPaymentConfig(process.env, 'simulated');
+        const config = this.paymentConfiguration('simulated');
         if (config.mode !== this.purchaseExecutionMode() || config.buyer !== wallet.address) throw new Error('Recovery wallet mismatch');
         for (const item of pending) {
           if (!this.accepting) break;
@@ -238,7 +321,7 @@ export class AppRuntime {
       const due = this.ledger.dueDeliveryRecovery();
       if (!this.accepting || !due.length) return;
       const wallet = await this.initializeWallet();
-      const config = loadPaymentConfig(process.env, 'simulated');
+      const config = this.paymentConfiguration('simulated');
       if (config.mode !== this.purchaseExecutionMode() || config.buyer !== wallet.address) return;
       for (const item of due) {
         if (!this.accepting) break;
@@ -253,21 +336,21 @@ export class AppRuntime {
   async prepareQuit() {
     this.accepting = false;
     clearTimeout(this.deliveryRecoveryTimer);
-    this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED_SERVICE_EXIT');
-    for (const connection of this.memberConnections.values()) connection.setEnabled(false, '');
     this.ledger.stopPayments();
     await Promise.allSettled([...this.active]);
   }
-  private configuredMainnetAddress() {
-    try { return solanaAddress(process.env.YOSH_MAINNET_WALLET_PUBLIC_KEY ?? ''); } catch { return ''; }
-  }
-  authority(memberId = this.ledger.defaultCardMember().id) {
+  private mainnetAddress() { return this.walletAddress ?? ''; }
+  authority(memberId = this.ledger.defaultCardMember().id, resourceId?: string) {
     this.purchaseExecutionMode();
     const mainnet = this.environment.mode === 'live_mainnet';
-    const address = mainnet ? this.configuredMainnetAddress() : this.walletAddress ?? '';
+    const address = mainnet ? this.mainnetAddress() : this.walletAddress ?? '';
+    const configuration = this.paymentConfigurationSnapshot();
+    const facilitator = inspectFacilitatorConfiguration(this.resourceConfiguration(), this.environment);
     return authoritySurface(this.ledger, this.environment, memberId,
       { address, status: !address ? 'unavailable' : mainnet ? this.authorityWalletStatus : 'available', balance: this.authorityWalletBalance },
-      mainnet ? this.mainnetConfiguration() : undefined, this.dependencies.now?.() ?? Date.now());
+      configuration.config, this.dependencies.now?.() ?? Date.now(), { facilitator, resourceId,
+        connectionEnabled: this.connectionFor(memberId).principal('request_purchase') !== undefined,
+        serviceAccepting: this.accepting, configurationCode: configuration.code });
   }
   readAuthorityBalance() { return this.track(this.performAuthorityBalanceRead()); }
   private async performAuthorityBalanceRead() {
@@ -278,55 +361,153 @@ export class AppRuntime {
       network: environment.network, assetId: environment.asset.mint, assetDecimals: environment.asset.decimals });
     let address: string;
     if (mainnet) {
-      address = this.configuredMainnetAddress();
-      if (!address) return unavailable('Mainnet wallet unavailable');
-      try {
-        // Read and verify the existing dedicated item only. This call cannot provision a wallet.
-        await loadEnvironmentWalletSigner(address, environment);
-        this.authorityWalletStatus = 'available';
-      } catch {
-        this.authorityWalletStatus = 'unavailable';
-        this.authorityWalletBalance = null;
-        return unavailable('Mainnet wallet unavailable');
-      }
+      try { address = (await this.initializeWallet()).address; }
+      catch { return unavailable('Mainnet wallet unavailable'); }
     } else address = (await this.initializeWallet()).address;
     const balance = await this.balance(address);
     this.authorityWalletBalance = balance.amount;
     return { ...balance, network: environment.network, assetId: environment.asset.mint, assetDecimals: environment.asset.decimals };
   }
   async balance(address: string, fetcher: typeof fetch = fetch) {
-    return readWalletBalance(address, fetcher);
+    return readWalletBalance(address, fetcher, this.environment);
   }
-  quotePaidResources(origin: string) { return this.track(this.readPaidResourceQuotes(origin)); }
-  private async readPaidResourceQuotes(origin: string) {
-    const wallet = await this.initializeWallet();
-    const config = loadPaymentConfig(process.env, 'simulated');
-    if (config.mode !== this.purchaseExecutionMode() || config.buyer !== wallet.address) throw new Error('产品钱包配置不匹配。');
-    if (config.mode === 'live_mainnet') {
-      const resources = await Promise.all(config.registeredResources!.map(async resource => {
-        const { quote } = await fetchResourceChallenge(resource, config, this.dependencies.fetcher);
-        return { resourceId: resource.resourceId, name: resource.resourceId, resourceUrl: resource.request.url,
-          amount: quote.amount, decimals: resource.decimals, display: displayAmount(quote.amount).replace('test USDC', 'USDC'),
-          asset: quote.asset, network: quote.network, payTo: quote.payTo };
+  quotePaidResources(origin: string, memberId = this.ledger.defaultCardMember().id) {
+    this.ledger.assertCardMemberActive(memberId);
+    return this.track(this.readPaidResourceQuotes(origin, memberId));
+  }
+  prepareRegisteredResource(resourceId: string, sample: unknown) {
+    if (this.purchaseExecutionMode() !== 'live_mainnet') throw new Error('UNSUPPORTED_PURCHASE_NETWORK');
+    const resource = this.activeResourceDefinitions().find(item => item.resourceId === resourceId);
+    if (!resource) throw new Error('MAINNET_REGISTERED_RESOURCE_REQUIRED');
+    return postRequestReview(authorizedRequestInstance(resource, sample), resource);
+  }
+  async quoteRegisteredResource(resourceId: string, sample: unknown, memberId: string) {
+    this.ledger.assertCardMemberActive(memberId);
+    if (this.purchaseExecutionMode() !== 'live_mainnet') throw new Error('UNSUPPORTED_PURCHASE_NETWORK');
+    const resource = this.activeResourceDefinitions().find(item => item.resourceId === resourceId);
+    if (!resource) throw new Error('MAINNET_REGISTERED_RESOURCE_REQUIRED');
+    const instance = authorizedRequestInstance(resource, sample);
+    assertGrantPostScope(resource, this.ledger.activeSpendGrant(this.dependencies.now?.() ?? Date.now(), memberId, 'live_mainnet', resourceId));
+    const { quote } = await fetchResourceChallenge({ ...resource, request: instance }, this.environment, this.dependencies.fetcher);
+    const preflight = await this.inspectQuotedPayment(resourceId, quote, memberId);
+    return { resourceId, request: { url: instance.url, method: instance.method }, network: quote.network,
+      assetId: quote.asset, assetDecimals: resource.decimals, amount: quote.amount,
+      display: displayAmount(quote.amount).replace('test USDC', 'USDC'), payTo: quote.payTo,
+      maxTimeoutSeconds: quote.maxTimeoutSeconds, preflight, paymentSent: false,
+      notice: 'This is an unpaid snapshot. Every purchase obtains and validates a fresh quote.' };
+  }
+  private async readPaidResourceQuotes(origin: string, memberId: string) {
+    if (this.purchaseExecutionMode() === 'live_mainnet') {
+      await this.performAuthorityBalanceRead();
+      const registeredResources = this.registeredResources();
+      const resources = await Promise.all(this.activeResourceDefinitions().map(async resource => {
+        if (resourceInputNames(resource.requestInputs?.query).length || resourceInputNames(resource.requestInputs?.jsonBody).length) {
+          return { resourceId: resource.resourceId, name: resource.displayName ?? resource.resourceId,
+            resourceUrl: resource.request.url, quoteStatus: 'unavailable' as const,
+            code: 'RESOURCE_REQUEST_INPUT_REQUIRED', requestInput: { ready: false, code: 'RESOURCE_REQUEST_INPUT_REQUIRED',
+              field: resourceInputNames(resource.requestInputs?.query)[0] ?? 'jsonBody' } };
+        }
+        try {
+          assertGrantPostScope(resource, this.ledger.activeSpendGrant(this.dependencies.now?.() ?? Date.now(), memberId, 'live_mainnet', resource.resourceId));
+          const { quote } = await fetchResourceChallenge(resource, this.environment, this.dependencies.fetcher);
+          const preflight = await this.inspectQuotedPayment(resource.resourceId, quote, memberId);
+          const requestInput = { ready: true, code: null, field: null };
+          return { resourceId: resource.resourceId, name: resource.displayName ?? resource.resourceId, resourceUrl: resource.request.url,
+            method: resource.request.method, amount: quote.amount, decimals: resource.decimals,
+            display: displayAmount(quote.amount).replace('test USDC', 'USDC'),
+            asset: quote.asset, network: quote.network, payTo: quote.payTo, quoteStatus: 'available' as const, preflight, requestInput };
+        } catch {
+          return { resourceId: resource.resourceId, name: resource.displayName ?? resource.resourceId,
+            resourceUrl: resource.request.url, quoteStatus: 'unavailable' as const, code: 'RESOURCE_QUOTE_UNAVAILABLE' };
+        }
       }));
-      return { resources, testEnvironment: false };
+      return { registeredResources, resources, testEnvironment: false };
     }
+    const wallet = await this.initializeWallet();
+    const config = this.paymentConfiguration('simulated');
+    if (config.mode !== this.purchaseExecutionMode() || config.buyer !== wallet.address) throw new Error('产品钱包配置不匹配。');
     return readPaidResourceQuotes(origin, config, this.dependencies.fetcher);
   }
+  private async inspectQuotedPayment(resourceId: string, quote: PaymentRequirements, memberId: string) {
+    const authority = this.authority(memberId, resourceId);
+    const local = authority.readiness.transactionExecution;
+    if (!local.eligible) return { ready: false, code: local.code };
+    const grant = this.ledger.spendGrantSummary(this.dependencies.now?.() ?? Date.now(), 'live_mainnet', memberId, resourceId);
+    if (!grant || grant.resourceId !== resourceId) return { ready: false, code: 'SPEND_GRANT_SCOPE_MISMATCH' };
+    if (grant.payTo !== quote.payTo || grant.network !== quote.network || grant.assetId !== quote.asset
+      || grant.paymentScheme !== quote.scheme) return { ready: false, code: 'SPEND_GRANT_SCOPE_MISMATCH' };
+    if (BigInt(quote.amount) > BigInt(grant.singleLimit) || BigInt(quote.amount) > BigInt(grant.remaining)) {
+      return { ready: false, code: 'SPEND_GRANT_AMOUNT_EXCEEDED' };
+    }
+    if (authority.available === null || BigInt(quote.amount) > BigInt(authority.available)) {
+      return { ready: false, code: 'DAILY_AUTHORITY_INSUFFICIENT' };
+    }
+    const configuration = this.paymentConfigurationSnapshot();
+    if (!configuration.config) return { ready: false, code: configuration.code ?? 'PAYMENT_CONFIGURATION_INVALID' };
+    try {
+      await runPaymentPreflight({ ...configuration.config, merchant: quote.payTo },
+        { fetch: this.dependencies.fetcher, amount: quote.amount,
+          feePayer: typeof quote.extra.feePayer === 'string' ? quote.extra.feePayer : undefined });
+      return { ready: true, code: null };
+    } catch (error) {
+      return { ready: false, code: classifyPaymentPreflightError(error) };
+    }
+  }
+  private activeResourceDefinitions() {
+    return this.ledger.resources.active().filter(resource => resource.network === this.environment.network && resource.mint === this.environment.asset.mint && resource.decimals === this.environment.asset.decimals);
+  }
+  private resourceConfiguration() {
+    return { ...process.env, YOSH_MAINNET_RESOURCES: JSON.stringify(this.activeResourceDefinitions()) };
+  }
+  listRegisteredResources() { return this.ledger.resources.list().map(resourceEntrySummary); }
+  inspectRegisteredResource(id: string) { return resourceEntrySummary(this.ledger.resources.inspect(id)); }
+  addRegisteredResource(raw: unknown) {
+    if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, 'Yosh is stopping.');
+    return resourceEntrySummary(this.ledger.resources.add(raw));
+  }
+  disableRegisteredResource(id: string, state: 'DISABLED' | 'REMOVED') {
+    if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, 'Yosh is stopping.');
+    return resourceEntrySummary(this.ledger.resources.setState(id, state));
+  }
+  registeredResources() {
+    if (this.purchaseExecutionMode() !== 'live_mainnet') return [];
+    return this.activeResourceDefinitions().map(registeredResourceSummary);
+  }
   overview() { return this.track(this.readOverview()); }
+  async refreshMainnetWallet() {
+    if (this.purchaseExecutionMode() !== 'live_mainnet') return;
+    try { await this.initializeWallet(); } catch { /* Identity failure is recorded in the shared snapshot. */ }
+  }
+  existingWallets() { return this.track(this.readWallets()); }
+  private readWalletInventory() {
+    if (!this.walletInventory || (this.walletInventoryExpiresAt > 0 && Date.now() >= this.walletInventoryExpiresAt)) {
+      this.walletInventoryExpiresAt = 0;
+      this.walletInventory = readExistingProductWallets().then(wallets => {
+        if (wallets.some(wallet => wallet.status !== 'available')) this.walletInventoryExpiresAt = Date.now() + 30_000;
+        return wallets;
+      });
+    }
+    return this.walletInventory;
+  }
+  private async readWallets() {
+    const wallets = await this.readWalletInventory();
+    if (this.purchaseExecutionMode() !== 'live_mainnet') return wallets;
+    await this.refreshMainnetWallet();
+    return wallets.map(wallet => wallet.id === 'mainnet' ? { ...wallet, address: this.walletAddress ?? null,
+      status: this.authorityWalletStatus === 'available' ? 'available' as const : 'unavailable' as const } : wallet);
+  }
   private async readOverview() {
     const mode = this.purchaseExecutionMode();
+    void this.refreshMainnetWallet();
     // Mainnet selection is displayable before provisioning. Never fall back to a test wallet.
-    const config = mode === 'live_mainnet' ? this.mainnetConfiguration() : undefined;
     const wallet = mode === 'live_mainnet'
-      ? { address: this.configuredMainnetAddress(), available: this.authorityWalletStatus === 'available', reused: true }
+      ? { address: this.mainnetAddress(), available: this.authorityWalletStatus === 'available', reused: true }
       : await this.initializeWallet();
     const overview = assembleAuthorityOverview(this.ledger, this.agentConnection, wallet,
       { status: this.accepting ? 'running' : 'stopping', recoveryStatus: this.recoveryStatus },
       this.dependencies.now?.() ?? Date.now(), mode, this.ledger.defaultCardMember().id);
     return { ...overview, authority: this.authority(), service: { ...overview.service, execution: this.execution(), paymentEnabled: mode === 'live_devnet' || (mode === 'live_mainnet' && this.environment.productionExecutionEnabled),
-      registeredResources: config?.registeredResources?.map(resource => ({ resourceId: resource.resourceId, providerId: resource.providerId,
-        url: resource.request.url, recipient: resource.recipient, network: resource.network, assetId: resource.mint, assetDecimals: resource.decimals })) ?? [] } };
+      registeredResources: this.registeredResources() } };
   }
   private connectionFor(memberId: string) {
     const connection = this.memberConnections.get(memberId);
@@ -344,7 +525,8 @@ export class AppRuntime {
     if (!member) throw new Error('CARD_MEMBER_NOT_FOUND');
     const now = this.dependencies.now?.() ?? Date.now();
     return { member, authority: this.authority(memberId), connection: this.connectionFor(memberId).status(),
-      grant: this.spendGrantSummary(memberId), purchases: this.ledger.list(50, memberId),
+      grant: this.spendGrantSummary(memberId), grants: this.ledger.spendGrantSummaries(now, this.purchaseExecutionMode(), memberId),
+      purchases: this.ledger.list(50, memberId),
       budget: this.ledger.managedSummary(now, this.purchaseExecutionMode()) };
   }
   membersOverview() { return this.ledger.cardMembers().map(member => ({ member, connection: this.connectionFor(member.id).status(),
@@ -408,38 +590,64 @@ export class AppRuntime {
   createSpendGrant(raw: unknown, memberId = this.ledger.defaultCardMember().id) {
     // Reject an environment switch before rotating credentials or reading test defaults.
     const mode = this.purchaseExecutionMode();
-    const request = SpendGrantInputSchema.extend({ resourceId: z.string().min(1).max(200).optional() }).strict().parse(raw);
-    const { resourceId, ...input } = request;
-    const config = mode === 'live_mainnet' ? loadPaymentConfig(process.env) : undefined;
-    const resource = config?.registeredResources?.find(resource => resource.resourceId === resourceId);
+    const request = SpendGrantInputSchema.extend({ resourceId: z.string().min(1).max(200).optional(), sample: ResourceRequestInputSchema.optional(), postApprovalHash: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().parse(raw);
+    const { resourceId, sample, postApprovalHash, ...input } = request;
+    const resource = mode === 'live_mainnet' ? this.activeResourceDefinitions().find(resource => resource.resourceId === resourceId) : undefined;
     if (mode === 'live_mainnet' && !resource) throw new Error('MAINNET_REGISTERED_RESOURCE_REQUIRED');
+    const instance = resource ? authorizedRequestInstance(resource, sample ?? {}) : undefined;
+    if (resource && instance) assertPostRequestApproval(instance, postApprovalHash, resource);
     const now = this.dependencies.now?.() ?? Date.now();
     const total = atomicAmount(input.totalLimit); const single = atomicAmount(input.singleLimit);
     if (total <= 0n || single <= 0n || single > total) throw new Error('授权金额必须为正数，且单笔上限不能大于授权总额。');
     if (input.expiresAt <= now + 60_000 || input.expiresAt > now + 7 * 24 * 60 * 60 * 1000) throw new Error('授权有效期必须在 1 分钟到 7 天之间。');
-    const connection = this.connectionFor(memberId);
-    const principal = connection.rotateCredential();
-    if (!principal) throw new Error('请先启用 Agent 连接。');
-    try {
-      const payTo = resource?.recipient ?? (process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs');
-      return this.ledger.createSpendGrant(input, principal, {
-        resourceId: resource?.resourceId ?? PAID_RESOURCE_SCOPE_ID,
-        providerId: resource?.providerId ?? DEMO_MARKET_DATA_PROVIDER_ID,
-        operation: PAID_RESOURCE_PURCHASE_OPERATION,
-        network: resource?.network ?? DEVNET_NETWORK,
-        assetId: resource?.mint ?? DEVNET_USDC_MINT,
-        assetDecimals: 6,
-        payTo: resource?.recipient ?? payTo,
-        paymentScheme: 'exact',
-      }, now, mode);
-    } catch (error) {
-      this.ledger.revokeActiveSpendGrant(now, 'grant.REVOKED_CONNECTION_ROTATION_FAILED', memberId);
-      connection.rotateCredential();
-      throw error;
+    const commit = (livePayTo?: string) => {
+      if (!this.accepting || this.purchaseExecutionMode() !== mode) throw new Error('EXECUTION_CHANGED');
+      if (resource && hash(this.activeResourceDefinitions().find(item => item.resourceId === resourceId) ?? null) !== hash(resource)) {
+        throw new Error('RESOURCE_REGISTRATION_CHANGED');
+      }
+      if (mode === 'live_mainnet' && (this.authorityWalletStatus !== 'available' || !(livePayTo ?? resource?.recipient))) throw new Error('Mainnet wallet or recipient unavailable');
+      if (mode === 'live_mainnet' && (livePayTo ?? resource?.recipient) === this.walletAddress) throw new Error('MAINNET_RESOURCE_REGISTRATION_INVALID');
+      const connection = this.connectionFor(memberId);
+      const principal = connection.rotateCredential();
+      if (!principal) throw new Error('请先启用 Agent 连接。');
+      try {
+        const payTo = livePayTo ?? resource?.recipient ?? (process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs');
+        return this.ledger.createSpendGrant(input, principal, {
+          resourceId: resource?.resourceId ?? PAID_RESOURCE_SCOPE_ID,
+          providerId: resource?.providerId ?? DEMO_MARKET_DATA_PROVIDER_ID,
+          operation: PAID_RESOURCE_PURCHASE_OPERATION,
+          network: resource?.network ?? DEVNET_NETWORK,
+          assetId: resource?.mint ?? DEVNET_USDC_MINT,
+          assetDecimals: 6,
+          payTo,
+          paymentScheme: 'exact',
+          ...(resource?.request.method === 'POST' ? { postPolicyHash: postRequestPolicyHash(resource) } : {}),
+        }, now, mode);
+      } catch (error) {
+        connection.rotateCredential();
+        throw error;
+      }
+    };
+    if (resource?.recipientSource === 'live_challenge') {
+      const initialPrincipal = this.connectionFor(memberId).principal('read');
+      if (!initialPrincipal) throw new Error('请先启用 Agent 连接。');
+      return this.track((async () => {
+        // Only explicit authenticated Create Grant reaches here. No signature,
+        // reservation or purchase: bind this API delegation to a fresh payee.
+        await this.refreshMainnetWallet();
+        if (this.authorityWalletStatus !== 'available') throw new Error('Mainnet wallet unavailable');
+        if (!instance) throw new Error('RESOURCE_REQUEST_INPUT_REQUIRED');
+        const { quote } = await fetchResourceChallenge({ ...resource, request: instance }, this.environment, this.dependencies.fetcher);
+        if (BigInt(quote.amount) > single) throw new Error('SPEND_GRANT_SAMPLE_PRICE_EXCEEDS_SINGLE_LIMIT');
+        if (hash(this.connectionFor(memberId).principal('read') ?? null) !== hash(initialPrincipal)) throw new Error('GRANT_CONNECTION_CHANGED');
+        return commit(quote.payTo);
+      })());
     }
+    return commit();
   }
-  revokeSpendGrant(memberId = this.ledger.defaultCardMember().id) {
-    const revoked = this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED', memberId);
+
+  revokeSpendGrant(memberId = this.ledger.defaultCardMember().id, resourceId?: string) {
+    const revoked = this.ledger.revokeActiveSpendGrant(this.dependencies.now?.() ?? Date.now(), 'grant.REVOKED', memberId, resourceId);
     this.connectionFor(memberId).rotateCredential();
     return revoked;
   }
@@ -457,7 +665,7 @@ export class AppRuntime {
     // A SpendGrant can only be created from the initialized App session. Keep
     // denied path away from Keychain and all signer construction.
     if (this.purchaseExecutionMode() !== 'live_mainnet' && !this.walletAddress) throw new Error('产品钱包尚未初始化。');
-    const config = loadPaymentConfig(process.env, 'simulated');
+    const config = this.paymentConfiguration('simulated');
     const buyer = config.mode === 'live_mainnet' ? config.buyer : this.walletAddress;
     if (!buyer) throw new Error('产品钱包尚未初始化。');
     if (config.mode !== this.purchaseExecutionMode() || config.buyer !== buyer) throw new Error('产品钱包配置不匹配。');
@@ -479,7 +687,7 @@ export class AppRuntime {
     const merchant = process.env.DEMO_MERCHANT_PUBLIC_KEY || '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs';
     const mode = this.purchaseExecutionMode();
     const config = mode === 'live_devnet'
-      ? loadPaymentConfig()
+      ? loadPaymentConfig(this.resourceConfiguration(), undefined, this.walletAddress)
       : loadPaymentConfig({ ...process.env, DEMO_BUYER_PUBLIC_KEY: wallet.address, DEMO_MERCHANT_PUBLIC_KEY: merchant }, 'simulated');
     if (config.mode !== this.purchaseExecutionMode() || config.buyer !== wallet.address) throw new Error('产品钱包配置不匹配。');
     const authority = this.ledger.get(id) ? undefined : this.purchaseAuthority();
@@ -501,3 +709,6 @@ export function appRuntime() {
   globals.__yosh.runtime ??= new AppRuntime();
   return globals.__yosh.runtime;
 }
+
+/** Shutdown must not initialize a core that has never accepted operations. */
+export function existingAppRuntime() { return globals.__yosh?.runtime; }
