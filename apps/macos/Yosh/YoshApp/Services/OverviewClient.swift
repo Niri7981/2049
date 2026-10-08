@@ -2,6 +2,7 @@ import Foundation
 
 enum OverviewLoadError: Error {
     case configuration
+    case resourceConflict, resourceDiscoveryUnavailable, resourcePostApprovalRequired
     case executionBusy
     case unavailable
     case unauthorized
@@ -23,6 +24,9 @@ enum OverviewLoadError: Error {
 
     var message: String {
         switch self {
+        case .resourcePostApprovalRequired: "Review and explicitly approve the exact POST request in Yosh."
+        case .resourceConflict: "This API is read-only, removed, or its resource ID is already reserved."
+        case .resourceDiscoveryUnavailable: "No supported Mainnet USDC challenge could be safely retrieved."
         case .executionBusy: "Finish pending purchases before changing execution."
         case .configuration: "Local service setup unavailable"
         case .unavailable: "Local service unavailable"
@@ -53,6 +57,7 @@ extension OverviewLoadError {
     /// Connection-only language; other pages retain their existing error presentation.
     var connectionMessage: String {
         switch self {
+        case .resourceConflict, .resourceDiscoveryUnavailable, .resourcePostApprovalRequired: message
         case .codexNotInstalled: "Install Codex to connect it to Yosh, then try again."
         case .codexConfigConflict: "Codex's Yosh connection settings have changed. Review them in Codex, then try again."
         case .codexConfigFailed: "Yosh couldn't finish setting up Codex. Try setup again."
@@ -101,6 +106,10 @@ struct OverviewClient {
         try await write(.setExecution(mode))
     }
 
+    func setProductionExecutionEnabled(_ enabled: Bool) async throws {
+        try await write(.setProductionExecutionEnabled(enabled))
+    }
+
     func setPaused(_ paused: Bool) async throws {
         try await write(.setPaused(paused))
     }
@@ -109,20 +118,56 @@ struct OverviewClient {
         try await write(.setDailyLimit(minorUnits))
     }
 
-    func createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil) async throws {
-        try await write(.createGrant(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId))
+    func createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil, sample: ResourceRequestSample? = nil, postApprovalHash: String? = nil) async throws {
+        try await write(.createGrant(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId, sample: sample, postApprovalHash: postApprovalHash))
     }
 
-    func revokeGrant() async throws {
-        try await write(.revokeGrant)
+    func revokeGrant(resourceId: String? = nil) async throws {
+        try await write(.revokeGrant(resourceId: resourceId))
     }
 
     func setConnection(_ enabled: Bool) async throws {
         try await write(.setConnection(enabled))
     }
 
+    func loadRegisteredAPIs() async throws -> [RegisteredAPI] {
+        try await read(.resources, as: RegisteredAPI.List.self).resources
+    }
+
+    func inspectRegisteredAPI(_ id: String) async throws -> RegisteredAPI {
+        try await read(.resource(id), as: RegisteredAPI.self)
+    }
+
+    func registerAPI(_ input: RegisterAPIRequest) async throws -> RegisteredAPI {
+        let result = try await mutate(.registerResource(input), as: RegisteredAPI.self, successStatus: 201)
+        NotificationCenter.default.post(name: .registeredAPIsChanged, object: nil)
+        return result
+    }
+
+    func setResourceState(_ id: String, state: String) async throws -> RegisteredAPI {
+        let result = try await mutate(.resourceState(id, state), as: RegisteredAPI.self)
+        NotificationCenter.default.post(name: .registeredAPIsChanged, object: nil)
+        return result
+    }
+
+    func prepareDiscovery(_ input: ResourceDiscoveryRequest) async throws -> PostRequestReview {
+        try await mutate(.prepareResource(.init(kind: "discovery", discovery: input)), as: PostRequestReview.self)
+    }
+
+    func prepareGrantPOST(_ resourceID: String, sample: ResourceRequestSample?) async throws -> PostRequestReview {
+        try await mutate(.prepareResource(.init(kind: "grant", resourceId: resourceID, sample: sample)), as: PostRequestReview.self)
+    }
+
+    func discoverAPI(_ input: ResourceDiscoveryRequest) async throws -> ResourceDiscovery {
+        try await mutate(.discoverResource(input), as: ResourceDiscovery.self)
+    }
+
     func loadMembers(retry: Bool = false) async throws -> [CardMemberSummary] {
         try await read(.members, as: MembersResponse.self, retry: retry).members
+    }
+
+    func loadWallets(retry: Bool = false) async throws -> [CardSettingsPresentation.ExistingWallet] {
+        try await read(.wallets, as: CardSettingsPresentation.WalletsResponse.self, retry: retry).wallets
     }
 
     func loadMember(_ id: UUID, retry: Bool = false) async throws -> CardMemberSnapshot {
@@ -145,12 +190,12 @@ struct OverviewClient {
         try await write(.setMemberConnection(id, enabled))
     }
 
-    func createMemberGrant(_ id: UUID, totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil) async throws {
-        try await write(.createMemberGrant(id, totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId))
+    func createMemberGrant(_ id: UUID, totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil, sample: ResourceRequestSample? = nil, postApprovalHash: String? = nil) async throws {
+        try await write(.createMemberGrant(id, totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId, sample: sample, postApprovalHash: postApprovalHash))
     }
 
-    func revokeMemberGrant(_ id: UUID) async throws {
-        try await write(.revokeMemberGrant(id))
+    func revokeMemberGrant(_ id: UUID, resourceId: String? = nil) async throws {
+        try await write(.revokeMemberGrant(id, resourceId: resourceId))
     }
 
     private func read<T: Decodable>(_ endpoint: ServiceEndpoint, as type: T.Type, retry: Bool = false) async throws -> T {
@@ -169,7 +214,10 @@ struct OverviewClient {
         guard response.statusCode == successStatus else {
             if let code = try? JSONDecoder().decode(ManagementErrorResponse.self, from: data).code {
                 switch code {
-                case "INVALID_REQUEST": throw OverviewLoadError.invalidRequest
+                case "RESOURCE_ID_EXISTS", "RESOURCE_READ_ONLY", "RESOURCE_REMOVED": throw OverviewLoadError.resourceConflict
+                case "RESOURCE_DISCOVERY_UNAVAILABLE": throw OverviewLoadError.resourceDiscoveryUnavailable
+                case "RESOURCE_POST_APPROVAL_REQUIRED": throw OverviewLoadError.resourcePostApprovalRequired
+                case "RESOURCE_REQUEST_INPUT_REQUIRED", "RESOURCE_REQUEST_INPUT_INVALID", "RESOURCE_REQUEST_INPUT_UNSUPPORTED", "INVALID_REQUEST": throw OverviewLoadError.invalidRequest
                 case "CARD_MEMBER_NOT_FOUND": throw OverviewLoadError.memberNotFound
                 case "CARD_MEMBER_NOT_ACTIVE": throw OverviewLoadError.memberInactive
                 case "DEFAULT_CARD_MEMBER_REQUIRED": throw OverviewLoadError.defaultMemberRequired
@@ -188,7 +236,8 @@ struct OverviewClient {
         guard data.count <= 65_536 else { throw OverviewLoadError.writeRejected }
         if response.statusCode == 200 { return }
         if let code = try? JSONDecoder().decode(ManagementErrorResponse.self, from: data).code {
-            if code == "INVALID_REQUEST" { throw OverviewLoadError.invalidRequest }
+            if code == "RESOURCE_POST_APPROVAL_REQUIRED" { throw OverviewLoadError.resourcePostApprovalRequired }
+            if ["RESOURCE_REQUEST_INPUT_REQUIRED", "RESOURCE_REQUEST_INPUT_INVALID", "RESOURCE_REQUEST_INPUT_UNSUPPORTED", "INVALID_REQUEST"].contains(code) { throw OverviewLoadError.invalidRequest }
             if code == "DATA_DIRECTORY_IN_USE" { throw OverviewLoadError.dataDirectoryInUse }
             if code == "CARD_MEMBER_NOT_FOUND" { throw OverviewLoadError.memberNotFound }
             if code == "CARD_MEMBER_NOT_ACTIVE" { throw OverviewLoadError.memberInactive }
@@ -213,12 +262,14 @@ struct OverviewClient {
             case .authenticatedShutdownFailed: throw OverviewLoadError.authenticatedShutdownFailed
             case .authenticatedShutdownTimedOut: throw OverviewLoadError.authenticatedShutdownTimedOut
             case .authenticationFailed: throw OverviewLoadError.unauthorized
+            case .credentialUnavailable: throw OverviewLoadError.startupFailed
             case .requestTimedOut: throw OverviewLoadError.requestTimedOut
             case .responseTooLarge: throw OverviewLoadError.invalidResponse
             case .cannotStart: throw OverviewLoadError.startupFailed
             case .notReady: throw OverviewLoadError.readinessTimedOut
             case .processExited: throw OverviewLoadError.serviceExited
             case .dataDirectoryInUse: throw OverviewLoadError.dataDirectoryInUse
+            case .restartLimitReached: throw OverviewLoadError.startupFailed
             case .unavailable: throw OverviewLoadError.unavailable
             }
         } catch {

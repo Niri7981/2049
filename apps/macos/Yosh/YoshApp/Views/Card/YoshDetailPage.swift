@@ -44,9 +44,7 @@ struct YoshDetailPage<Content: View>: View {
             // Opaque flat content separates the two surfaces without another card/material.
             .background {
                 if !isRoot {
-                    LinearGradient(colors: [Color(red: 0.985, green: 0.982, blue: 0.978),
-                        Color(red: 0.963, green: 0.962, blue: 0.964)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing)
+                    YoshShellPalette.surface
                         // Turn the flat backing only. Embedded AppKit controls remain
                         // in an affine plane with live focus and scroll geometry.
                         .rotation3DEffect(.degrees(pose.angle), axis: (x: 0, y: 1, z: 0),

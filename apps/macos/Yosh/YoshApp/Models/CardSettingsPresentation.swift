@@ -5,6 +5,37 @@ struct CardSettingsPresentation {
     let serviceStatus: String
     let walletAddress: String
     let dataDirectory: URL?
+    let wallets: [ExistingWallet]
+
+    struct WalletsResponse: Decodable {
+        let wallets: [ExistingWallet]
+    }
+
+    struct ExistingWallet: Decodable, Identifiable {
+        let id: String
+        let label: String
+        let address: String?
+        let status: Status
+
+        enum Status: String, Decodable {
+            case available, missing, unavailable
+        }
+
+        var display: String {
+            switch status {
+            case .available: address.map { "\($0.prefix(8))…\($0.suffix(4))" } ?? "Wallet unavailable"
+            case .missing: "No wallet"
+            case .unavailable: "Keychain unavailable"
+            }
+        }
+    }
+
+    init(wallets: [ExistingWallet], dataDirectory: URL? = nil) {
+        self.wallets = wallets
+        self.dataDirectory = dataDirectory
+        serviceStatus = "Running"
+        walletAddress = ""
+    }
 
     static let repositoryURL = URL(string: "https://github.com/Niri7981/2049")!
 
@@ -20,6 +51,7 @@ struct CardSettingsPresentation {
         }
         walletAddress = overview.wallet.address
         self.dataDirectory = dataDirectory
+        wallets = []
     }
 
     /// The existing authenticated health response owns the resolved storage path.

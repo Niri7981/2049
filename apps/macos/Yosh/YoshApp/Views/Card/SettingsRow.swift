@@ -29,20 +29,20 @@ struct SettingsRow: View {
             Spacer(minLength: 4)
             if let value {
                 Text(value)
-                    .foregroundStyle(Color(red: 0.42, green: 0.48, blue: 0.57))
+                    .foregroundStyle(YoshShellPalette.secondaryInk)
                     .multilineTextAlignment(.trailing)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let symbol {
                 Image(systemName: symbol)
                     .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(Color(red: 0.42, green: 0.48, blue: 0.57))
+                    .foregroundStyle(YoshShellPalette.secondaryInk)
                     .accessibilityHidden(true)
             }
             if showsChevron {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .regular))
-                    .foregroundStyle(Color(red: 0.42, green: 0.48, blue: 0.57))
+                    .foregroundStyle(YoshShellPalette.secondaryInk)
                     .accessibilityHidden(true)
             }
         }

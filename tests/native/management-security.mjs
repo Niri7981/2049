@@ -1,20 +1,29 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const nodeExecutable = join(root, `build.noindex/node-runtime/node-v24.21.0-darwin-${process.arch}/bin/node`);
 const temporary = mkdtempSync(join(tmpdir(), 'yosh-management-security-'));
 const secret = randomBytes(32).toString('base64url');
 const hash = body => createHash('sha256').update(body).digest('hex');
 const mac = message => createHmac('sha256', secret).update(message).digest();
 const executable = join(temporary, 'management-security');
 const trackedBackendPIDs = new Set();
-const environment = { ...process.env, APP2049_MANAGEMENT_TOKEN: secret, APP2049_DATA_DIR: temporary,
+const bundle = join(temporary, 'Yosh.app');
+const packaged = join(bundle, 'Contents/Resources/Runtime');
+mkdirSync(join(packaged, 'backend'), { recursive: true });
+mkdirSync(join(bundle, 'Contents/MacOS'), { recursive: true });
+cpSync(join(root, '.next/standalone'), join(packaged, 'backend'), { recursive: true });
+copyFileSync(nodeExecutable, join(bundle, 'Contents/MacOS/YoshBackendNode'));
+chmodSync(join(bundle, 'Contents/MacOS/YoshBackendNode'), 0o755);
+writeFileSync(join(packaged, 'mcp.cjs'), '// unused fixture bridge');
+const environment = { ...process.env, YOSH_TEST_BUNDLE_URL: bundle, APP2049_MANAGEMENT_TOKEN: secret, APP2049_DATA_DIR: temporary,
   APP2049_REPOSITORY_ROOT: root, APP2049_ENABLE_DEVNET_PURCHASES: '0' };
 
 function child(command, args, env = environment) {
@@ -164,6 +173,7 @@ try {
   const sources = ['BackendChildProcess', 'BackendLaunchConfiguration', 'ManagementTransport', 'NativeServiceRuntime']
     .map(name => `apps/macos/Yosh/YoshApp/Services/${name}.swift`);
   await child('swiftc', ['-swift-version', '6', '-parse-as-library', ...sources,
+    ...['AppOverview', 'AuthoritySurface', 'ExecutionEnvironment', 'RegisteredAPI', 'PurchasePresentation'].map(name => `apps/macos/Yosh/YoshApp/Models/${name}.swift`),
     'tests/native/ManagementTransportSecurity.swift', '-o', executable]).done;
   for (const mode of ['credential-cache', 'credential-denied', 'credential-invalid',
     'normal', 'fake', 'tamper', 'status', 'nonce', 'stall', 'drip', 'oversized', 'content-length']) await fixture(mode);
@@ -190,6 +200,25 @@ try {
   assert.ok(newPID > 0 && newPID !== oldPID, 'relaunch must replace the surviving backend');
   assert.throws(() => process.kill(oldPID, 0), { code: 'ESRCH' });
   process.stdout.write(`Real backend replacement: ${oldPID} -> ${newPID}\n${restarted}`);
+
+  const fixtureBundle = join(temporary, 'Supervisor.app');
+  const fixtureRuntime = join(fixtureBundle, 'Contents/Resources/Runtime');
+  mkdirSync(join(fixtureRuntime, 'backend/.next'), { recursive: true });
+  mkdirSync(join(fixtureBundle, 'Contents/MacOS'), { recursive: true });
+  copyFileSync(nodeExecutable, join(fixtureBundle, 'Contents/MacOS/YoshBackendNode'));
+  chmodSync(join(fixtureBundle, 'Contents/MacOS/YoshBackendNode'), 0o755);
+  copyFileSync(join(root, 'tests/native/fixtures/backend.mjs'), join(fixtureRuntime, 'backend/server.js'));
+  writeFileSync(join(fixtureRuntime, 'backend/.next/BUILD_ID'), 'fixture');
+  writeFileSync(join(fixtureRuntime, 'backend/package.json'), '{"type":"module"}');
+  writeFileSync(join(fixtureRuntime, 'mcp.cjs'), '// unused fixture bridge');
+  for (const mode of ['supervisor-delay', 'supervisor-core-delay', 'supervisor-restart', 'supervisor-config', 'supervisor-loop']) {
+    writeFileSync(join(temporary, 'startup-fixture.json'), JSON.stringify({ mode }), { mode: 0o600 });
+    const output = await child(executable, [mode], { ...env, YOSH_TEST_BUNDLE_URL: fixtureBundle }).done;
+    process.stdout.write(output);
+  }
+  const logs = readFileSync(join(temporary, 'logs/backend-lifecycle.jsonl'), 'utf8');
+  assert.ok(!logs.includes(secret) && !logs.includes('fixture-secret-that-must-never-be-persisted'));
+  assert.ok(logs.includes('MISSING_RUNTIME_MODULE') && logs.includes('restartScheduled') && logs.includes('RESTART_LIMIT'));
   const lockTest = join(temporary, 'instance-lock');
   await child('swiftc', ['-swift-version', '6', '-parse-as-library', 'apps/macos/Yosh/YoshApp/App/AppInstanceLock.swift',
     'apps/macos/Yosh/tests/AppInstanceLockTest.swift', '-o', lockTest]).done;

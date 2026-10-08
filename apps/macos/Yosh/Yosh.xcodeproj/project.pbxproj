@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B84900000000000000000055 /* PostRequestApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000054 /* PostRequestApprovalView.swift */; };
 		A000000000000000000000F5 /* AuthoritySurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000000F4 /* AuthoritySurface.swift */; };
 		A000000000000000000000F3 /* ExecutionDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000000F2 /* ExecutionDetail.swift */; };
 		A000000000000000000000F1 /* ExecutionEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000000F0 /* ExecutionEnvironment.swift */; };
@@ -82,9 +83,12 @@
 		A00000000000000000000107 /* YoshLockEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000106 /* YoshLockEntry.swift */; };
 		A00000000000000000000109 /* YoshAppLockSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000108 /* YoshAppLockSettings.swift */; };
 		A0000000000000000000010B /* YoshPINChangeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000010A /* YoshPINChangeEditor.swift */; };
+		B84900000000000000000050 /* RegisteredAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000051 /* RegisteredAPI.swift */; };
+		B84900000000000000000052 /* RegisteredAPIsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84900000000000000000053 /* RegisteredAPIsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B84900000000000000000054 /* PostRequestApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostRequestApprovalView.swift; sourceTree = "<group>"; };
 		A000000000000000000000F4 /* AuthoritySurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthoritySurface.swift; sourceTree = "<group>"; };
 		A000000000000000000000F2 /* ExecutionDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionDetail.swift; sourceTree = "<group>"; };
 		A000000000000000000000F0 /* ExecutionEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionEnvironment.swift; sourceTree = "<group>"; };
@@ -161,6 +165,8 @@
 		A00000000000000000000106 /* YoshLockEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshLockEntry.swift; sourceTree = "<group>"; };
 		A00000000000000000000108 /* YoshAppLockSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshAppLockSettings.swift; sourceTree = "<group>"; };
 		A0000000000000000000010A /* YoshPINChangeEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoshPINChangeEditor.swift; sourceTree = "<group>"; };
+		B84900000000000000000051 /* RegisteredAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegisteredAPI.swift; sourceTree = "<group>"; };
+		B84900000000000000000053 /* RegisteredAPIsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegisteredAPIsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -230,6 +236,7 @@
 				A00000000000000000000057 /* CardMemberSession.swift */,
 				A0000000000000000000005B /* CardMemberSelection.swift */,
 				A0000000000000000000005D /* CardSettingsPresentation.swift */,
+				B84900000000000000000051 /* RegisteredAPI.swift */,
 				A00000000000000000000063 /* ConnectionPresentation.swift */,
 				B84900000000000000000041 /* ConnectionMotionFact.swift */,
 				A00000000000000000000065 /* ActivityLedgerPresentation.swift */,
@@ -303,6 +310,8 @@
 				B84900000000000000000025 /* YoshDetailPage.swift */,
 				B84900000000000000000011 /* YoshTabMotion.swift */,
 				A0000000000000000000005F /* CardSettingsView.swift */,
+				B84900000000000000000053 /* RegisteredAPIsView.swift */,
+				B84900000000000000000054 /* PostRequestApprovalView.swift */,
 				A00000000000000000000071 /* CardSettingsBody.swift */,
 				A00000000000000000000073 /* SettingsSection.swift */,
 				A00000000000000000000075 /* SettingsRow.swift */,
@@ -388,6 +397,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				A0000000000000000000000B /* YoshApp.swift in Sources */,
+				B84900000000000000000052 /* RegisteredAPIsView.swift in Sources */,
+				B84900000000000000000055 /* PostRequestApprovalView.swift in Sources */,
+				B84900000000000000000050 /* RegisteredAPI.swift in Sources */,
 				A0000000000000000000001A /* CardWindow.swift in Sources */,
 				A0000000000000000000001B /* AgentIdentity.swift in Sources */,
 				A0000000000000000000001C /* AgentCardFront.swift in Sources */,

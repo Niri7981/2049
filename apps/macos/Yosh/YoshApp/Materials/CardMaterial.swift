@@ -1,31 +1,20 @@
 import SwiftUI
 
-struct CardMaterial: View {
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
+enum YoshShellPalette {
+    static let shape = RoundedRectangle(cornerRadius: 30, style: .continuous)
+    static let surface = Color(red: 0.961, green: 0.973, blue: 0.980)
+    static let secondaryInk = Color(red: 0.37, green: 0.45, blue: 0.54)
+    static let activeInk = Color(red: 0.30, green: 0.44, blue: 0.65)
+    static let boundary = Color(red: 0.53, green: 0.63, blue: 0.73).opacity(0.22)
+}
 
-    private let shape = RoundedRectangle(cornerRadius: 30, style: .continuous)
+struct CardMaterial: View {
 
     var body: some View {
-        shape
-            .fill(.regularMaterial)
+        YoshShellPalette.shape
+            .fill(YoshShellPalette.surface)
             .overlay {
-                shape.fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.985, green: 0.982, blue: 0.978).opacity(reduceTransparency ? 1 : 0.96),
-                            Color(red: 0.963, green: 0.962, blue: 0.964).opacity(reduceTransparency ? 1 : 0.94)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-            }
-            .overlay {
-                shape.strokeBorder(.white.opacity(0.8), lineWidth: 1)
-            }
-            .overlay {
-                shape.strokeBorder(.black.opacity(contrast == .increased ? 0.3 : 0.16), lineWidth: 1)
+                YoshShellPalette.shape.strokeBorder(YoshShellPalette.boundary, lineWidth: 0.75)
             }
     }
 }

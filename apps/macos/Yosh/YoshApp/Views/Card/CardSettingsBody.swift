@@ -10,6 +10,7 @@ struct CardSettingsBody: View {
     let onOpenRepository: () -> Void
     let onReload: () -> Void
     var appLock: YoshAppLock? = nil
+    var onOpenResources: () -> Void = {}
 
     private var unavailableValue: String { isLoading ? "Checking…" : "Unavailable" }
     private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
@@ -20,6 +21,27 @@ struct CardSettingsBody: View {
                 .foregroundStyle(Color(red: 0.07, green: 0.10, blue: 0.15))
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 28) {
+                    SettingsSection(title: "WALLETS", symbol: "wallet.bifold") {
+                        if let information {
+                            ForEach(information.wallets) { wallet in
+                                existingWalletRow(wallet)
+                                if wallet.id != information.wallets.last?.id { separator }
+                            }
+                            if information.wallets.isEmpty { walletRow }
+                        } else {
+                            SettingsRow(title: "Mainnet", value: unavailableValue)
+                            separator
+                            SettingsRow(title: "Devnet · Test", value: unavailableValue)
+                        }
+                        Text("Existing wallets on this Mac. Viewing does not create a wallet.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    SettingsSection(title: "APIS", symbol: "network") {
+                        SettingsRow(title: "Registered APIs", showsChevron: true, action: onOpenResources)
+                            .accessibilityIdentifier("settings.resources")
+                    }
                     SettingsSection(title: "GENERAL", symbol: "gearshape") {
                         SettingsRow(title: "Language", value: "English")
                             .help("English is the only language currently implemented.")
@@ -40,9 +62,7 @@ struct CardSettingsBody: View {
                             YoshAppLockSettings(appLock: appLock)
                             separator
                         }
-                        walletRow
-                        separator
-                        SettingsRow(title: "Private key", value: "Stored in macOS Keychain")
+                        SettingsRow(title: "Key storage", value: "macOS Keychain")
                         separator
                         SettingsRow(title: "Local management", value: information == nil ? unavailableValue : "Protected")
                     }
@@ -68,7 +88,7 @@ struct CardSettingsBody: View {
                         Button(error == nil ? "Refresh status" : "Retry", action: onReload)
                             .buttonStyle(.plain)
                             .font(.system(size: 11))
-                            .foregroundStyle(Color(red: 0.42, green: 0.48, blue: 0.57))
+                            .foregroundStyle(YoshShellPalette.secondaryInk)
                             .disabled(isLoading)
                     }
                 }
@@ -92,7 +112,7 @@ struct CardSettingsBody: View {
             Spacer(minLength: 4)
             Text("Not available yet")
                 .font(.system(size: 11))
-                .foregroundStyle(Color(red: 0.42, green: 0.48, blue: 0.57))
+                .foregroundStyle(YoshShellPalette.secondaryInk)
             Toggle(title, isOn: .constant(false))
                 .labelsHidden()
                 .toggleStyle(.switch)
@@ -103,6 +123,19 @@ struct CardSettingsBody: View {
         .font(.system(size: 13))
         .frame(minHeight: 38)
         .help("This feature is not available in Yosh yet.")
+    }
+
+    @ViewBuilder
+    private func existingWalletRow(_ wallet: CardSettingsPresentation.ExistingWallet) -> some View {
+        if wallet.status == .available, let address = wallet.address, !address.isEmpty {
+            SettingsRow(title: wallet.label, value: wallet.display, symbol: "square.on.square",
+                actionLabel: "Copy \(wallet.label) wallet address", action: { onCopyWallet(address) })
+                .accessibilityValue(address)
+                .accessibilityIdentifier("settings.wallet.\(wallet.id).copy")
+                .help("Copy the full public wallet address")
+        } else {
+            SettingsRow(title: wallet.label, value: wallet.display)
+        }
     }
 
     @ViewBuilder

@@ -9,7 +9,7 @@ struct ActivityDetail: View {
     let onRefresh: () async -> Void
     let onSelect: (String) -> Void
 
-    private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
+    private let secondaryInk = YoshShellPalette.secondaryInk
     private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
 
     private var ledger: ActivityLedgerPresentation {

@@ -8,7 +8,7 @@ struct MembersRosterRow: View {
     let onConnect: (UUID) -> Void
 
     private let ink = Color(red: 0.07, green: 0.10, blue: 0.15)
-    private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
+    private let secondaryInk = YoshShellPalette.secondaryInk
     private let signal = Color(red: 0.24, green: 0.49, blue: 0.81)
 
     var body: some View {

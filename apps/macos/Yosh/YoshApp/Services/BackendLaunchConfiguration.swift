@@ -42,54 +42,32 @@ struct BackendLaunchConfiguration {
         return port
     }
 
-    func repositoryRoot() throws -> URL {
-        let candidates = [try configuredValue("REPOSITORY_ROOT").map { URL(fileURLWithPath: $0) },
-                          try installedPath(for: "YoshRepositoryRoot", legacy: "APP2049RepositoryRoot").map { URL(fileURLWithPath: $0) }, bundleURL]
-            .compactMap { $0 }
-        for candidate in candidates {
-            var directory = candidate.standardizedFileURL
-            for _ in 0..<8 {
-                if FileManager.default.fileExists(atPath: directory.appending(path: "package.json").path),
-                   FileManager.default.fileExists(atPath: directory.appending(path: "node_modules/next/dist/bin/next").path) {
-                    return directory
-                }
-                let parent = directory.deletingLastPathComponent()
-                if parent == directory { break }
-                directory = parent
-            }
+    func runtimeDirectory() throws -> URL {
+        let directory = bundleURL.appending(path: "Contents/Resources/Runtime", directoryHint: .isDirectory)
+        guard FileManager.default.fileExists(atPath: directory.appending(path: "backend/server.js").path),
+              FileManager.default.fileExists(atPath: directory.appending(path: "mcp.cjs").path) else {
+            throw ServiceRuntimeError.configuration
         }
-        throw ServiceRuntimeError.configuration
+        return directory
     }
 
     func nodeExecutable() throws -> URL {
-        let explicit = try configuredValue("NODE_PATH").map { [$0] } ?? []
-        let installed = try installedPath(for: "YoshNodeExecutable", legacy: "APP2049NodeExecutable").map { [$0] } ?? []
-        let pathCandidates = (environment["PATH"] ?? "").split(separator: ":").map { "\($0)/node" }
-        let candidates = explicit + installed + pathCandidates + ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
-        guard let path = candidates.first(where: { $0.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: $0) }) else {
+        _ = try runtimeDirectory()
+        let path = bundleURL.appending(path: "Contents/MacOS/YoshBackendNode").path
+        guard FileManager.default.isExecutableFile(atPath: path) else {
             throw ServiceRuntimeError.configuration
         }
         return URL(fileURLWithPath: path)
     }
 
-    // The local installer records paths only; Finder does not inherit a development shell's cwd/PATH.
-    private func installedPath(for key: String, legacy: String) throws -> String? {
-        guard let bundle = Bundle(url: bundleURL) else { return nil }
-        let current = bundle.object(forInfoDictionaryKey: key)
-        let previous = bundle.object(forInfoDictionaryKey: legacy)
-        if let current, let previous {
-            guard let current = current as? String, let previous = previous as? String,
-                  current == previous else { throw ServiceRuntimeError.configuration }
-        }
-        guard let raw = current ?? previous else { return nil }
-        guard let path = raw as? String, path.hasPrefix("/"), !path.utf8.contains(0) else {
-            throw ServiceRuntimeError.configuration
-        }
-        return path
-    }
-
     func validToken(_ token: String) -> Bool {
         token.utf8.count >= 32 && !token.contains("\r") && !token.contains("\n")
+    }
+
+    private func safeFacilitatorSetting(_ raw: String) -> Bool {
+        // The backend classifies malformed URLs in payment readiness while
+        // remaining available. The native boundary only limits child-env data.
+        raw.utf8.count <= 2048 && !raw.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
     }
 
     func managementToken() throws -> String {
@@ -99,8 +77,11 @@ struct BackendLaunchConfiguration {
 
     func dataDirectory() throws -> URL {
         // Retain one ledger/wallet/config store; branding must never create a new store.
-        let path = try configuredValue("DATA_DIR") ?? FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Application Support/2049").path
+        let support = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support")
+        let legacy = support.appending(path: "2049")
+        let selected = FileManager.default.fileExists(atPath: legacy.appending(path: "app-ledger.sqlite").path)
+            ? legacy : support.appending(path: "Yosh")
+        let path = try configuredValue("DATA_DIR") ?? selected.path
         guard path.hasPrefix("/"), !path.utf8.contains(0) else { throw ServiceRuntimeError.configuration }
         let standardized = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
         guard let resolved = Darwin.realpath(standardized.path, nil) else { return standardized }
@@ -109,7 +90,9 @@ struct BackendLaunchConfiguration {
     }
 
     func childEnvironment(token: String) throws -> [String: String] {
-        var childEnvironment = try normalizedEnvironment()
+        var childEnvironment: [String: String] = ["HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "NODE_ENV": "production",
+            "HOSTNAME": "127.0.0.1", "PORT": String(try servicePort())]
         guard validToken(token) else { throw ServiceRuntimeError.configuration }
         // Both spellings share the same Keychain identity for old/new backend consumers.
         childEnvironment["YOSH_MANAGEMENT_TOKEN"] = token
@@ -117,6 +100,25 @@ struct BackendLaunchConfiguration {
         let directory = try dataDirectory().path
         childEnvironment["YOSH_DATA_DIR"] = directory
         childEnvironment["APP2049_DATA_DIR"] = directory
+        childEnvironment["YOSH_PACKAGED_RUNTIME_DIR"] = try runtimeDirectory().path
+        let configuration = URL(fileURLWithPath: directory).appending(path: "product-configuration.json")
+        let exists = FileManager.default.fileExists(atPath: configuration.path)
+            || (try? FileManager.default.destinationOfSymbolicLink(atPath: configuration.path)) != nil
+        if exists {
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: configuration.path) else {
+                throw ServiceRuntimeError.configuration
+            }
+            guard (attributes[.type] as? FileAttributeType) == .typeRegular,
+                  (((attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o077) == 0,
+                  (attributes[.ownerAccountID] as? NSNumber)?.intValue == Int(getuid()),
+                  let settings = try JSONSerialization.jsonObject(with: Data(contentsOf: configuration)) as? [String: String],
+                  Set(settings.keys).isSubset(of: ["YOSH_MAINNET_RESOURCES", "YOSH_ENABLE_MAINNET_EXECUTION", "YOSH_MAINNET_WALLET_PUBLIC_KEY", "SOLANA_MAINNET_RPC_URL", "X402_FACILITATOR_URL"]),
+                  settings["YOSH_ENABLE_MAINNET_EXECUTION"].map({ $0 == "0" || $0 == "1" }) ?? true,
+                  settings["X402_FACILITATOR_URL"].map(safeFacilitatorSetting) ?? true else {
+                throw ServiceRuntimeError.configuration
+            }
+            childEnvironment.merge(settings) { _, product in product }
+        }
         childEnvironment["NODE_USE_ENV_PROXY"] = "1"
         addSystemProxyIfNeeded(to: &childEnvironment)
         childEnvironment["NO_PROXY"] = [environment["NO_PROXY"] ?? environment["no_proxy"], "localhost", "127.0.0.1", "::1"]

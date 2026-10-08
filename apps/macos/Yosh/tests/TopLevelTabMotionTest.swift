@@ -265,18 +265,18 @@ struct TopLevelTabMotionTest {
     }
     private static func indicatorCenter(in bitmap: NSBitmapImageRep) throws -> CGFloat {
         let scale = CGFloat(bitmap.pixelsWide) / 420
-        let y = Int(335 * scale)
+        let y = Int(355 * scale)
         var start: Int?, longest: Range<Int> = 0..<0
         for x in Int(30 * scale)..<Int(390 * scale) {
             let color = bitmap.colorAt(x: x, y: y)!.usingColorSpace(.deviceRGB)!
-            let bright = min(color.redComponent, color.greenComponent, color.blueComponent) > 0.9
-            if bright && start == nil { start = x }
-            if !bright, let beginning = start {
+            let selectedTint = color.blueComponent - color.redComponent > 0.012
+            if selectedTint && start == nil { start = x }
+            if !selectedTint, let beginning = start {
                 if x - beginning > longest.count { longest = beginning..<x }
                 start = nil
             }
         }
-        guard longest.count > 10 else { throw Failure("Missing white selection surface") }
+        guard longest.count > Int(20 * scale) else { throw Failure("Missing travelling selection tint") }
         return CGFloat(longest.lowerBound + longest.upperBound) / (2 * scale)
     }
     private static func require(_ condition: Bool, _ message: String) throws {

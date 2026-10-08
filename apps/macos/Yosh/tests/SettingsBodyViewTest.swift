@@ -18,7 +18,11 @@ struct SettingsBodyViewTest {
         ]
         let overview = try JSONDecoder().decode(AppOverview.self, from: JSONSerialization.data(withJSONObject: payload))
         let directory = URL(fileURLWithPath: "/tmp/yosh-settings-fixture", isDirectory: true)
-        let information = CardSettingsPresentation(overview, dataDirectory: directory)
+        let mainnetAddress = "MainnetFixturePublicAddress1234567890"
+        let information = CardSettingsPresentation(wallets: [
+            .init(id: "mainnet", label: "Mainnet", address: mainnetAddress, status: .available),
+            .init(id: "devnet", label: "Devnet · Test", address: overview.wallet.address, status: .available),
+        ], dataDirectory: directory)
         var copied: [String] = [], opened: [URL] = [], repositories = 0, reloads = 0
         let body = CardSettingsBody(information: information, appVersion: "Fixture version", isLoading: false, error: nil,
             onCopyWallet: { copied.append($0) }, onOpenDataFolder: { opened.append($0) },
@@ -38,32 +42,32 @@ struct SettingsBodyViewTest {
         precondition(document.bounds.width <= scroll.contentView.bounds.width + 1)
         if CommandLine.arguments.count == 2 { try render(host, to: CommandLine.arguments[1] + "-top.png") }
 
-        // Read-only Language/Appearance rows and unsupported native switches have no callbacks.
-        for point in [NSPoint(x: 330, y: 347), NSPoint(x: 350, y: 309), NSPoint(x: 350, y: 270),
-                      NSPoint(x: 320, y: 175), NSPoint(x: 320, y: 137)] { click(window, at: point) }
-        precondition(copied.isEmpty && opened.isEmpty && repositories == 0 && reloads == 0)
-        scrollTo(scroll, y: 210)
-        // Keep the click within the wallet row below the shared header.
-        click(window, at: NSPoint(x: 340, y: 226))
-        precondition(copied == [address], "Copy must receive the full backend public address, not the shortened label")
+        click(window, at: NSPoint(x: 340, y: 324))
+        click(window, at: NSPoint(x: 340, y: 285))
+        precondition(copied == [mainnetAddress, address], "Each wallet must copy its own full backend public address")
+        precondition(opened.isEmpty && repositories == 0 && reloads == 0)
 
         scrollTo(scroll, y: document.bounds.height - scroll.contentView.bounds.height)
         if CommandLine.arguments.count == 2 { try render(host, to: CommandLine.arguments[1] + "-bottom.png") }
         click(window, at: NSPoint(x: 340, y: 218))
         click(window, at: NSPoint(x: 340, y: 84))
-        precondition(opened == [directory] && repositories == 1 && copied == [address] && reloads == 0,
+        precondition(opened == [directory] && repositories == 1 && copied == [mainnetAddress, address] && reloads == 0,
             "Settings actions must stay independent and use the resolved directory")
         if CommandLine.arguments.count == 2 { try render(host, to: CommandLine.arguments[1] + "-bottom.png") }
         window.close()
 
-        let unavailable = NSHostingView(rootView: CardSettingsBody(information: nil, appVersion: "Unavailable",
+        let emptyWallets = CardSettingsPresentation(wallets: [
+            .init(id: "mainnet", label: "Mainnet", address: nil, status: .missing),
+            .init(id: "devnet", label: "Devnet · Test", address: nil, status: .unavailable),
+        ])
+        let unavailable = NSHostingView(rootView: CardSettingsBody(information: emptyWallets, appVersion: "Unavailable",
             isLoading: false, error: "Fixture unavailable", onCopyWallet: { copied.append($0) },
             onOpenDataFolder: { opened.append($0) }, onOpenRepository: { repositories += 1 }, onReload: { reloads += 1 })
             .frame(width: 420, height: 526))
         let failedWindow = fixtureWindow(unavailable)
-        if let scroll = scrollView(in: unavailable) { scrollTo(scroll, y: 210) }
-        click(failedWindow, at: NSPoint(x: 340, y: 226))
-        precondition(copied == [address] && opened == [directory] && repositories == 1,
+        click(failedWindow, at: NSPoint(x: 340, y: 324))
+        click(failedWindow, at: NSPoint(x: 340, y: 285))
+        precondition(copied == [mainnetAddress, address] && opened == [directory] && repositories == 1,
             "Unavailable wallet/storage must not expose active actions")
         failedWindow.close()
         print("Settings native body: frozen window geometry, vertical scrolling, full-address copy, resolved-folder action, independent GitHub, and unavailable states passed")

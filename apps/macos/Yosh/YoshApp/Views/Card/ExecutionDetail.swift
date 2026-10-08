@@ -7,9 +7,12 @@ struct ExecutionDetail: View {
     let messageFailed: Bool
     let onBack: () -> Void
     let onSelect: (AppOverview.Service.PurchaseMode) async -> Void
+    let onProductionExecution: (Bool) async -> Void
+
+    @State private var showingEnableConfirmation = false
 
     private let ink = Color(red: 0.07, green: 0.10, blue: 0.15)
-    private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
+    private let secondaryInk = YoshShellPalette.secondaryInk
     private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
 
     var body: some View {
@@ -76,6 +79,30 @@ struct ExecutionDetail: View {
                     .accessibilityHint(description(mode))
                 }
                 hairline
+                if let environment, environment.mode == .liveMainnet {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Mainnet execution")
+                                .font(.system(size: 15, weight: .medium))
+                            Text("Allow eligible Agents to make real payments within your Daily Authority and Spend Grants.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(secondaryInk)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                        Toggle("Mainnet execution", isOn: Binding(
+                            get: { environment.productionExecutionEnabled },
+                            set: { enabled in
+                                if enabled { showingEnableConfirmation = true }
+                                else { Task { await onProductionExecution(false) } }
+                            }
+                        ))
+                        .labelsHidden()
+                        .disabled(isSaving)
+                    }
+                    .padding(.vertical, 17)
+                    hairline
+                }
                 if let environment {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("\(environment.mode.title) · \(environment.network)")
@@ -103,6 +130,13 @@ struct ExecutionDetail: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .foregroundStyle(ink)
+        .confirmationDialog("Enable real Mainnet payments?", isPresented: $showingEnableConfirmation,
+            titleVisibility: .visible) {
+            Button("Enable Mainnet execution") { Task { await onProductionExecution(true) } }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Agents still need an active connection, Daily Authority, a registered API and a matching Spend Grant. Each purchase is checked before signing.")
+        }
     }
 
     private var hairline: some View {

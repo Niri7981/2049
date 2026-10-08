@@ -7,11 +7,23 @@ struct SpendGrantDetail: View {
     let writeFailed: Bool
     let onBack: () -> Void
     let onConnection: () -> Void
-    let onCreate: (String, String, Int64, String?) async -> Void
-    let onRevoke: () async -> Void
+    let onCreate: (String, String, Int64, String?, ResourceRequestSample?, String?) async -> Void
+    let onRevoke: (String?) async -> Void
+    let onPreparePost: (String, ResourceRequestSample?) async throws -> PostRequestReview
 
+    @State private var preparingPost = false
+    @State private var postReview: PostRequestReview?
+    @State private var pendingPostGrant: PendingPostGrant?
+    private struct PendingPostGrant {
+        let total: String, single: String
+        let expiresAt: Int64
+        let resourceID: String
+        let sample: ResourceRequestSample?
+    }
     @State private var draft: SpendGrantDraft
     @State private var selectedResourceID = ""
+    @State private var sampleQuery = ""
+    @State private var sampleBody = ""
     @State private var inputError: String?
     @State private var showingRevokeConfirmation = false
     @FocusState private var focusedAmount: AmountField?
@@ -19,12 +31,13 @@ struct SpendGrantDetail: View {
 
     private enum AmountField { case total, perTransaction }
     private let ink = Color(red: 0.07, green: 0.10, blue: 0.15)
-    private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
+    private let secondaryInk = YoshShellPalette.secondaryInk
     private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
 
     init(overview: AppOverview, isSaving: Bool, writeMessage: String?, writeFailed: Bool,
         onBack: @escaping () -> Void, onConnection: @escaping () -> Void,
-        onCreate: @escaping (String, String, Int64, String?) async -> Void, onRevoke: @escaping () async -> Void) {
+        onCreate: @escaping (String, String, Int64, String?, ResourceRequestSample?, String?) async -> Void, onRevoke: @escaping (String?) async -> Void,
+        onPreparePost: @escaping (String, ResourceRequestSample?) async throws -> PostRequestReview = { _, _ in throw URLError(.badURL) }) {
         self.overview = overview
         self.isSaving = isSaving
         self.writeMessage = writeMessage
@@ -33,6 +46,7 @@ struct SpendGrantDetail: View {
         self.onConnection = onConnection
         self.onCreate = onCreate
         self.onRevoke = onRevoke
+        self.onPreparePost = onPreparePost
         _draft = State(initialValue: SpendGrantDraft(grant: overview.scopedGrant))
     }
 
@@ -60,13 +74,23 @@ struct SpendGrantDetail: View {
             .padding(.bottom, 20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .disabled(preparingPost)
+        .sheet(item: $postReview) { review in
+            PostRequestApprovalView(review: review,
+                grantSummary: pendingPostGrant.map { "Resource: \($0.resourceID)\nTotal: \(SpendGrantDraft.decimal(Int64($0.total) ?? 0, decimals: 6)) USDC · Per transaction: \(SpendGrantDraft.decimal(Int64($0.single) ?? 0, decimals: 6)) USDC" },
+                onApprove: {
+                    guard let pending = pendingPostGrant else { return }
+                    pendingPostGrant = nil; postReview = nil
+                    Task { await onCreate(pending.total, pending.single, pending.expiresAt, pending.resourceID, pending.sample, review.requestHash) }
+                }, onCancel: { pendingPostGrant = nil; postReview = nil })
+        }
         .foregroundStyle(ink)
         .onChange(of: overview.scopedGrant?.id) { _, _ in
             draft = SpendGrantDraft(grant: overview.scopedGrant)
             inputError = nil
         }
         .confirmationDialog("Revoke this Spend Grant?", isPresented: $showingRevokeConfirmation) {
-            Button("Revoke Spend Grant", role: .destructive) { Task { await onRevoke() } }
+            Button("Revoke Spend Grant", role: .destructive) { Task { await onRevoke(isMainnet ? selectedResourceID : nil) } }
         } message: {
             Text("New purchases will lose this Spend Grant. Reconnect the Agent afterward.")
         }
@@ -94,17 +118,18 @@ struct SpendGrantDetail: View {
 
     private var currentGrant: some View {
         VStack(alignment: .leading, spacing: 0) {
-            eyebrow("CURRENT SPEND GRANT")
-            if let grant = overview.scopedGrant {
+            eyebrow("SPEND GRANTS")
+            if let grant = displayedGrant {
+                let scopedGrant = overview.selectedAuthority?.grant?.id == grant.id ? overview.selectedAuthority?.grant : nil
                 if isMainnet, let resourceID = grant.resourceId {
                     Text(resourceID).font(.system(size: 11)).padding(.top, 6)
-                    if let api = overview.selectedAuthority?.grant?.api {
+                    if let api = scopedGrant?.api {
                         Text(api).font(.system(size: 10)).foregroundStyle(secondaryInk)
                             .textSelection(.enabled).fixedSize(horizontal: false, vertical: true).padding(.top, 4)
                     }
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Text(overview.selectedAuthority?.grant?.totalDisplay ?? SpendGrantDraft.decimal(grant.totalLimit.value, decimals: grant.assetDecimals))
+                    Text(scopedGrant?.totalDisplay ?? SpendGrantDraft.decimal(grant.totalLimit.value, decimals: grant.assetDecimals))
                         .font(.system(size: 27, weight: .regular, design: .serif))
                         .monospacedDigit()
                     Text(currency ?? "Unknown asset")
@@ -115,7 +140,7 @@ struct SpendGrantDetail: View {
                 HStack(alignment: .top, spacing: 16) {
                     summary("Per transaction", value: SpendGrantDraft.decimal(grant.singleLimit.value, decimals: grant.assetDecimals))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    summary("Remaining", value: overview.selectedAuthority?.grant?.remainingDisplay ?? (grant.status == .active
+                    summary("Remaining", value: scopedGrant?.remainingDisplay ?? (grant.status == .active
                         ? SpendGrantDraft.decimal(grant.remaining.value, decimals: grant.assetDecimals) : "—"))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityHint(grant.status == .active ? "Within this Spend Grant" : "Unavailable for an inactive grant")
@@ -126,14 +151,22 @@ struct SpendGrantDetail: View {
                         .accessibilityValue(expiry.formatted(date: .complete, time: .shortened))
                 }
                 .padding(.top, 13)
-                if let scoped = overview.selectedAuthority?.grant {
+                if let scoped = scopedGrant {
                     Text("Committed \(scoped.committedDisplay) \(scoped.assetLabel)")
                         .font(.system(size: 10)).foregroundStyle(secondaryInk).padding(.top, 9)
                 }
             } else {
-                Text("Spend Grant required")
+                Text("Choose a resource to inspect its Spend Grant")
                     .font(.system(size: 14)).foregroundStyle(secondaryInk)
                     .padding(.top, 12)
+            }
+            ForEach((overview.grants ?? []).filter { $0.id != displayedGrant?.id && $0.status == .active }, id: \.id) { other in
+                HStack {
+                    Text(other.resourceId ?? "Resource").lineLimit(1)
+                    Spacer()
+                    Text(SpendGrantDraft.decimal(other.remaining.value, decimals: other.assetDecimals)).monospacedDigit()
+                }
+                .font(.system(size: 11)).foregroundStyle(secondaryInk).padding(.top, 9)
             }
         }
     }
@@ -148,16 +181,30 @@ struct SpendGrantDetail: View {
                 Picker("Registered API", selection: $selectedResourceID) {
                     Text("Choose an API").tag("")
                     ForEach(overview.service.registeredResources ?? []) { resource in
-                        Text(resource.resourceId).tag(resource.resourceId)
+                        Text(resource.name ?? resource.resourceId).tag(resource.resourceId)
                     }
                 }
                 .disabled(isSaving)
                 .padding(.top, 12)
                 if let resource = overview.service.registeredResources?.first(where: { $0.resourceId == selectedResourceID }) {
-                    Text("\(resource.url)\nRecipient: \(resource.recipient)")
+                    Text("\(resource.method ?? "GET") \(resource.url)\nSolana Mainnet · USDC\nMaximum: \(resource.maximumPriceDisplay ?? "Unavailable")\n\(resource.recipient.map { "Recipient: \($0)" } ?? "Recipient verified when you create the Grant")")
                         .font(.system(size: 10)).foregroundStyle(secondaryInk)
                         .textSelection(.enabled)
                         .padding(.top, 6)
+                }
+                if isMainnet, let resource = overview.service.registeredResources?.first(where: { $0.resourceId == selectedResourceID }) {
+                    if let policy = resource.requestInputs?.description {
+                        Text("Input policy: \(policy)").font(.caption).textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let keys = resource.requestInputs?.query?.names, !keys.isEmpty {
+                        Text("Sample query JSON · \(keys.joined(separator: ", "))")
+                        TextField("{\"\(keys[0])\":\"sample\"}", text: $sampleQuery).textFieldStyle(.roundedBorder)
+                    }
+                    if let keys = resource.requestInputs?.jsonBody?.names, !keys.isEmpty {
+                        Text("Sample JSON body · \(keys.joined(separator: ", "))")
+                        TextField("{\"\(keys[0])\":\"sample\"}", text: $sampleBody).textFieldStyle(.roundedBorder)
+                    }
                 }
             }
             HStack(alignment: .top, spacing: 24) {
@@ -223,7 +270,14 @@ struct SpendGrantDetail: View {
         }
     }
 
-    private var isReplacing: Bool { overview.scopedGrant?.status == .active }
+    private var isReplacing: Bool {
+        if !isMainnet { return overview.scopedGrant?.status == .active }
+        return (overview.grants ?? []).contains { $0.resourceId == selectedResourceID && $0.status == .active }
+    }
+    private var displayedGrant: AppOverview.Grant? {
+        if isMainnet && !selectedResourceID.isEmpty { return overview.grants?.first { $0.resourceId == selectedResourceID } }
+        return overview.scopedGrant
+    }
     private var isMainnet: Bool { overview.service.purchaseMode == .liveMainnet }
     private var currency: String? { DailyAuthorityPresentation(overview: overview).currency }
     private var status: String {
@@ -291,6 +345,20 @@ struct SpendGrantDetail: View {
         }
         inputError = nil
         let expiresAt = Int64(draft.expiration.timeIntervalSince1970 * 1_000)
-        Task { await onCreate(total, single, expiresAt, isMainnet ? selectedResourceID : nil) }
+        let sample: ResourceRequestSample?
+        do { sample = isMainnet ? try ResourceRequestSample.parse(queryText: sampleQuery, bodyText: sampleBody) : nil }
+        catch { inputError = "Enter valid JSON objects for the sample request."; return }
+        let resourceID = selectedResourceID
+        if isMainnet, overview.service.registeredResources?.first(where: { $0.resourceId == resourceID })?.method == "POST" {
+            preparingPost = true
+            Task {
+                defer { preparingPost = false }
+                do {
+                    let review = try await onPreparePost(resourceID, sample)
+                    pendingPostGrant = .init(total: total, single: single, expiresAt: expiresAt, resourceID: resourceID, sample: sample)
+                    postReview = review
+                } catch { inputError = (error as? OverviewLoadError)?.message ?? "The POST request could not be prepared safely." }
+            }
+        } else { Task { await onCreate(total, single, expiresAt, isMainnet ? resourceID : nil, sample, nil) } }
     }
 }

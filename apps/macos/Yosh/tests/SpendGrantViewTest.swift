@@ -29,7 +29,7 @@ struct SpendGrantViewTest {
         func page(_ overview: AppOverview, saving: Bool = false, id: Int = 0) -> some View {
             SpendGrantDetail(overview: overview, isSaving: saving, writeMessage: nil, writeFailed: false,
                 onBack: { backs += 1 }, onConnection: { connections += 1 },
-                onCreate: { total, single, expiresAt, _ in submissions.append((total, single, expiresAt)) }, onRevoke: {})
+                onCreate: { total, single, expiresAt, _, _, _ in submissions.append((total, single, expiresAt)) }, onRevoke: { _ in })
                 .id(id).frame(width: 420, height: 526)
                 .background(Color(red: 0.95, green: 0.97, blue: 0.985))
                 .environment(\.colorScheme, .light)
@@ -76,6 +76,7 @@ struct SpendGrantViewTest {
         if let prefix = CommandLine.arguments.dropFirst().first { try render(host, to: prefix + "-page-expanded.png") }
         try expiryFixture(reduceMotion: false)
         try expiryFixture(reduceMotion: true)
+        try postConfirmation()
         print("Spend Grant: exact submission, connection/saving guards, retained draft, narrow layout, inline wheel selection, keyboard adjustment, collapse/reopen and Reduce Motion passed")
     }
 
@@ -124,6 +125,25 @@ struct SpendGrantViewTest {
         for wheel in scrollViews(host) {
             precondition(abs(wheel.bounds.height - 90) < 1 && wheel.documentView!.bounds.width <= wheel.bounds.width + 1)
         }
+    }
+
+    @MainActor private static func postConfirmation() throws {
+        let review = try JSONDecoder().decode(PostRequestReview.self, from: Data(#"{"request":{"url":"https://unknown.example/analyze?fixed=yes","method":"POST","access":"https","headers":{"content-type":"application/json"},"body":"{\"prompt\":\"sample\"}"},"requestHash":"fixture-concrete-request","requestInputs":{"jsonBody":{"prompt":{"type":"string","required":true,"maxLength":300}}},"paymentSent":false}"#.utf8))
+        for grant in [false, true] {
+            var approvals = 0, cancellations = 0
+            let host = NSHostingView(rootView: PostRequestApprovalView(review: review,
+                grantSummary: grant ? "Resource: fixture · Total: 0.002 USDC" : nil,
+                onApprove: { approvals += 1 }, onCancel: { cancellations += 1 }))
+            let window = makeWindow(host, size: NSSize(width: 360, height: 480))
+            settle(host)
+            precondition(approvals == 0 && cancellations == 0, "Showing a review must not authorize a POST")
+            click(window, at: NSPoint(x: 52, y: 34)); settle(host)
+            precondition(cancellations == 1 && approvals == 0, "Cancel must not authorize any request")
+            click(window, at: NSPoint(x: 274, y: 34)); settle(host)
+            precondition(approvals == 1, "Only the explicit native approval button authorizes a POST")
+            window.close()
+        }
+        print("Native POST confirmation: no implicit approval, cancel and explicit discovery/Grant buttons passed")
     }
 
     private static func overview(enabled: Bool, status: String = "EXPIRED") throws -> AppOverview {

@@ -46,10 +46,11 @@ struct BackOverview: View {
 
     private enum SettingsChange {
         case execution(AppOverview.Service.PurchaseMode)
+        case productionExecution(Bool)
         case paused(Bool)
         case dailyLimit(String)
-        case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String?)
-        case revokeGrant
+        case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String?, sample: ResourceRequestSample?, postApprovalHash: String?)
+        case revokeGrant(resourceId: String?)
         case connection(Bool)
     }
 
@@ -115,10 +116,11 @@ struct BackOverview: View {
         }
         .task { if isActive { await reload() } }
         .task(id: section) {
-            guard section == .connection else { return }
+            guard section == .connection || section == .authority else { return }
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
-                await refreshConnection()
+                if section == .connection { await refreshConnection() }
+                else if isActive && !writeState.isSaving { await reload(preservingContent: true) }
             }
         }
         .onChange(of: section) { _, _ in
@@ -126,6 +128,9 @@ struct BackOverview: View {
             if isActive {
                 Task { await reload(preservingContent: true) }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .registeredAPIsChanged)) { _ in
+            Task { await reload(preservingContent: true) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
             connectionReadRevision += 1
@@ -135,6 +140,9 @@ struct BackOverview: View {
             activityRefreshing = false
             activityRefreshError = nil
             state = .failed(.serviceExited)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .nativeServiceReady)) { _ in
+            if isActive { Task { await reload(preservingContent: true) } }
         }
         .onDisappear { connectionReadRevision += 1 }
     }
@@ -151,7 +159,8 @@ struct BackOverview: View {
                         isSaving: writeState.isSaving || isRefreshing,
                         message: writeState.message, messageFailed: writeState.isFailure,
                         onBack: { selectDetail(nil) },
-                        onSelect: { mode in await write(.execution(mode)) })
+                        onSelect: { mode in await write(.execution(mode)) },
+                        onProductionExecution: { enabled in await write(.productionExecution(enabled)) })
                 case .daily:
                     AuthoritySettingsDetail(
                         overview: overview,
@@ -172,10 +181,11 @@ struct BackOverview: View {
                         writeFailed: writeState.isFailure,
                         onBack: { selectDetail(nil) },
                         onConnection: { open(.connection) },
-                        onCreate: { total, single, expiration, resourceID in
-                            await write(.createGrant(totalLimit: total, singleLimit: single, expiresAt: expiration, resourceId: resourceID))
+                        onCreate: { total, single, expiration, resourceID, sample, approvalHash in
+                            await write(.createGrant(totalLimit: total, singleLimit: single, expiresAt: expiration, resourceId: resourceID, sample: sample, postApprovalHash: approvalHash))
                         },
-                        onRevoke: { await write(.revokeGrant) }
+                        onRevoke: { resourceID in await write(.revokeGrant(resourceId: resourceID)) },
+                        onPreparePost: { resourceID, sample in try await overviewClient.prepareGrantPOST(resourceID, sample: sample) }
                     )
                 case .connection:
                     connectionPage(overview, onBack: { selectDetail(nil) })
@@ -547,17 +557,20 @@ struct BackOverview: View {
             case .execution(let mode):
                 try await overviewClient.setExecution(mode)
                 success = "Execution environment saved"
+            case .productionExecution(let enabled):
+                try await overviewClient.setProductionExecutionEnabled(enabled)
+                success = enabled ? "Mainnet execution enabled" : "Mainnet execution disabled"
             case .paused(let paused):
                 try await overviewClient.setPaused(paused)
                 success = paused ? "Payments paused" : "Payments resumed"
             case .dailyLimit(let limit):
                 try await overviewClient.setDailyLimit(limit)
                 success = "Daily limit saved"
-            case .createGrant(let total, let single, let expiration, let resourceID):
-                try await overviewClient.createMemberGrant(memberID, totalLimit: total, singleLimit: single, expiresAt: expiration, resourceId: resourceID)
+            case .createGrant(let total, let single, let expiration, let resourceID, let sample, let approvalHash):
+                try await overviewClient.createMemberGrant(memberID, totalLimit: total, singleLimit: single, expiresAt: expiration, resourceId: resourceID, sample: sample, postApprovalHash: approvalHash)
                 success = "Spend Grant saved. Reconnect the Agent."
-            case .revokeGrant:
-                try await overviewClient.revokeMemberGrant(memberID)
+            case .revokeGrant(let resourceID):
+                try await overviewClient.revokeMemberGrant(memberID, resourceId: resourceID)
                 success = "Spend Grant revoked. Reconnect the Agent."
             case .connection(let enabled):
                 try await overviewClient.setMemberConnection(memberID, enabled: enabled)

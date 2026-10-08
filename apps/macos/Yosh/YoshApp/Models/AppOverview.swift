@@ -6,6 +6,7 @@ struct AppOverview: Decodable {
     let wallet: Wallet
     let budget: Budget
     let grant: Grant?
+    var grants: [Grant]? = nil
     let connection: Connection
     let purchases: [Purchase]
     var authority: AuthoritySurface? = nil
@@ -35,6 +36,7 @@ struct AppOverview: Decodable {
         wallet = shared.wallet
         budget = shared.budget
         grant = member.grant
+        grants = member.grants
         connection = member.connection
         purchases = member.purchases
     }
@@ -52,7 +54,15 @@ struct AppOverview: Decodable {
             let resourceId: String
             let providerId: String
             let url: String
-            let recipient: String
+            var name: String? = nil
+            var method: String? = nil
+            var recipient: String? = nil
+            var recipientSource: String? = nil
+            var baseAmount: String? = nil
+            var maximumAmount: String? = nil
+            var basePriceDisplay: String? = nil
+            var maximumPriceDisplay: String? = nil
+            var requestInputs: RegisterAPIRequest.Inputs? = nil
             let network: String
             let assetId: String
             let assetDecimals: Int
@@ -206,6 +216,7 @@ struct CardMemberSnapshot: Decodable {
     let member: Member
     let connection: AppOverview.Connection
     let grant: AppOverview.Grant?
+    var grants: [AppOverview.Grant]? = nil
     let purchases: [AppOverview.Purchase]
     let budget: Budget
 

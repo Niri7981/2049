@@ -29,7 +29,7 @@ struct ConnectionBridge: View {
     @State private var motionTask: Task<Void, Never>?
 
     private let signal = Color(red: 0.24, green: 0.49, blue: 0.81)
-    private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
+    private let secondaryInk = YoshShellPalette.secondaryInk
     private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
 
     init(agentName: String, status: String, input: Input) {

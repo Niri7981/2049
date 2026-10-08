@@ -6,7 +6,7 @@ struct ActivityLedgerRow: View {
 
     @State private var isHovered = false
 
-    private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
+    private let secondaryInk = YoshShellPalette.secondaryInk
 
     private var statusInk: Color {
         switch row.tone {

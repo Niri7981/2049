@@ -78,6 +78,7 @@ try {
   const sources = [
     'Services/BackendChildProcess.swift', 'Services/BackendLaunchConfiguration.swift', 'Services/ManagementTransport.swift',
     'Services/NativeServiceRuntime.swift', 'Services/OverviewClient.swift', 'Models/AppOverview.swift',
+    'Models/AuthoritySurface.swift', 'Models/ExecutionEnvironment.swift', 'Models/RegisteredAPI.swift', 'Models/CardSettingsPresentation.swift', 'Models/PurchasePresentation.swift',
     'Models/CardMemberSession.swift', 'Models/CardMemberSelection.swift', 'Models/MembersRosterPresentation.swift',
   ].map(path => `apps/macos/Yosh/YoshApp/${path}`);
   const executable = join(directory, 'members-connection-smoke');

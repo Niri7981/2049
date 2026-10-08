@@ -3,132 +3,111 @@ import Foundation
 @main
 struct BackendLaunchConfigurationTest {
     static func main() throws {
+        func check(_ value: Bool, _ message: String = "", line: UInt = #line) { precondition(value, "line \(line): \(message)") }
+        let policy = try JSONDecoder().decode(RegisterAPIRequest.Inputs.self, from: Data(#"{"query":["legacy"],"jsonBody":{"prompt":{"type":"string","required":true,"maxLength":300}}}"#.utf8))
+        check(policy.query?.names == ["legacy"] && policy.jsonBody?.names == ["prompt"], "legacy and typed policies decode")
+        let request = ResourceDiscoveryRequest(url: "https://unknown.example/analyze", method: "POST", headers: ["content-type": "application/json"],
+            body: "{\"prompt\":\"sample\"}", requestInputs: nil, sample: nil)
+        let prepare = ServiceEndpoint.prepareResource(.init(kind: "discovery", discovery: request))
+        check(prepare.path == "/api/app/resources/prepare" && prepare.method == "POST" && prepare.isMutation, "local preview uses management authentication")
+        let hash = String(repeating: "a", count: 64)
+        var approved = request; approved.postApprovalHash = hash
+        let body = try JSONSerialization.jsonObject(with: ServiceEndpoint.discoverResource(approved).body()!) as! [String: Any]
+        check(body["postApprovalHash"] as? String == hash && body["body"] as? String == request.body, "approval preserves exact request")
+        let grant = ServiceEndpoint.createGrant(totalLimit: "2000", singleLimit: "1000", expiresAt: 2_000_000_000_000,
+            resourceId: "post", postApprovalHash: hash)
+        let grantBody = try JSONSerialization.jsonObject(with: grant.body()!) as! [String: Any]
+        check(grantBody["postApprovalHash"] as? String == hash, "grant confirmation carries independent scope approval")
+        print("Native POST preview, concrete confirmation, typed/legacy policy and Grant transport passed")
         let manager = FileManager.default
         let temporary = manager.temporaryDirectory.appending(path: "yosh-launch-\(UUID().uuidString)")
         try manager.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? manager.removeItem(at: temporary) }
-
-        func repository(_ name: String) throws -> URL {
-            let root = temporary.appending(path: name)
-            try manager.createDirectory(at: root.appending(path: "node_modules/next/dist/bin"), withIntermediateDirectories: true)
-            try Data("{}".utf8).write(to: root.appending(path: "package.json"))
-            try Data().write(to: root.appending(path: "node_modules/next/dist/bin/next"))
-            return root
-        }
-
-        let root = try repository("Repository with spaces")
-        let overrideRoot = try repository("Development override")
-        let node = temporary.appending(path: "Node runtime/node")
+        let app = temporary.appending(path: "Applications/Yosh.app")
+        let runtime = app.appending(path: "Contents/Resources/Runtime")
+        let node = app.appending(path: "Contents/MacOS/YoshBackendNode")
+        try manager.createDirectory(at: runtime.appending(path: "backend"), withIntermediateDirectories: true)
         try manager.createDirectory(at: node.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: runtime.appending(path: "backend/server.js"))
+        try Data().write(to: runtime.appending(path: "mcp.cjs"))
         try Data("#!/bin/sh\nexit 0\n".utf8).write(to: node)
         try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: node.path)
+        let installed = BackendLaunchConfiguration(environment: ["PATH": "/usr/bin:/bin",
+            "YOSH_REPOSITORY_ROOT": "/missing/developer/repository", "YOSH_NODE_PATH": "/bin/sh"], bundleURL: app)
+        check(try installed.runtimeDirectory().path == runtime.path)
+        check(try installed.nodeExecutable().path == node.path, "installed app must use only its bundled Node")
 
-        func app(_ name: String, hints: [String: String]) throws -> URL {
-            let url = temporary.appending(path: "Applications/\(name).app")
-            try manager.createDirectory(at: url.appending(path: "Contents"), withIntermediateDirectories: true)
-            var info = hints
-            info["CFBundleIdentifier"] = "com.yosh.launch-test.\(name)"
-            info["CFBundlePackageType"] = "APPL"
-            try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
-                .write(to: url.appending(path: "Contents/Info.plist"))
-            return url
-        }
-        let installedApp = try app("Yosh", hints: ["YoshRepositoryRoot": root.path, "YoshNodeExecutable": node.path])
+        let token = String(repeating: "k", count: 43)
+        let isolated = BackendLaunchConfiguration(environment: ["YOSH_DATA_DIR": temporary.path,
+            "APP2049_PORT": "4011", "PRIVATE_KEY": "must-not-inherit", "SOLANA_RPC_URL": "must-not-inherit",
+            "YOSH_ENABLE_MAINNET_EXECUTION": "1", "YOSH_MANAGEMENT_TOKEN": "ignored"], bundleURL: app)
+        let child = try isolated.childEnvironment(token: token)
+        check(child["HOSTNAME"] == "127.0.0.1" && child["PORT"] == "4011")
+        check(child["YOSH_MANAGEMENT_TOKEN"] == token && child["APP2049_MANAGEMENT_TOKEN"] == token)
+        check(URL(fileURLWithPath: child["YOSH_DATA_DIR"]!).resolvingSymlinksInPath().path == temporary.resolvingSymlinksInPath().path)
+        check(child["YOSH_PACKAGED_RUNTIME_DIR"] == runtime.path)
+        check(child["PRIVATE_KEY"] == nil && child["SOLANA_RPC_URL"] == nil)
+        check(child["YOSH_ENABLE_MAINNET_EXECUTION"] == nil, "ambient env must not enable Mainnet")
+        check(child["X402_FACILITATOR_URL"] == nil, "ambient facilitator must not enter installed runtime")
 
-        // Finder has no repository cwd or shell PATH. The installed bundle must supply both paths.
-        let installed = BackendLaunchConfiguration(environment: ["PATH": "/usr/bin:/bin"], bundleURL: installedApp)
-        guard try installed.repositoryRoot().path == root.path, try installed.nodeExecutable().path == node.path else {
-            throw Failure.failed("Installed app did not resolve its local backend and Node")
+        let configuration = temporary.appending(path: "product-configuration.json")
+        try Data(#"{"YOSH_ENABLE_MAINNET_EXECUTION":"0"}"#.utf8).write(to: configuration)
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configuration.path)
+        check(try isolated.childEnvironment(token: token)["YOSH_ENABLE_MAINNET_EXECUTION"] == "0")
+        try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: configuration.path)
+        try rejectsConfiguration { _ = try isolated.childEnvironment(token: token) }
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configuration.path)
+        try Data(#"{"YOSH_ENABLE_MAINNET_EXECUTION":"1","X402_FACILITATOR_URL":"https://facilitator.example/x402"}"#.utf8)
+            .write(to: configuration)
+        let configured = try isolated.childEnvironment(token: token)
+        check(configured["YOSH_ENABLE_MAINNET_EXECUTION"] == "1")
+        check(configured["X402_FACILITATOR_URL"] == "https://facilitator.example/x402")
+        for invalid in ["http://facilitator.example", "https://user:password@facilitator.example",
+                        "https://facilitator.example?token=value", "https://facilitator.example/#fragment",
+                        "https://", "facilitator.example", ""] {
+            let data = try JSONSerialization.data(withJSONObject: ["X402_FACILITATOR_URL": invalid])
+            try data.write(to: configuration)
+            check(try isolated.childEnvironment(token: token)["X402_FACILITATOR_URL"] == invalid,
+                  "backend must classify invalid facilitator URL without losing status API")
         }
+        for unsafe in ["https://facilitator.example\n", "https://facilitator.example\u{0}",
+                       String(repeating: "x", count: 2049)] {
+            let data = try JSONSerialization.data(withJSONObject: ["X402_FACILITATOR_URL": unsafe])
+            try data.write(to: configuration)
+            try rejectsConfiguration { _ = try isolated.childEnvironment(token: token) }
+        }
+        try Data(#"{"PRIVATE_KEY":"forbidden"}"#.utf8).write(to: configuration)
+        try rejectsConfiguration { _ = try isolated.childEnvironment(token: token) }
+        try manager.removeItem(at: configuration)
+        try manager.createSymbolicLink(at: configuration, withDestinationURL: runtime.appending(path: "mcp.cjs"))
+        try rejectsConfiguration { _ = try isolated.childEnvironment(token: token) }
+        try manager.removeItem(at: configuration)
+        try manager.createSymbolicLink(at: configuration, withDestinationURL: runtime.appending(path: "missing.json"))
+        try rejectsConfiguration { _ = try isolated.childEnvironment(token: token) }
+        try manager.removeItem(at: configuration)
 
-        let legacyApp = try app("Legacy", hints: ["APP2049RepositoryRoot": root.path, "APP2049NodeExecutable": node.path])
-        let legacy = BackendLaunchConfiguration(environment: [:], bundleURL: legacyApp)
-        guard try legacy.repositoryRoot().path == root.path, try legacy.nodeExecutable().path == node.path else {
-            throw Failure.failed("Legacy installed path hints were not preserved")
-        }
-        let sharedApp = try app("Shared", hints: ["YoshRepositoryRoot": root.path, "APP2049RepositoryRoot": root.path,
-            "YoshNodeExecutable": node.path, "APP2049NodeExecutable": node.path])
-        guard try BackendLaunchConfiguration(environment: [:], bundleURL: sharedApp).repositoryRoot().path == root.path else {
-            throw Failure.failed("Equal installed path aliases were rejected")
-        }
-        for hints in [
-            ["YoshRepositoryRoot": overrideRoot.path, "APP2049RepositoryRoot": root.path],
-            ["YoshNodeExecutable": "/bin/sh", "APP2049NodeExecutable": node.path],
-        ] {
-            let conflictingApp = try app("Conflict-\(UUID().uuidString)", hints: hints)
-            let configuration = BackendLaunchConfiguration(environment: [:], bundleURL: conflictingApp)
-            try rejectsConfiguration {
-                if hints["YoshNodeExecutable"] != nil { _ = try configuration.nodeExecutable() }
-                else { _ = try configuration.repositoryRoot() }
-            }
-        }
-
-        let development = BackendLaunchConfiguration(environment: [:], bundleURL: root.appending(path: "build/macos/Build/Products/Debug/Yosh.app"))
-        guard try development.repositoryRoot().path == root.path else {
-            throw Failure.failed("Repository build discovery regressed")
-        }
-        for prefix in ["YOSH_", "APP2049_"] {
-            let overrides = BackendLaunchConfiguration(environment: [
-                "\(prefix)REPOSITORY_ROOT": overrideRoot.path, "\(prefix)NODE_PATH": "/bin/sh",
-                "\(prefix)PORT": "4011", "\(prefix)DATA_DIR": temporary.path,
-            ], bundleURL: installedApp)
-            guard try overrides.repositoryRoot().path == overrideRoot.path,
-                  try overrides.nodeExecutable().path == "/bin/sh", try overrides.servicePort() == 4011,
-                  try overrides.dataDirectory().resolvingSymlinksInPath().path == temporary.resolvingSymlinksInPath().path else {
-                throw Failure.failed("Canonical/legacy overrides lost precedence")
-            }
-        }
-        let defaults = BackendLaunchConfiguration(environment: [:], bundleURL: installedApp)
-        let legacyDirectory = manager.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/2049")
-        guard try defaults.dataDirectory().path == legacyDirectory.resolvingSymlinksInPath().path else {
-            throw Failure.failed("Rename created a different default ledger location")
-        }
-        for suffix in ["PORT", "REPOSITORY_ROOT", "NODE_PATH", "DATA_DIR", "MANAGEMENT_TOKEN", "ENABLE_DEVNET_PURCHASES"] {
-            let conflict = BackendLaunchConfiguration(environment: ["YOSH_\(suffix)": "new", "APP2049_\(suffix)": "old"], bundleURL: installedApp)
-            try rejectsConfiguration { _ = try conflict.servicePort() }
-            try rejectsConfiguration { _ = try conflict.childEnvironment(token: String(repeating: "k", count: 43)) }
+        for suffix in ["PORT", "REPOSITORY_ROOT", "NODE_PATH", "DATA_DIR", "MANAGEMENT_TOKEN"] {
+            let conflicting = BackendLaunchConfiguration(environment: ["YOSH_\(suffix)": "new", "APP2049_\(suffix)": "old"], bundleURL: app)
+            try rejectsConfiguration { _ = try conflicting.childEnvironment(token: token) }
         }
         try rejectsConfiguration {
-            _ = try BackendLaunchConfiguration(environment: ["YOSH_DATA_DIR": "relative/data"], bundleURL: installedApp).dataDirectory()
+            _ = try BackendLaunchConfiguration(environment: ["YOSH_DATA_DIR": "relative"], bundleURL: app).dataDirectory()
         }
-        let child = try BackendLaunchConfiguration(environment: ["YOSH_MANAGEMENT_TOKEN": "ignored-ambient-value",
-            "APP2049_PORT": "4011", "YOSH_DATA_DIR": temporary.path], bundleURL: installedApp)
-            .childEnvironment(token: String(repeating: "k", count: 43))
-        guard child["YOSH_MANAGEMENT_TOKEN"] == String(repeating: "k", count: 43),
-              child["APP2049_MANAGEMENT_TOKEN"] == child["YOSH_MANAGEMENT_TOKEN"],
-              child["YOSH_DATA_DIR"] == child["APP2049_DATA_DIR"], child["YOSH_PORT"] == "4011" else {
-            throw Failure.failed("Child lost its one installation token or alias compatibility")
-        }
-
-        let current = BackendHealth(ready: true, service: "Yosh", pid: 123, dataDirectory: temporary.path)
-        let previous = BackendHealth(ready: true, service: "2049", pid: 123, dataDirectory: temporary.path)
-        guard current.matchesNewChild(pid: 123, directory: temporary.path), current.matchesTakeover(directory: temporary.path),
-              previous.matchesTakeover(directory: temporary.path), !previous.matchesNewChild(pid: 123, directory: temporary.path),
-              !current.matchesNewChild(pid: 124, directory: temporary.path),
-              !previous.matchesTakeover(directory: overrideRoot.path),
-              !BackendHealth(ready: true, service: "unrelated", pid: 123, dataDirectory: temporary.path).matchesTakeover(directory: temporary.path),
-              !BackendHealth(ready: true, service: "2049", pid: 0, dataDirectory: temporary.path).matchesTakeover(directory: temporary.path),
-              !BackendHealth(ready: false, service: "Yosh", pid: 123, dataDirectory: temporary.path).matchesTakeover(directory: temporary.path) else {
-            throw Failure.failed("Backend rename weakened health identity checks")
-        }
-
-        // Moving/removing the external repository must produce a configuration error.
-        try manager.removeItem(at: root)
-        do {
-            _ = try installed.repositoryRoot()
-            throw Failure.failed("Missing external repository was accepted")
-        } catch ServiceRuntimeError.configuration { }
-        print("Backend launch configuration passed: Yosh/legacy paths and environment, conflicts, one ledger/token, new-child and takeover identity checks")
+        let current = BackendHealth(ready: true, service: "Yosh", pid: 123, dataDirectory: temporary.path, coreReady: true)
+        let old = BackendHealth(ready: true, service: "2049", pid: 123, dataDirectory: temporary.path)
+        check(current.matchesNewChild(pid: 123, directory: temporary.path))
+        check(!current.matchesNewChild(pid: 124, directory: temporary.path))
+        check(old.matchesTakeover(directory: temporary.path) && !old.matchesNewChild(pid: 123, directory: temporary.path))
+        check(!BackendHealth(ready: true, service: "Yosh", pid: 123, dataDirectory: temporary.path, coreReady: false)
+            .matchesNewChild(pid: 123, directory: temporary.path))
+        try manager.removeItem(at: runtime.appending(path: "backend/server.js"))
+        try rejectsConfiguration { _ = try installed.runtimeDirectory() }
+        print("Packaged launch paths, isolated data, private product config, sanitized environment and authenticated health identity passed")
     }
 
-    private enum Failure: Error {
-        case failed(String)
-    }
-
+    private enum Failure: Error { case acceptedInvalidConfiguration }
     private static func rejectsConfiguration(_ operation: () throws -> Void) throws {
-        do {
-            try operation()
-            throw Failure.failed("Conflicting/invalid configuration was accepted")
-        } catch ServiceRuntimeError.configuration { }
+        do { try operation(); throw Failure.acceptedInvalidConfiguration }
+        catch ServiceRuntimeError.configuration { }
     }
 }

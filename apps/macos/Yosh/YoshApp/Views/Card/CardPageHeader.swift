@@ -18,7 +18,7 @@ struct CardPageHeader: View {
     let title: String
     let style: Style
 
-    private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
+    private let secondaryInk = YoshShellPalette.secondaryInk
 
     private var isAmount: Bool {
         if case .hero(_, let isAmount) = style { return isAmount }

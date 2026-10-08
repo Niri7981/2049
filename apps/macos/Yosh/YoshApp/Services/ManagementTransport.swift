@@ -6,13 +6,15 @@ import Security
 enum ServiceEndpoint {
     case health
     case overview
+    case wallets
     case balance
     case execution
     case setExecution(AppOverview.Service.PurchaseMode)
+    case setProductionExecutionEnabled(Bool)
     case setPaused(Bool)
     case setDailyLimit(String)
-    case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil)
-    case revokeGrant
+    case createGrant(totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil, sample: ResourceRequestSample? = nil, postApprovalHash: String? = nil)
+    case revokeGrant(resourceId: String? = nil)
     case setConnection(Bool)
     case members
     case member(UUID)
@@ -20,77 +22,103 @@ enum ServiceEndpoint {
     case renameMember(UUID, String)
     case revokeMember(UUID)
     case setMemberConnection(UUID, Bool)
-    case createMemberGrant(UUID, totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil)
-    case revokeMemberGrant(UUID)
+    case createMemberGrant(UUID, totalLimit: String, singleLimit: String, expiresAt: Int64, resourceId: String? = nil, sample: ResourceRequestSample? = nil, postApprovalHash: String? = nil)
+    case revokeMemberGrant(UUID, resourceId: String? = nil)
     case prepareQuit
     case shutdown
+    case resources
+    case resource(String)
+    case registerResource(RegisterAPIRequest)
+    case resourceState(String, String)
+    case discoverResource(ResourceDiscoveryRequest)
+    case prepareResource(ResourcePrepareRequest)
 
     var path: String {
         switch self {
+        case .resources, .registerResource: "/api/app/resources"
+        case .resource(let id), .resourceState(let id, _): "/api/app/resources/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/?#%"))) ?? "")"
+        case .discoverResource: "/api/app/resources/discover"
+        case .prepareResource: "/api/app/resources/prepare"
         case .health: "/api/app/health"
         case .overview: "/api/app/overview"
+        case .wallets: "/api/app/wallets"
         case .balance: "/api/app/balance"
-        case .execution, .setExecution: "/api/app/execution"
+        case .execution, .setExecution, .setProductionExecutionEnabled: "/api/app/execution"
         case .setPaused, .setDailyLimit: "/api/app/settings"
         case .createGrant, .revokeGrant: "/api/app/grant"
         case .setConnection: "/api/app/connection"
         case .members, .createMember: "/api/app/members"
         case .member(let id), .renameMember(let id, _), .revokeMember(let id): "/api/app/members/\(id.uuidString.lowercased())"
         case .setMemberConnection(let id, _): "/api/app/members/\(id.uuidString.lowercased())/connection"
-        case .createMemberGrant(let id, _, _, _, _), .revokeMemberGrant(let id): "/api/app/members/\(id.uuidString.lowercased())/grant"
+        case .createMemberGrant(let id, _, _, _, _, _, _), .revokeMemberGrant(let id, _): "/api/app/members/\(id.uuidString.lowercased())/grant"
         case .prepareQuit, .shutdown: "/api/app/lifecycle"
         }
     }
 
     var isMutation: Bool {
         switch self {
-        case .health, .overview, .balance, .execution, .members, .member: false
-        case .setExecution, .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection, .createMember,
-             .renameMember, .revokeMember, .setMemberConnection, .createMemberGrant, .revokeMemberGrant, .prepareQuit, .shutdown: true
+        case .health, .overview, .wallets, .balance, .execution, .members, .member, .resources, .resource: false
+        case .setExecution, .setProductionExecutionEnabled, .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection, .createMember,
+             .renameMember, .revokeMember, .setMemberConnection, .createMemberGrant, .revokeMemberGrant, .prepareQuit, .shutdown, .registerResource, .resourceState, .discoverResource, .prepareResource: true
         }
     }
 
     var method: String {
         switch self {
-        case .setExecution, .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection,
-             .renameMember, .setMemberConnection, .createMemberGrant, .revokeMemberGrant: "PUT"
-        case .createMember: "POST"
+        case .setExecution, .setProductionExecutionEnabled, .setPaused, .setDailyLimit, .createGrant, .revokeGrant, .setConnection,
+             .renameMember, .setMemberConnection, .createMemberGrant, .revokeMemberGrant, .resourceState: "PUT"
+        case .createMember, .registerResource, .discoverResource, .prepareResource: "POST"
         case .revokeMember: "DELETE"
         case .prepareQuit, .shutdown: "POST"
-        case .health, .overview, .balance, .execution, .members, .member: "GET"
+        case .health, .overview, .wallets, .balance, .execution, .members, .member, .resources, .resource: "GET"
         }
     }
 
     func body() throws -> Data? {
         switch self {
+        case .registerResource(let resource):
+            try JSONEncoder().encode(resource)
+        case .resourceState(_, let state):
+            try JSONEncoder().encode(["state": state])
+        case .prepareResource(let input):
+            try JSONEncoder().encode(input)
+        case .discoverResource(let input):
+            try JSONEncoder().encode(input)
         case .setExecution(let mode):
             try JSONEncoder().encode(["mode": mode.rawValue])
+        case .setProductionExecutionEnabled(let enabled):
+            try JSONEncoder().encode(["productionExecutionEnabled": enabled])
         case .setPaused(let paused):
             try JSONEncoder().encode(["paused": paused])
         case .setDailyLimit(let limit):
             try JSONEncoder().encode(["dailyLimit": limit])
-        case .createGrant(let totalLimit, let singleLimit, let expiresAt, let resourceId):
-            try JSONEncoder().encode(GrantCreateRequest(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId))
-        case .revokeGrant:
-            Data(#"{"action":"revoke"}"#.utf8)
+        case .createGrant(let totalLimit, let singleLimit, let expiresAt, let resourceId, let sample, let postApprovalHash):
+            try JSONEncoder().encode(GrantCreateRequest(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId, sample: sample, postApprovalHash: postApprovalHash))
+        case .revokeGrant(let resourceId):
+            try JSONEncoder().encode(GrantRevokeRequest(resourceId: resourceId))
         case .setConnection(let enabled):
             try JSONEncoder().encode(["enabled": enabled])
         case .createMember(let label), .renameMember(_, let label):
             try JSONEncoder().encode(["label": label])
         case .setMemberConnection(_, let enabled):
             try JSONEncoder().encode(["enabled": enabled])
-        case .createMemberGrant(_, let totalLimit, let singleLimit, let expiresAt, let resourceId):
-            try JSONEncoder().encode(GrantCreateRequest(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId))
-        case .revokeMemberGrant:
-            Data(#"{"action":"revoke"}"#.utf8)
+        case .createMemberGrant(_, let totalLimit, let singleLimit, let expiresAt, let resourceId, let sample, let postApprovalHash):
+            try JSONEncoder().encode(GrantCreateRequest(totalLimit: totalLimit, singleLimit: singleLimit, expiresAt: expiresAt, resourceId: resourceId, sample: sample, postApprovalHash: postApprovalHash))
+        case .revokeMemberGrant(_, let resourceId):
+            try JSONEncoder().encode(GrantRevokeRequest(resourceId: resourceId))
         case .prepareQuit:
             Data(#"{"action":"prepareQuit"}"#.utf8)
         case .shutdown:
             Data(#"{"action":"shutdown"}"#.utf8)
-        case .health, .overview, .balance, .execution, .members, .member, .revokeMember:
+        case .health, .overview, .wallets, .balance, .execution, .members, .member, .revokeMember, .resources, .resource:
             nil
         }
     }
+}
+
+private struct GrantRevokeRequest: Encodable {
+    let action = "revoke"
+    let resourceId: String?
 }
 
 private struct GrantCreateRequest: Encodable {
@@ -99,6 +127,8 @@ private struct GrantCreateRequest: Encodable {
     let singleLimit: String
     let expiresAt: Int64
     let resourceId: String?
+    let sample: ResourceRequestSample?
+    let postApprovalHash: String?
 }
 
 /// Delegate callbacks, cancellation and the absolute timer share only lock-protected state.

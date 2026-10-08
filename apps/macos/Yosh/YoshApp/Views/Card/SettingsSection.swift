@@ -17,7 +17,7 @@ struct SettingsSection<Content: View>: View {
                     .tracking(1.8)
                     .accessibilityAddTraits(.isHeader)
             }
-            .foregroundStyle(Color(red: 0.42, green: 0.48, blue: 0.57))
+            .foregroundStyle(YoshShellPalette.secondaryInk)
             VStack(spacing: 0) { content }
                 .frame(maxWidth: .infinity)
         }

@@ -13,7 +13,7 @@ struct PurchaseDetail: View {
 
     @State private var copiedReceipt: String?
     private let ink = Color(red: 0.07, green: 0.10, blue: 0.15)
-    private let secondaryInk = Color(red: 0.42, green: 0.48, blue: 0.57)
+    private let secondaryInk = YoshShellPalette.secondaryInk
     private let rule = Color(red: 0.73, green: 0.79, blue: 0.87).opacity(0.5)
     private var item: PurchaseDetailPresentation { PurchaseDetailPresentation(purchase, agentName: agentName) }
 

@@ -118,6 +118,8 @@ try {
     'apps/macos/Yosh/YoshApp/Models/AuthoritySurface.swift',
     'apps/macos/Yosh/YoshApp/Models/ExecutionEnvironment.swift',
     'apps/macos/Yosh/YoshApp/Models/AppOverview.swift',
+    'apps/macos/Yosh/YoshApp/Models/RegisteredAPI.swift',
+    'apps/macos/Yosh/YoshApp/Models/CardSettingsPresentation.swift',
     'apps/macos/Yosh/YoshApp/Models/PurchasePresentation.swift',
     'tests/native/ManagementClientSmoke.swift',
   ];

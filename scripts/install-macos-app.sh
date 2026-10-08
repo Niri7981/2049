@@ -17,7 +17,7 @@ node_candidate="${YOSH_NODE_PATH-${APP2049_NODE_PATH-$(command -v node || true)}
 [[ -n "$node_candidate" && -x "$node_candidate" ]] || fail "Install Node.js >=24.5, or set YOSH_NODE_PATH to its executable."
 node_executable="$("$node_candidate" -p 'process.execPath')"
 "$node_executable" -e 'const [major, minor] = process.versions.node.split(".").map(Number); if (major < 24 || (major === 24 && minor < 5)) { console.error("Node.js >=24.5 is required."); process.exit(1); }'
-service_port="$("$node_executable" -e 'const {resolveYoshConfiguration}=require(process.argv[1]); console.log(resolveYoshConfiguration().port ?? "3049");' "$repository_root/src/modules/app/yosh-configuration.ts")"
+service_port=3049
 
 # Never interrupt the native runtime's shutdown or replace a running backend build.
 if /usr/bin/pgrep -x 2049 >/dev/null || /usr/bin/pgrep -x Yosh >/dev/null; then
@@ -34,7 +34,7 @@ for candidate_app in "$installed_app" "$legacy_app"; do
   fi
 done
 
-# npm must use the same Node that the installed native app will launch.
+# Build tools are used only while packaging; the installed app uses its own runtime.
 export PATH="$(dirname "$node_executable"):$PATH"
 command -v npm >/dev/null || fail "npm is required to build the backend."
 command -v xcodebuild >/dev/null || fail "Xcode command-line build tools are required for rebuilding."
@@ -53,12 +53,77 @@ xcodebuild \
   -derivedDataPath "$derived_data" ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
 [[ -x "$built_app/Contents/MacOS/Yosh" ]] || fail "The native build did not produce $built_app."
 
-# Local path hints contain no credentials or configuration contents. Dependencies stay in the repo.
+# Package only the standalone server and its traced dependencies. Never copy
+# .env.local, source files, build.noindex, tests, or the developer checkout.
+runtime="$built_app/Contents/Resources/Runtime"
+backend="$runtime/backend"
+rm -rf "$runtime"
+mkdir -p "$backend/.next" "$runtime"
+for artifact in server.js package.json; do
+  [[ -f "$repository_root/.next/standalone/$artifact" ]] || fail "Missing standalone $artifact."
+  /usr/bin/ditto "$repository_root/.next/standalone/$artifact" "$backend/$artifact"
+done
+/usr/bin/ditto "$repository_root/.next/standalone/node_modules" "$backend/node_modules"
+/usr/bin/ditto "$repository_root/.next/standalone/.next" "$backend/.next"
+/usr/bin/ditto "$repository_root/.next/static" "$backend/.next/static"
+if [[ -d "$repository_root/public" ]]; then /usr/bin/ditto "$repository_root/public" "$backend/public"; fi
+
+"$repository_root/node_modules/.bin/esbuild" "$repository_root/scripts/mcp.ts" \
+  --bundle --platform=node --target=node24 --format=cjs --outfile="$runtime/mcp.cjs"
+
+# The official Node runtime has only macOS system-library dependencies. The
+# binary is a separate signed executable in Contents/MacOS, not a PATH lookup.
+runtime_version=24.21.0
+runtime_arch="$(uname -m)"
+[[ "$runtime_arch" == arm64 || "$runtime_arch" == x86_64 ]] || fail "Unsupported macOS architecture: $runtime_arch"
+if [[ "$runtime_arch" == x86_64 ]]; then runtime_arch=x64; fi
+node_archive="node-v${runtime_version}-darwin-${runtime_arch}.tar.xz"
+node_cache="$repository_root/build.noindex/node-runtime"
+mkdir -p "$node_cache"
+if [[ ! -f "$node_cache/$node_archive" ]]; then
+  /usr/bin/curl --fail --location --silent --show-error \
+    "https://nodejs.org/download/release/v${runtime_version}/$node_archive" -o "$node_cache/$node_archive"
+fi
+if [[ "$runtime_arch" == arm64 ]]; then
+  expected_hash=6239d4cf92d864487ec8cd3615038f7b67e7f58b77b21cd2f09ea9fbd68065fe
+else
+  /usr/bin/curl --fail --location --silent --show-error \
+    "https://nodejs.org/download/release/v${runtime_version}/SHASUMS256.txt" -o "$node_cache/SHASUMS256.txt"
+  expected_hash="$(/usr/bin/awk -v name="$node_archive" '$2 == name { print $1 }' "$node_cache/SHASUMS256.txt")"
+fi
+[[ -n "$expected_hash" ]] || fail "Missing official Node checksum."
+actual_hash="$(/usr/bin/shasum -a 256 "$node_cache/$node_archive" | /usr/bin/awk '{print $1}')"
+[[ "$actual_hash" == "$expected_hash" ]] || fail "Bundled Node checksum mismatch."
+node_unpack="$node_cache/node-v${runtime_version}-darwin-${runtime_arch}"
+if [[ ! -x "$node_unpack/bin/node" ]]; then
+  /usr/bin/tar -xJf "$node_cache/$node_archive" -C "$node_cache"
+fi
+/usr/bin/ditto "$node_unpack/bin/node" "$built_app/Contents/MacOS/YoshBackendNode"
+mkdir -p "$runtime/licenses"
+/usr/bin/ditto "$node_unpack/LICENSE" "$runtime/licenses/Node-LICENSE"
+
+# Current installations keep their ledger and Keychain identity at the legacy
+# data path. The installed product owns its private configuration independently
+# of the source checkout and any developer dotenv files.
+legacy_data="$HOME/Library/Application Support/2049"
+product_data="$HOME/Library/Application Support/Yosh"
+if [[ -f "$legacy_data/app-ledger.sqlite" ]]; then product_data="$legacy_data"; fi
+mkdir -p "$product_data"
+chmod 700 "$product_data"
+"$node_executable" "$repository_root/scripts/ensure-product-configuration.mjs" "$product_data"
+
+signing_identity="${YOSH_CODESIGN_IDENTITY--}"
+signing_options=(--force --sign "$signing_identity")
+if [[ "$signing_identity" != - ]]; then signing_options+=(--options runtime --timestamp); fi
 info_plist="$built_app/Contents/Info.plist"
-/usr/bin/plutil -replace YoshRepositoryRoot -string "$repository_root" "$info_plist"
-/usr/bin/plutil -replace YoshNodeExecutable -string "$node_executable" "$info_plist"
-# Ad-hoc signing suffices for this local build; no Developer ID or notarization is required.
-/usr/bin/codesign --force --sign - "$built_app"
+for key in YoshRepositoryRoot APP2049RepositoryRoot YoshNodeExecutable APP2049NodeExecutable; do
+  /usr/bin/plutil -remove "$key" "$info_plist" 2>/dev/null || true
+done
+/usr/bin/codesign "${signing_options[@]}" \
+  --entitlements "$repository_root/apps/macos/Yosh/BackendNode.entitlements" "$built_app/Contents/MacOS/YoshBackendNode"
+while IFS= read -r -d '' binary; do /usr/bin/codesign "${signing_options[@]}" "$binary"; done \
+  < <(/usr/bin/find "$backend" -name '*.node' -type f -print0)
+/usr/bin/codesign "${signing_options[@]}" "$built_app"
 /usr/bin/codesign --verify --strict "$built_app"
 
 mkdir -p "$applications_directory"
@@ -108,4 +173,4 @@ fi
 install_complete=1
 printf '\nInstalled: %s\nBuild output: %s\n' "$installed_app" "$built_app"
 printf 'Double-click Yosh in Finder, or search for Yosh in Spotlight.\n'
-printf 'Keep this repository, its node_modules/.next, and %s available.\n' "$node_executable"
+printf 'Runtime bundled inside Yosh.app; product data: %s\n' "$product_data"

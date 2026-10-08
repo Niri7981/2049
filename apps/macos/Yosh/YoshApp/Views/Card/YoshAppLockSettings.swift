@@ -25,7 +25,7 @@ struct YoshAppLockSettings: View {
                 Spacer(minLength: 4)
                 Text(appLock.enabled ? "On" : "Off")
                     .font(.system(size: 11))
-                    .foregroundStyle(Color(red: 0.42, green: 0.48, blue: 0.57))
+                    .foregroundStyle(YoshShellPalette.secondaryInk)
                 Toggle("App Lock", isOn: enabledBinding)
                     .labelsHidden()
                     .toggleStyle(.switch)

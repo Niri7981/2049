@@ -66,6 +66,10 @@ struct CardWindow: View {
             guard appLock.isUnlocked else { return }
             await memberSession.refresh()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .nativeServiceReady)) { _ in
+            guard appLock.isUnlocked else { return }
+            Task { await memberSession.refresh() }
+        }
         .onChange(of: appLock.state) { _, state in
             if state == .unlocked && !showingBack { flip() }
         }

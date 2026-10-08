@@ -7,6 +7,7 @@ trap 'rm -rf "$fixture_directory"' EXIT
 cd "$repository_root"
 
 motion_sources=(
+  apps/macos/Yosh/YoshApp/Materials/CardMaterial.swift
   apps/macos/Yosh/YoshApp/Views/Card/BackSection.swift
   apps/macos/Yosh/YoshApp/Views/Card/YoshTabMotion.swift
   apps/macos/Yosh/YoshApp/Views/Card/YoshDetailNavigation.swift

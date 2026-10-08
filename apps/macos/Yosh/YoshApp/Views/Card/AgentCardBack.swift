@@ -29,58 +29,73 @@ struct AgentCardBack: View {
             .padding(.horizontal, 26)
             .frame(height: 44)
             .padding(.top, 22)
+            .zIndex(2)
 
-            ZStack {
-                // Connection and Authority share the same selected-member snapshot and
-                // management writes. Keep it alive while visiting Members or Settings.
-                if let memberID = memberSession.selectedMemberID {
-                    BackOverview(
-                        overviewClient: overviewClient,
-                        memberID: memberID,
-                        agentName: memberSession.selectedMember?.label ?? "Agent",
-                        section: selectedSection,
-                        onMemberChanged: { await memberSession.refresh() },
-                        visitedSections: visitedSections
-                    )
-                    .id(memberID)
-                    .zIndex(showsOverview ? 1 : 0)
-                    .allowsHitTesting(showsOverview)
-                    .accessibilityHidden(!showsOverview)
-                } else {
-                    YoshTabPage(section: .connection, selection: selectedSection) {
-                        if visitedSections.contains(.connection) { connectionUnavailable }
+            GeometryReader { viewport in
+                ZStack {
+                    // Connection and Authority share the same selected-member snapshot and
+                    // management writes. Keep it alive while visiting Members or Settings.
+                    if let memberID = memberSession.selectedMemberID {
+                        BackOverview(
+                            overviewClient: overviewClient,
+                            memberID: memberID,
+                            agentName: memberSession.selectedMember?.label ?? "Agent",
+                            section: selectedSection,
+                            onMemberChanged: { await memberSession.refresh() },
+                            visitedSections: visitedSections
+                        )
+                        .id(memberID)
+                        .zIndex(showsOverview ? 1 : 0)
+                        .allowsHitTesting(showsOverview)
+                        .accessibilityHidden(!showsOverview)
+                    } else {
+                        YoshTabPage(section: .connection, selection: selectedSection) {
+                            if visitedSections.contains(.connection) { connectionUnavailable }
+                        }
+                        YoshTabPage(section: .authority, selection: selectedSection) {
+                            if visitedSections.contains(.authority) {
+                                ContentUnavailableView(
+                                    memberSession.loadError == nil ? "No active agent" : "Agents unavailable",
+                                    systemImage: "person.crop.circle.badge.questionmark",
+                                    description: Text(memberSession.loadError
+                                        ?? (memberSession.isLoading ? "Waiting for the local service." : "Add an agent in Agents to continue.")))
+                            }
+                        }
                     }
-                    YoshTabPage(section: .authority, selection: selectedSection) {
-                        if visitedSections.contains(.authority) {
-                            ContentUnavailableView(
-                                memberSession.loadError == nil ? "No active agent" : "Agents unavailable",
-                                systemImage: "person.crop.circle.badge.questionmark",
-                                description: Text(memberSession.loadError
-                                    ?? (memberSession.isLoading ? "Waiting for the local service." : "Add an agent in Agents to continue.")))
+
+                    YoshTabPage(section: .members, selection: selectedSection) {
+                        if visitedSections.contains(.members) {
+                            MembersView(session: memberSession, isActive: selectedSection == .members)
+                        }
+                    }
+                    YoshTabPage(section: .settings, selection: selectedSection) {
+                        if visitedSections.contains(.settings) {
+                            CardSettingsView(overviewClient: overviewClient, isActive: selectedSection == .settings)
                         }
                     }
                 }
-
-                YoshTabPage(section: .members, selection: selectedSection) {
-                    if visitedSections.contains(.members) {
-                        MembersView(session: memberSession, isActive: selectedSection == .members)
-                    }
-                }
-                YoshTabPage(section: .settings, selection: selectedSection) {
-                    if visitedSections.contains(.settings) {
-                        CardSettingsView(overviewClient: overviewClient, isActive: selectedSection == .settings)
-                    }
-                }
+                .frame(width: viewport.size.width, height: viewport.size.height, alignment: .top)
+                // Tab and detail planes share this middle viewport. Compose them
+                // before clipping so neither persistent chrome region can be painted.
+                .compositingGroup()
+                .clipped()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .clipped()
+            .zIndex(0)
 
             BackNavigation(selection: Binding(get: { selectedSection }, set: selectSection))
-                .padding(.horizontal, 20)
                 .padding(.bottom, 16)
+                .zIndex(2)
         }
         .frame(width: CardMetrics.cardSize.width, height: CardMetrics.cardSize.height)
         .foregroundStyle(Color(nsColor: .labelColor))
+        // The card material is a background, so its rounded edge cannot clip
+        // foreground materials or animated content on its own.
+        .clipShape(YoshShellPalette.shape)
+        .overlay {
+            YoshShellPalette.shape
+                .strokeBorder(YoshShellPalette.boundary, lineWidth: 0.75)
+                .allowsHitTesting(false)
+        }
         .accessibilityElement(children: .contain)
     }
 

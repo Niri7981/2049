@@ -108,13 +108,13 @@ it('reuses the member, grant, ledger, purchase replay and wallet when only confi
   vi.stubEnv('APP2049_DATA_DIR', directory);
   const first = new AppRuntime(undefined, { initializeWallet });
   const member = first.ledger.defaultCardMember();
-  let grant: ReturnType<AppRuntime['createSpendGrant']>;
+  let grant: Awaited<ReturnType<AppRuntime['createSpendGrant']>>;
   let purchase: Awaited<ReturnType<AppRuntime['createTestPurchase']>>;
   let wallet: Awaited<ReturnType<AppRuntime['initializeWallet']>>;
   try {
     first.setDailyLimit('1000000');
     first.setAgentConnection(true, origin);
-    grant = first.createSpendGrant({ totalLimit: '1000000', singleLimit: '1000000', expiresAt: Date.now() + 60 * 60 * 1000 });
+    grant = await first.createSpendGrant({ totalLimit: '1000000', singleLimit: '1000000', expiresAt: Date.now() + 60 * 60 * 1000 });
     wallet = await first.initializeWallet();
     purchase = await first.createTestPurchase('pre-rename-purchase', origin);
     expect(purchase).toMatchObject({ status: 'PAID', simulated: true });
@@ -128,7 +128,7 @@ it('reuses the member, grant, ledger, purchase replay and wallet when only confi
     expect(second.directory).toBe(directory);
     expect(second.ledger.defaultCardMember()).toEqual(member);
     expect((await second.overview()).budget).toMatchObject({ dailyLimit: '1000000', paused: true });
-    expect(second.ledger.spendGrantSummary()).toMatchObject({ id: grant.id, version: grant.version, status: 'REVOKED', totalLimit: '1000000' });
+    expect(second.ledger.spendGrantSummary()).toMatchObject({ id: grant.id, version: grant.version, status: 'ACTIVE', totalLimit: '1000000' });
     const restored = second.ledger.get('pre-rename-purchase');
     expect(restored?.intent.authority?.grantId).toBe(grant.id);
     expect(restored?.ownerCardMemberId).toBe(member.id);

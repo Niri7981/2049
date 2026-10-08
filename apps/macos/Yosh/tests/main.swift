@@ -93,6 +93,25 @@ check(settings.serviceStatus == "Running", "Settings reads backend service statu
 check(settings.walletAddress == "PublicWalletAddress", "Settings reads the public wallet address")
 check(settings.shortWalletAddress == "PublicWa…ress", "Settings shortens the public address without changing the copy value")
 check(settings.dataDirectory == nil, "Settings does not invent a storage path")
+let walletInventory = try decode(CardSettingsPresentation.WalletsResponse.self, ["wallets": [
+    ["id": "mainnet", "label": "Mainnet", "address": "MainnetPublicAddress", "status": "available"],
+    ["id": "devnet", "label": "Devnet · Test", "address": "DevnetPublicAddress", "status": "available"],
+]])
+let walletSettings = CardSettingsPresentation(wallets: walletInventory.wallets)
+check(walletSettings.wallets.map(\.address) == ["MainnetPublicAddress", "DevnetPublicAddress"],
+    "Settings keeps both full public addresses independently of execution selection")
+for status in ["missing", "unavailable"] {
+    let inventory = try decode(CardSettingsPresentation.WalletsResponse.self, ["wallets": [
+        ["id": "mainnet", "label": "Mainnet", "address": NSNull(), "status": status],
+    ]])
+    check(inventory.wallets[0].address == nil, "Absent/inaccessible wallet never invents an address")
+    check(inventory.wallets[0].display == (status == "missing" ? "No wallet" : "Keychain unavailable"),
+        "Settings distinguishes absence from Keychain denial")
+}
+let walletsRequestBody = try ServiceEndpoint.wallets.body()
+check(ServiceEndpoint.wallets.path == "/api/app/wallets" && ServiceEndpoint.wallets.method == "GET"
+    && !ServiceEndpoint.wallets.isMutation && walletsRequestBody == nil,
+    "Wallet inventory is an authenticated read-only endpoint")
 var livePayload = overviewPayload
 livePayload["service"] = ["status": "stopping", "recoveryStatus": "pending", "testEnvironment": true,
                           "purchaseMode": "live_devnet", "network": "Solana Devnet"]
@@ -150,3 +169,30 @@ let scopedBody = try JSONSerialization.jsonObject(with: scopedGrant.body()!) as?
 check(scopedBody?["resourceId"] as? String == "production-data", "Native management request carries only registered scope ID")
 check(scopedBody?["network"] == nil && scopedBody?["recipient"] == nil && scopedBody?["wallet"] == nil, "Backend owns all payment facts")
 print("Native Mainnet projections and scoped management transport passed")
+
+var challengeRegistrationPayload = mainnetPayload
+challengeRegistrationPayload["service"] = ["status": "running", "purchaseMode": "live_mainnet", "network": "Solana Mainnet", "paymentEnabled": false,
+    "registeredResources": [["resourceId": "you-web-search", "providerId": "you.com", "name": "You.com Web Search",
+        "url": "https://api.you.com/v1/search", "method": "GET", "recipient": NSNull(), "recipientSource": "live_challenge",
+        "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", "assetId": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "assetDecimals": 6,
+        "baseAmount": "5000", "maximumAmount": "5000", "basePriceDisplay": "0.005 USDC", "maximumPriceDisplay": "0.005 USDC"]]]
+let challengeRegistrationOverview = try decode(AppOverview.self, challengeRegistrationPayload)
+let registeredSearch = challengeRegistrationOverview.service.registeredResources?.first
+check(registeredSearch?.name == "You.com Web Search" && registeredSearch?.method == "GET", "Registered API displays backend name and HTTP method")
+check(registeredSearch?.recipient == nil && registeredSearch?.recipientSource == "live_challenge", "Unbound recipient decodes without a fabricated payment address")
+check(registeredSearch?.maximumPriceDisplay == "0.005 USDC", "Backend price boundary remains exact")
+print("Production Registered API metadata tests passed")
+
+let runtimeAPI = try decode(RegisteredAPI.self, ["resourceId": "runtime-example", "providerId": "example", "name": "Runtime example",
+    "url": "https://example.com/search", "method": "GET", "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    "assetId": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "maximumPriceDisplay": "0.005 USDC",
+    "source": "user", "state": "ACTIVE", "definition": ["deliveryRecovery": ["kind": "none"]]])
+precondition(runtimeAPI.id == "runtime-example" && runtimeAPI.isUserAdded)
+let registration = RegisterAPIRequest(resourceId: runtimeAPI.id, providerId: "example", displayName: "Runtime example",
+    request: .init(url: runtimeAPI.url, method: "GET"), baseAmount: "5000", maximumAmount: "5000", deliveryRecovery: .init(kind: "none"))
+let endpoint = ServiceEndpoint.registerResource(registration)
+let registrationBody = try JSONSerialization.jsonObject(with: endpoint.body()!) as? [String: Any]
+precondition(endpoint.method == "POST" && endpoint.isMutation && registrationBody?["recipient"] == nil && registrationBody?["feePayer"] == nil)
+precondition(registrationBody?["maximumAmount"] as? String == "5000")
+precondition(ServiceEndpoint.resources.method == "GET" && !ServiceEndpoint.resources.isMutation)
+print("Runtime resource DTO and management capability tests passed")

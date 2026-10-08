@@ -11,6 +11,11 @@ swiftc -swift-version 6 -parse-as-library \
   apps/macos/Yosh/YoshApp/Services/BackendLaunchConfiguration.swift \
   apps/macos/Yosh/YoshApp/Services/ManagementTransport.swift \
   apps/macos/Yosh/YoshApp/Services/NativeServiceRuntime.swift \
+  apps/macos/Yosh/YoshApp/Models/AppOverview.swift \
+  apps/macos/Yosh/YoshApp/Models/AuthoritySurface.swift \
+  apps/macos/Yosh/YoshApp/Models/ExecutionEnvironment.swift \
+  apps/macos/Yosh/YoshApp/Models/RegisteredAPI.swift \
+  apps/macos/Yosh/YoshApp/Models/PurchasePresentation.swift \
   tests/native/BackendLaunchConfigurationTest.swift \
   -o "$temporary/backend-launch-test"
 "$temporary/backend-launch-test"

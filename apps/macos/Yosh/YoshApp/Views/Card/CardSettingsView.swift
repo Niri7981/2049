@@ -7,6 +7,8 @@ struct CardSettingsView: View {
 
     @Environment(YoshAppLock.self) private var appLock: YoshAppLock?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var navigation = YoshDetailNavigation<String>()
     @State private var state: LoadState = .loading
     @State private var actionError: String?
     @State private var loadRevision = 0
@@ -37,13 +39,22 @@ struct CardSettingsView: View {
     }
 
     var body: some View {
+        YoshDetailStack(navigation: navigation, reduceMotion: reduceMotion) {
         CardSettingsBody(information: information, appVersion: appVersion, isLoading: isLoading, error: error,
             onCopyWallet: copyWallet, onOpenDataFolder: openDataFolder, onOpenRepository: openRepository,
-            onReload: { Task { await reload(retry: true) } }, appLock: appLock)
+            onReload: { Task { await reload(retry: true) } }, appLock: appLock,
+            onOpenResources: { navigation.show("resources") })
+        } destination: { _ in
+            RegisteredAPIsView(client: overviewClient, isActive: isActive && navigation.selection != nil,
+                onBack: { navigation.show(nil) })
+        }
             .task(id: isActive) { if isActive { await reload() } }
             .onReceive(NotificationCenter.default.publisher(for: .nativeServiceExited)) { _ in
                 loadRevision += 1
                 state = .failed(OverviewLoadError.serviceExited.message)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .nativeServiceReady)) { _ in
+                if isActive { Task { await reload() } }
             }
     }
 
@@ -78,7 +89,7 @@ struct CardSettingsView: View {
         state = .loading
         actionError = nil
         do {
-            let overview = try await overviewClient.load(retry: retry)
+            let wallets = try await overviewClient.loadWallets(retry: retry)
             // Reuse the secured management transport and the backend's resolved directory.
             // Health data stays local; only the storage URL reaches the Settings body.
             var directory: URL?
@@ -87,7 +98,7 @@ struct CardSettingsView: View {
                 directory = CardSettingsPresentation.dataDirectory(from: data)
             }
             guard !Task.isCancelled, revision == loadRevision else { return }
-            state = .loaded(CardSettingsPresentation(overview, dataDirectory: directory))
+            state = .loaded(CardSettingsPresentation(wallets: wallets, dataDirectory: directory))
         } catch is CancellationError {
             return
         } catch {
