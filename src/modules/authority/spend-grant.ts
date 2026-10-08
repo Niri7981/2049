@@ -34,6 +34,7 @@ export const SpendGrantScopeSchema = z.object({
   assetDecimals: z.number().int().nonnegative().max(255),
   payTo: identifier,
   paymentScheme: identifier,
+  postPolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict();
 
 export const SpendGrantSchema = SpendPrincipalSchema.extend({
@@ -47,6 +48,7 @@ export const SpendGrantSchema = SpendPrincipalSchema.extend({
   assetDecimals: z.number().int().nonnegative().max(255),
   payTo: identifier,
   paymentScheme: identifier,
+  postPolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   totalLimit: PositiveAtomicAmountSchema,
   singleLimit: PositiveAtomicAmountSchema,
   status: z.enum(['ACTIVE', 'REVOKED', 'EXPIRED']),
