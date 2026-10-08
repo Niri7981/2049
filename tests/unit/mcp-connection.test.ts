@@ -101,7 +101,7 @@ it('uses the official MCP handshake and exposes a request-only purchase tool wit
     await server.connect(serverTransport); await client.connect(clientTransport);
     const tools = await client.listTools();
     expect(tools.tools.map(tool => tool.name)).toEqual(['get_spending_status', 'get_market_quote',
-      'discover_x402_resource', 'get_purchase_delivery', 'quote_x402_resource', 'request_purchase']);
+      'discover_x402_resource', 'register_x402_resource', 'get_purchase_delivery', 'quote_x402_resource', 'request_purchase']);
     expect(tools.tools.find(tool => tool.name === 'discover_x402_resource')?.annotations?.readOnlyHint).toBe(false);
     expect(tools.tools.find(tool => tool.name === 'get_purchase_delivery')?.annotations?.readOnlyHint).toBe(true);
     const purchaseResourceSchema = tools.tools.find(tool => tool.name === 'request_purchase')?.inputSchema.properties?.resourceId;

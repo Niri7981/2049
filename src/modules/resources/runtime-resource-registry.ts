@@ -1,3 +1,9 @@
+import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { AgentResourceRegistrationInput, ResourceDocumentationSchema } from './agent-resource-registration';
+import { ResourceRequestInputSchema, authorizedRequestInstance } from './http-resource';
+import { SpendPrincipalSchema, type SpendPrincipal } from '../authority/spend-grant';
+import type { discoverResource } from './mainnet-resource-discovery';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { X402ResourceSchema, DeclarativeResourceRequestInputsSchema, assertResourceInputDefinition, resourceInputNames, type X402Resource } from './http-resource';
@@ -25,7 +31,9 @@ export const RuntimeResourceSchema = X402ResourceSchema.safeExtend({
   catch { ctx.addIssue({ code: 'custom', message: 'RESOURCE_RECOVERY_INVALID' }); }
 });
 const State = z.enum(['ACTIVE', 'DISABLED', 'REMOVED']);
-const Entry = z.object({ source: z.enum(['built_in', 'user']), state: State, createdAt: z.number().int(), updatedAt: z.number().int(), definition: X402ResourceSchema });
+const Submission = z.object({ cardMemberId: z.string().uuid(), discoveryId: z.string().uuid(),
+  discoveredAt: z.number().int(), sample: ResourceRequestInputSchema, documentation: ResourceDocumentationSchema }).strict();
+const Entry = z.object({ source: z.enum(['built_in', 'user', 'agent']), submission: Submission.optional(), state: State, createdAt: z.number().int(), updatedAt: z.number().int(), definition: X402ResourceSchema });
 export type RegisteredResourceEntry = z.infer<typeof Entry>;
 export class ResourceRegistryError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -50,6 +58,21 @@ export class RuntimeResourceRegistry {
           BEGIN SELECT RAISE(ABORT,'resource definition is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS resource_history_preserved BEFORE DELETE ON resource_registry
           BEGIN SELECT RAISE(ABORT,'resource identity must be retained'); END;`);
+      // Additive metadata: existing immutable definitions, grants and payment evidence stay untouched.
+      db.exec(`CREATE TABLE IF NOT EXISTS resource_discoveries (
+        discovery_id TEXT PRIMARY KEY, principal TEXT NOT NULL CHECK(json_valid(principal)),
+        snapshot TEXT NOT NULL CHECK(json_valid(snapshot)), discovered_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+        registration TEXT CHECK(registration IS NULL OR json_valid(registration)));
+        CREATE TRIGGER IF NOT EXISTS resource_discovery_immutable BEFORE UPDATE OF discovery_id,principal,snapshot,discovered_at,expires_at ON resource_discoveries
+          BEGIN SELECT RAISE(ABORT,'validated discovery is immutable'); END;
+        CREATE TABLE IF NOT EXISTS resource_agent_submissions (
+          resource_id TEXT PRIMARY KEY REFERENCES resource_registry(resource_id),
+          metadata TEXT NOT NULL CHECK(json_valid(metadata)));
+        CREATE TRIGGER IF NOT EXISTS resource_submission_immutable BEFORE UPDATE ON resource_agent_submissions
+          BEGIN SELECT RAISE(ABORT,'resource submission is immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS resource_submission_preserved BEFORE DELETE ON resource_agent_submissions
+          BEGIN SELECT RAISE(ABORT,'resource submission must be retained'); END;`);
+      db.prepare("INSERT OR IGNORE INTO resource_registry_migrations VALUES ('015_agent_resource_registration',?)").run(now());
       db.prepare("INSERT OR IGNORE INTO resource_registry_migrations VALUES ('011_runtime_resources',?)").run(now());
     });
   }
@@ -92,7 +115,8 @@ export class RuntimeResourceRegistry {
     this.db.prepare("INSERT INTO resource_registry VALUES (?,?,'ACTIVE',?,?,?)").run(definition.resourceId, source, JSON.stringify(definition), this.now(), this.now());
   }
   private entry(row: Record<string, unknown>) {
-    return Entry.parse({ source: row.source, state: row.state, createdAt: row.created_at, updatedAt: row.updated_at, definition: JSON.parse(String(row.definition)) });
+    const submitted = this.db.prepare('SELECT metadata FROM resource_agent_submissions WHERE resource_id=?').get(String(row.resource_id));
+    return Entry.parse({ source: submitted ? 'agent' : row.source, ...(submitted ? { submission: JSON.parse(String(submitted.metadata)) } : {}), state: row.state, createdAt: row.created_at, updatedAt: row.updated_at, definition: JSON.parse(String(row.definition)) });
   }
   list() { return this.db.prepare('SELECT * FROM resource_registry ORDER BY created_at,resource_id').all().map(row => this.entry(row)); }
   active() { return this.list().filter(entry => entry.state === 'ACTIVE').map(entry => entry.definition); }
@@ -106,10 +130,54 @@ export class RuntimeResourceRegistry {
     this.atomic(() => this.insert({ ...definition, deliveryRecovery: definition.deliveryRecovery ?? { kind: 'none' } }, 'user'));
     return this.inspect(definition.resourceId);
   }
+  recordDiscovery(result: Awaited<ReturnType<typeof discoverResource>>, principal: SpendPrincipal) {
+    const actor = SpendPrincipalSchema.parse(principal);
+    const discoveryId = randomUUID(); const discoveredAt = this.now(); const expiresAt = discoveredAt + 30 * 60_000;
+    this.atomic(() => {
+      this.db.prepare('DELETE FROM resource_discoveries WHERE expires_at<? AND registration IS NULL').run(discoveredAt);
+      if (Number(this.db.prepare('SELECT COUNT(*) AS count FROM resource_discoveries WHERE registration IS NULL').get()!.count) >= 256)
+        throw new ResourceRegistryError('RESOURCE_DISCOVERY_LIMIT');
+      this.db.prepare('INSERT INTO resource_discoveries VALUES (?,?,?,?,?,NULL)').run(discoveryId, JSON.stringify(actor), JSON.stringify(result), discoveredAt, expiresAt);
+    });
+    return { ...result, discoveryId, expiresAt, registrationStatus: 'DISCOVERED' as const };
+  }
+  /** No outbound requests or management delegation. The discovery and insertion are consumed atomically. */
+  addDiscovered(raw: unknown, principal: SpendPrincipal) {
+    const input = AgentResourceRegistrationInput.parse(raw); const actor = SpendPrincipalSchema.parse(principal);
+    return this.atomic(() => {
+      const row = this.db.prepare('SELECT * FROM resource_discoveries WHERE discovery_id=?').get(input.discoveryId);
+      if (!row || !isDeepStrictEqual(JSON.parse(String(row.principal)), actor)) throw new ResourceRegistryError('RESOURCE_DISCOVERY_NOT_FOUND');
+      if (row.registration !== null) {
+        if (!isDeepStrictEqual(JSON.parse(String(row.registration)), input)) throw new ResourceRegistryError('RESOURCE_DISCOVERY_CONSUMED');
+        const entry = this.inspect(input.resourceId);
+        if (entry.state !== 'ACTIVE') throw new ResourceRegistryError('RESOURCE_DISCOVERY_CONSUMED');
+        return entry;
+      }
+      if (Number(row.expires_at) < this.now()) throw new ResourceRegistryError('RESOURCE_DISCOVERY_EXPIRED');
+      const snapshot = z.object({ proposal: z.unknown(), sample: ResourceRequestInputSchema, documentation: ResourceDocumentationSchema }).parse(JSON.parse(String(row.snapshot)));
+      const definition = RuntimeResourceSchema.parse({ ...z.record(z.string(), z.unknown()).parse(snapshot.proposal),
+        resourceId: input.resourceId, providerId: input.providerId, displayName: input.displayName });
+      authorizedRequestInstance(definition, snapshot.sample);
+      // A new ID cannot evade existing registrations, including disabled/tombstoned identities.
+      const identity = (resource: X402Resource) => {
+        const url = new URL(resource.request.url); url.searchParams.sort();
+        return { ...resource.request, url: url.href };
+      };
+      if (this.list().some(entry => isDeepStrictEqual(identity(entry.definition), identity(definition))
+        && isDeepStrictEqual(entry.definition.requestInputs ?? {}, definition.requestInputs ?? {})))
+        throw new ResourceRegistryError('RESOURCE_REQUEST_EXISTS');
+      this.insert(definition, 'user');
+      const submission = Submission.parse({ cardMemberId: actor.cardMemberId, discoveryId: input.discoveryId,
+        discoveredAt: row.discovered_at, sample: snapshot.sample, documentation: snapshot.documentation });
+      this.db.prepare('INSERT INTO resource_agent_submissions VALUES (?,?)').run(input.resourceId, JSON.stringify(submission));
+      this.db.prepare('UPDATE resource_discoveries SET registration=? WHERE discovery_id=?').run(JSON.stringify(input), input.discoveryId);
+      return this.inspect(input.resourceId);
+    });
+  }
   setState(id: string, state: 'DISABLED' | 'REMOVED') {
     this.atomic(() => {
       const entry = this.inspect(id);
-      if (entry.source !== 'user') throw new ResourceRegistryError('RESOURCE_READ_ONLY');
+      if (entry.source === 'built_in') throw new ResourceRegistryError('RESOURCE_READ_ONLY');
       if (entry.state === 'REMOVED' && state !== 'REMOVED') throw new ResourceRegistryError('RESOURCE_REMOVED');
       this.db.prepare('UPDATE resource_registry SET state=?,updated_at=? WHERE resource_id=?').run(state, this.now(), id);
     });

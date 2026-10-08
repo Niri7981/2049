@@ -18,6 +18,7 @@ import { PAID_RESOURCE_SCOPE_ID } from '../resources/paid-resources';
 import { DEVNET_NETWORK } from '../payment/payment-config';
 import { requestPaidResourcePurchase, type PurchaseRequestResult } from '../purchases/request-paid-resource-purchase';
 import { loadRegisteredResources, registeredResourceSummary } from '../resources/registered-resources';
+import { discoverResource } from '../resources/mainnet-resource-discovery';
 import { resourceEntrySummary } from '../resources/runtime-resource-registry';
 import { ResourceRequestInputSchema, resourceInputNames, authorizedRequestInstance } from '../resources/http-resource';
 import { assertGrantPostScope, assertPostRequestApproval, postRequestPolicyHash, postRequestReview } from '../resources/post-request-authorization';
@@ -461,6 +462,18 @@ export class AppRuntime {
   }
   listRegisteredResources() { return this.ledger.resources.list().map(resourceEntrySummary); }
   inspectRegisteredResource(id: string) { return resourceEntrySummary(this.ledger.resources.inspect(id)); }
+  async discoverAgentResource(raw: unknown, principal: SpendPrincipal) {
+    if (!this.accepting) throw new Error('SERVICE_STOPPING');
+    const result = await this.track(discoverResource(raw));
+    if (!this.accepting) throw new Error('SERVICE_STOPPING');
+    return this.ledger.resources.recordDiscovery(result, principal);
+  }
+  registerAgentResource(raw: unknown, principal: SpendPrincipal) {
+    if (!this.accepting) throw new Error('SERVICE_STOPPING');
+    const entry = this.ledger.resources.addDiscovered(raw, principal);
+    return { ...resourceEntrySummary(entry), registrationStatus: 'REGISTERED', spendingAuthorityCreated: false,
+      paymentSent: false, notice: 'Registered by Agent. Review in Yosh and create a Spend Grant before purchasing.' };
+  }
   addRegisteredResource(raw: unknown) {
     if (!this.accepting) throw new ManagementApiError('SERVICE_STOPPING', 503, 'Yosh is stopping.');
     return resourceEntrySummary(this.ledger.resources.add(raw));
@@ -471,7 +484,11 @@ export class AppRuntime {
   }
   registeredResources() {
     if (this.purchaseExecutionMode() !== 'live_mainnet') return [];
-    return this.activeResourceDefinitions().map(registeredResourceSummary);
+    return this.activeResourceDefinitions().map(resource => {
+      const entry = this.ledger.resources.inspect(resource.resourceId);
+      return { ...registeredResourceSummary(resource), source: entry.source,
+        ...(entry.submission ? { submission: entry.submission } : {}) };
+    });
   }
   overview() { return this.track(this.readOverview()); }
   async refreshMainnetWallet() {

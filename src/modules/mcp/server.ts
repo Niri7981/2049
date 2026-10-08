@@ -1,3 +1,4 @@
+import { AgentResourceRegistrationInput } from '../resources/agent-resource-registration';
 import { DiscoveryInput } from '../resources/mainnet-resource-discovery';
 import { ResourceRequestInputSchema } from '../resources/http-resource';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -15,6 +16,13 @@ export class AgentPostApprovalError extends Error {
   constructor() { super('RESOURCE_POST_APPROVAL_REQUIRED'); }
 }
 
+export const AgentRegistrationErrorCodes = ['RESOURCE_DISCOVERY_NOT_FOUND', 'RESOURCE_DISCOVERY_EXPIRED',
+  'RESOURCE_DISCOVERY_CONSUMED', 'RESOURCE_ID_EXISTS', 'RESOURCE_REQUEST_EXISTS', 'RESOURCE_REGISTRY_FULL',
+  'RESOURCE_REGISTRATION_INPUT_INVALID', 'RESOURCE_REGISTRATION_UNAVAILABLE', 'AGENT_UNAUTHORIZED'] as const;
+export class AgentRegistrationError extends Error {
+  constructor(readonly code: typeof AgentRegistrationErrorCodes[number]) { super(code); }
+}
+
 export type AgentRead = (operation: 'status' | 'quote') => Promise<unknown>;
 export type AgentPurchaseRequest = (input: { requestId: string; resourceId: string; reason: string; query?: string }) => Promise<unknown>;
 export type AgentDiscover = (input: unknown) => Promise<unknown>;
@@ -25,7 +33,8 @@ export type AgentQuote = (resourceId: string, sample: unknown) => Promise<unknow
 export function createAgentServer(read: AgentRead, requestPurchase: AgentPurchaseRequest = async () => { throw new Error('PURCHASE_REQUEST_UNAVAILABLE'); },
   discover: AgentDiscover = async () => { throw new Error('RESOURCE_DISCOVERY_UNAVAILABLE'); },
   delivery: AgentDelivery = async () => { throw new Error('DELIVERY_NOT_AVAILABLE'); },
-  quoteResource: AgentQuote = async () => { throw new Error('RESOURCE_QUOTE_UNAVAILABLE'); }) {
+  quoteResource: AgentQuote = async () => { throw new Error('RESOURCE_QUOTE_UNAVAILABLE'); },
+  registerResource: AgentDiscover = async () => { throw new Error('RESOURCE_REGISTRATION_UNAVAILABLE'); }) {
   const server = new McpServer({ name: 'Yosh', version: '0.1.0' });
   const annotations = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   for (const [name, operation, description] of [
@@ -40,7 +49,7 @@ export function createAgentServer(read: AgentRead, requestPurchase: AgentPurchas
     });
   }
   server.registerTool('discover_x402_resource', {
-    description: 'Inspect one public HTTPS x402 GET request without payment. Unknown JSON POST discovery requires specific approval in the Yosh app before any outbound request. Returns a registration proposal for user review; cannot register an API or create a Spend Grant.',
+    description: 'Inspect one public HTTPS x402 GET request without payment. Unknown JSON POST discovery requires specific approval in the Yosh app before any outbound request. Returns a backend-bound discoveryId and registration proposal. Use register_x402_resource to persist it for user review; discovery cannot create a Spend Grant or pay.',
     inputSchema: DiscoveryInput,
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   }, async input => {
@@ -48,6 +57,15 @@ export function createAgentServer(read: AgentRead, requestPurchase: AgentPurchas
     catch (error) { return { isError: true, content: [{ type: 'text' as const, text: error instanceof AgentPostApprovalError
       ? 'RESOURCE_POST_APPROVAL_REQUIRED: Review and approve this specific POST in Yosh. No outbound request or payment was sent.'
       : 'RESOURCE_DISCOVERY_UNAVAILABLE: No supported unpaid x402 quote was safely retrieved.' }] }; }
+  });
+  server.registerTool('register_x402_resource', {
+    description: 'Register a previously validated discovery in the shared Yosh Resource Registry. Pass the discoveryId returned by discover_x402_resource and resource identity labels only. The backend preserves endpoint, fixed/dynamic typed inputs, sample and delivery metadata. Creation only; cannot edit existing resources or create a Spend Grant, change settings, sign or pay. User reviews the Agent-submitted resource in Yosh before granting spending authority.',
+    inputSchema: AgentResourceRegistrationInput,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, async input => {
+    try { return { content: [{ type: 'text' as const, text: JSON.stringify(await registerResource(input)) }] }; }
+    catch (error) { return { isError: true, content: [{ type: 'text' as const,
+      text: `${error instanceof AgentRegistrationError ? error.code : 'RESOURCE_REGISTRATION_UNAVAILABLE'}: No spending permission or payment was created.` }] }; }
   });
   server.registerTool('get_purchase_delivery', {
     description: 'Read one bounded chunk of a completed purchase delivery owned by this Agent. Use nextOffset until null; decode base64 chunks in order as UTF-8 JSON.',

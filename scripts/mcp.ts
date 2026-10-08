@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { EmptyResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
-import { AgentPostApprovalError, AgentPurchaseInputError, AgentReadError, createAgentServer } from '../src/modules/mcp/server';
+import { AgentRegistrationError, AgentRegistrationErrorCodes, AgentPostApprovalError, AgentPurchaseInputError, AgentReadError, createAgentServer } from '../src/modules/mcp/server';
 import { readConnection } from '../src/modules/mcp/connection';
 import { appRequestTimeout } from '../src/modules/mcp/request-timeout';
 import { resolveYoshConfiguration } from '../src/modules/app/yosh-configuration';
@@ -25,6 +25,11 @@ async function callApp(path: string, init?: RequestInit) {
     if (response.status === 401) throw new AgentReadError('AGENT_UNAUTHORIZED');
     if (path.startsWith('/api/agent?')) throw new AgentReadError('AGENT_READ_FAILED');
     if (['/api/agent/discovery', '/api/agent/quote'].includes(path) && response.status === 409) throw new AgentPostApprovalError();
+    if (path === '/api/agent/resources') {
+      const result: unknown = await response.json().catch(() => null);
+      const code = typeof result === 'object' && result !== null && 'code' in result ? result.code : undefined;
+      throw new AgentRegistrationError(AgentRegistrationErrorCodes.find(value => value === code) ?? 'RESOURCE_REGISTRATION_UNAVAILABLE');
+    }
     if (path === '/api/agent/purchases' && response.status === 400) {
       const body = await response.json().catch(() => null) as { code?: unknown } | null;
       if (body?.code === 'RESOURCE_REQUEST_INPUT_REQUIRED' || body?.code === 'RESOURCE_REQUEST_INPUT_UNSUPPORTED' || body?.code === 'RESOURCE_REQUEST_INPUT_INVALID' || body?.code === 'RESOURCE_POST_APPROVAL_REQUIRED') {
@@ -48,6 +53,7 @@ const server = createAgentServer(
   input => callApp('/api/agent/discovery', { method: 'POST', body: JSON.stringify(input) }),
   (purchaseId, offset) => callApp(`/api/agent/purchases/${encodeURIComponent(purchaseId)}/delivery?offset=${offset}`),
   (resourceId, sample) => callApp('/api/agent/quote', { method: 'POST', body: JSON.stringify({ resourceId, sample }) }),
+  input => callApp('/api/agent/resources', { method: 'POST', body: JSON.stringify(input) }),
 );
 if (configuration.mcpProvider === 'codex') {
   let sessionId = randomUUID();

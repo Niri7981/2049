@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { HttpResourceRequestSchema, ResourceRequestInputSchema, DeclarativeResourceRequestInputsSchema, resourceInputNames, authorizedRequestInstance } from './http-resource';
+import { HttpResourceRequestSchema, ResourceRequestInputSchema, DeclarativeResourceRequestInputsSchema, resourceInputNames, authorizedRequestInstance, ResourceDeliveryPolicySchema, DeliveryRecoveryCapabilitySchema } from './http-resource';
 import { safeResourceFetch } from './safe-resource-fetch';
 import { readPaymentRequiredHeader } from '../payment/x402-client';
 import { validateResourceChallenge } from '../payment/resource-challenge';
@@ -7,6 +7,8 @@ import { resolvePaymentEnvironment } from '../payment/payment-environment';
 import { MAX_ATOMIC_AMOUNT } from '../authority/atomic-money';
 import { registeredResourceSummary } from './registered-resources';
 import { assertPostRequestApproval, postRequestReview } from './post-request-authorization';
+import { ResourceDocumentationSchema } from './agent-resource-registration';
+import { validateDeliveryCapability } from './delivery-capability';
 import { ResourceRegistryError } from './runtime-resource-registry';
 export { isPublicResourceAddress } from './public-resource-address';
 
@@ -16,6 +18,9 @@ export const DiscoveryInput = z.object({
   body: z.string().max(16_384).optional(),
   requestInputs: DeclarativeResourceRequestInputsSchema.optional(),
   sample: ResourceRequestInputSchema.optional(),
+  deliveryPolicy: ResourceDeliveryPolicySchema.optional(),
+  deliveryRecovery: DeliveryRecoveryCapabilitySchema.optional(),
+  documentation: ResourceDocumentationSchema.optional(),
 }).strict();
 
 /** Compatibility entry point for non-paying header inspection. */
@@ -39,6 +44,9 @@ export function prepareDiscovery(raw: unknown) {
       try { JSON.parse(request.body); } catch { throw new ResourceRegistryError('RESOURCE_DISCOVERY_UNAVAILABLE'); }
     }
   }
+  validateDeliveryCapability(input.deliveryRecovery ?? { kind: 'none' }, request);
+  if (input.deliveryRecovery && input.deliveryRecovery.kind !== 'none' && !input.documentation?.urls.length)
+    throw new ResourceRegistryError('RESOURCE_RECOVERY_DOCUMENTATION_REQUIRED');
   const environment = resolvePaymentEnvironment({ YOSH_EXECUTION_MODE: 'live_mainnet' });
   const policy = { resourceId: 'discovery', providerId: 'discovery', request,
     ...(input.requestInputs ? { requestInputs: input.requestInputs } : {}),
@@ -61,11 +69,14 @@ export async function discoverResource(raw: unknown, readHeaders: typeof unpaidC
     const { quote } = validateResourceChallenge(readPaymentRequiredHeader(encoded), { ...policy, request: instance }, environment);
     return { ...registeredResourceSummary({ ...policy, baseAmount: quote.amount, maximumAmount: quote.amount }),
       payTo: quote.payTo, feePayer: quote.extra.feePayer, maxTimeoutSeconds: quote.maxTimeoutSeconds,
-      paymentSent: false, authoritativeAtPurchase: false, recovery: { kind: 'none' },
+      paymentSent: false, authoritativeAtPurchase: false, recovery: input.deliveryRecovery ?? { kind: 'none' },
       proposal: { request, ...(input.requestInputs ? { requestInputs: input.requestInputs } : {}),
         network: environment.network, mint: environment.asset.mint, decimals: 6,
-        recipientSource: 'live_challenge', baseAmount: quote.amount, maximumAmount: quote.amount },
+        recipientSource: 'live_challenge' as const, baseAmount: quote.amount, maximumAmount: quote.amount,
+        ...(input.deliveryPolicy ? { deliveryPolicy: input.deliveryPolicy } : {}),
+        deliveryRecovery: input.deliveryRecovery ?? { kind: 'none' as const } },
       sample: input.sample ?? {},
-      notice: 'Discovery is an unpaid snapshot. The user must register and authorize a bounded Spend Grant. Every purchase obtains a fresh quote.' };
+      documentation: input.documentation ?? { urls: [], uncertainties: ['Input metadata has no supplied documentation source. Delivery recovery is not verified.'] },
+      notice: 'Discovery is an unpaid snapshot. Registration does not authorize spending. The user must create a bounded Spend Grant. Every purchase obtains a fresh quote.' };
   } catch { throw new ResourceRegistryError('RESOURCE_DISCOVERY_UNAVAILABLE'); }
 }
