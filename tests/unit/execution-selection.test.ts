@@ -21,8 +21,12 @@ function fixture() {
   vi.stubEnv('DEMO_MERCHANT_PUBLIC_KEY', '4aU7aegXejAjF84J9eu2B6boC1Exa3i6cxP3diDULJbs');
   const dir = mkdtempSync(join(tmpdir(), 'yosh-execution-')); dirs.push(dir);
   const initializeWallet = vi.fn(async () => ({ address, reused: true }));
-  const app = new AppRuntime(dir, { initializeWallet }); context.app = app;
-  return { app, dir, initializeWallet };
+  const readWallets = vi.fn(async () => [
+    { id: 'mainnet', label: 'Mainnet', address: null, status: 'missing' as const },
+    { id: 'devnet', label: 'Devnet · Test', address, status: 'available' as const },
+  ]);
+  const app = new AppRuntime(dir, { initializeWallet, readWallets }); context.app = app;
+  return { app, dir, initializeWallet, readWallets };
 }
 function request(body: object) {
   return signedManagementRequest(`${origin}/api/app/execution`, secret, { method: 'PUT', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -66,7 +70,7 @@ it('Devnet selection keeps the existing test wallet and isolated controls', asyn
   app.setDailyLimit('300000'); app.setPaused(false);
   app.setExecution('live_devnet'); expect(resolvePaymentEnvironment().mode).toBe('live_devnet');
   expect(app.ledger.controls('live_devnet')).toMatchObject({ dailyBudget: null, paused: false });
-  await app.overview(); expect(initializeWallet).toHaveBeenCalledOnce();
+  await app.overview(); expect(initializeWallet).not.toHaveBeenCalled();
   app.setExecution('simulated'); expect(app.ledger.controls('simulated')).toMatchObject({ dailyBudget: '300000', paused: false });
 });
 it('rejects Agent/unsigned requests, extra authority fields and management replay', async () => {
@@ -78,10 +82,13 @@ it('rejects Agent/unsigned requests, extra authority fields and management repla
   expect(app.execution().productionExecutionEnabled).toBe(false);
 });
 it('blocks switching while a wallet/overview read or original recovery is in flight', async () => {
-  const { app, initializeWallet } = fixture();
+  const { app, readWallets } = fixture();
   let finish!: () => void;
   const pending = new Promise<void>(resolve => { finish = resolve; });
-  initializeWallet.mockImplementation(async () => { await pending; return { address, reused: true }; });
+  readWallets.mockImplementation(async () => { await pending; return [
+    { id: 'mainnet', label: 'Mainnet', address: null, status: 'missing' as const },
+    { id: 'devnet', label: 'Devnet · Test', address, status: 'available' as const },
+  ]; });
   const read = app.overview();
   try { expect(() => app.setExecution('live_mainnet')).toThrow('EXECUTION_BUSY'); } finally { finish(); await read; }
   vi.spyOn(app.ledger, 'pendingRecovery').mockReturnValue([{ requestId: 'original-unknown', ownerCardMemberId: undefined }]);

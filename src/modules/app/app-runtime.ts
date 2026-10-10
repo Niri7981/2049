@@ -37,6 +37,7 @@ import { writeProductionExecutionSetting } from './product-configuration';
 import { PaymentEnvironmentError, resolvePaymentEnvironment, PurchaseExecutionModeSchema, type PaymentEnvironment, type PurchaseExecutionMode } from '../payment/payment-environment';
 
 type RuntimeState = { runtime?: AppRuntime };
+type WalletInventoryEntry = { id: string; label: string; address: string | null; status: 'missing' | 'available' | 'unavailable' };
 export type TestPurchaseResult = { purchaseId: string; status: string; deliveryStatus: string; policy: { decision: string; reason: string }; transaction: string | null; simulated: boolean; warning?: string };
 const globals = globalThis as typeof globalThis & { __yosh?: RuntimeState };
 
@@ -63,7 +64,7 @@ export class AppRuntime {
   private deliveryRecoveryTimer?: ReturnType<typeof setTimeout>;
   private recoveryStatus: 'idle' | 'running' | 'complete' | 'pending' = 'idle';
   private wallet?: Promise<{ address: string; reused: boolean }>;
-  private walletInventory?: ReturnType<typeof readExistingProductWallets>;
+  private walletInventory?: Promise<WalletInventoryEntry[]>;
   private walletInventoryExpiresAt = 0;
   private walletAddress?: string;
   private mainnetIdentity?: string;
@@ -80,7 +81,7 @@ export class AppRuntime {
     this.environment = current;
     return current.mode;
   }
-  constructor(readonly directory = runtimeDataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; timeZone?: () => string; now?: () => number; fetcher?: typeof fetch; codex?: CodexIntegrationOptions } = {}) {
+  constructor(readonly directory = runtimeDataDirectory(), private dependencies: { initializeWallet?: () => Promise<{ address: string; reused: boolean }>; readWallets?: () => Promise<WalletInventoryEntry[]>; timeZone?: () => string; now?: () => number; fetcher?: typeof fetch; codex?: CodexIntegrationOptions } = {}) {
     resolveYoshConfiguration();
     this.owner = acquireDataDirectoryOwnership(directory);
     let ledger: PurchaseLedger | undefined;
@@ -499,12 +500,13 @@ export class AppRuntime {
   private readWalletInventory() {
     if (!this.walletInventory || (this.walletInventoryExpiresAt > 0 && Date.now() >= this.walletInventoryExpiresAt)) {
       this.walletInventoryExpiresAt = 0;
-      this.walletInventory = readExistingProductWallets().then(wallets => {
+      const readWallets: () => Promise<WalletInventoryEntry[]> = this.dependencies.readWallets ?? (() => readExistingProductWallets());
+      this.walletInventory = readWallets().then(wallets => {
         if (wallets.some(wallet => wallet.status !== 'available')) this.walletInventoryExpiresAt = Date.now() + 30_000;
         return wallets;
       });
     }
-    return this.walletInventory;
+    return this.walletInventory!;
   }
   private async readWallets() {
     const wallets = await this.readWalletInventory();
@@ -516,10 +518,15 @@ export class AppRuntime {
   private async readOverview() {
     const mode = this.purchaseExecutionMode();
     void this.refreshMainnetWallet();
-    // Mainnet selection is displayable before provisioning. Never fall back to a test wallet.
+    // Reading the startup surface must not create a product wallet. Mainnet
+    // selection is displayable before provisioning; explicit balance, quote,
+    // and purchase operations keep their existing wallet initialization path.
     const wallet = mode === 'live_mainnet'
       ? { address: this.mainnetAddress(), available: this.authorityWalletStatus === 'available', reused: true }
-      : await this.initializeWallet();
+      : await this.readWalletInventory().then(wallets => {
+        const existing = wallets.find(item => item.id === 'devnet');
+        return { address: existing?.status === 'available' ? existing.address ?? '' : '', reused: existing?.status === 'available' };
+      });
     const overview = assembleAuthorityOverview(this.ledger, this.agentConnection, wallet,
       { status: this.accepting ? 'running' : 'stopping', recoveryStatus: this.recoveryStatus },
       this.dependencies.now?.() ?? Date.now(), mode, this.ledger.defaultCardMember().id);

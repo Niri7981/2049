@@ -29,7 +29,9 @@ const dirs: string[] = [];
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); delete process.env.APP2049_MANAGEMENT_TOKEN; delete process.env.APP2049_ENABLE_DEVNET_PURCHASES; for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 function runtime(timeZone = 'America/Los_Angeles', now?: () => number) {
   const dir = mkdtempSync(join(tmpdir(), 'yosh-')); dirs.push(dir);
-  return new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }), timeZone: () => timeZone, now });
+  return new AppRuntime(dir, { initializeWallet: async () => ({ address, reused: true }),
+    readWallets: async () => [{ id: 'mainnet', label: 'Mainnet', address: null, status: 'missing' },
+      { id: 'devnet', label: 'Devnet · Test', address, status: 'available' }], timeZone: () => timeZone, now });
 }
 const origin = 'http://127.0.0.1:3049';
 async function authorize(app: AppRuntime, now = Date.now(), totalLimit = '1000000') {
@@ -57,6 +59,23 @@ describe('authenticated local management boundary', () => {
     expect(legacyDemoTasksAllowed({ NODE_ENV: 'development', APP2049_ENABLE_LEGACY_DEMO_TASKS: '1' })).toBe(true);
     expect(legacyDemoTasksAllowed({ NODE_ENV: 'test', APP2049_ENABLE_LEGACY_DEMO_TASKS: '1' })).toBe(true);
     expect(legacyDemoTasksAllowed({ NODE_ENV: 'production', APP2049_ENABLE_LEGACY_DEMO_TASKS: '1' })).toBe(false);
+  });
+});
+
+describe('fresh product startup', () => {
+  it('does not create a wallet as a side effect of reading the initial overview', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'yosh-fresh-overview-')); dirs.push(dir);
+    const initializeWallet = vi.fn(async () => ({ address, reused: false }));
+    const app = new AppRuntime(dir, { initializeWallet, readWallets: async () => [
+      { id: 'mainnet', label: 'Mainnet', address: null, status: 'missing' },
+      { id: 'devnet', label: 'Devnet · Test', address: null, status: 'missing' },
+    ] });
+    try {
+      const overview = await app.overview();
+      expect(overview.service.purchaseMode).toBe('simulated');
+      expect(overview.wallet).toEqual({ address: '', reused: false });
+      expect(initializeWallet).not.toHaveBeenCalled();
+    } finally { app.close(); }
   });
 });
 
@@ -94,20 +113,25 @@ describe('managed budget and Devnet test records', () => {
     } finally { release(); app.close(); }
   });
 
-  it('shares one wallet initialization across concurrent overview and readiness requests', async () => {
+  it('keeps overview read-only while explicit wallet initialization is shared', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'yosh-wallet-cache-')); dirs.push(dir);
     let release!: () => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
     const initializeWallet = vi.fn(async () => { await pending; return { address, reused: true }; });
-    const app = new AppRuntime(dir, { initializeWallet });
+    const app = new AppRuntime(dir, { initializeWallet, readWallets: async () => [
+      { id: 'mainnet', label: 'Mainnet', address: null, status: 'missing' },
+      { id: 'devnet', label: 'Devnet · Test', address, status: 'available' },
+    ] });
     try {
       await Promise.all([app.start(origin), app.start(origin)]);
       expect(initializeWallet).not.toHaveBeenCalled(); // Health with no recovery has no Keychain work.
-      const first = app.overview(); const second = app.overview(); const wallet = app.initializeWallet();
+      const first = app.overview(); const second = app.overview();
+      expect((await first).wallet).toEqual({ address, reused: true });
+      expect((await second).wallet).toEqual({ address, reused: true });
+      const wallet = app.initializeWallet();
       expect(initializeWallet).toHaveBeenCalledTimes(1);
       release();
-      expect((await first).wallet).toEqual({ address, reused: true });
-      expect((await second).wallet).toEqual(await wallet);
+      expect(await wallet).toEqual({ address, reused: true });
       await app.overview(); await app.initializeWallet(); await app.start(origin);
       expect(initializeWallet).toHaveBeenCalledTimes(1);
     } finally { release(); app.close(); }
@@ -117,10 +141,13 @@ describe('managed budget and Devnet test records', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yosh-wallet-denied-')); dirs.push(dir);
     const initializeWallet = vi.fn<() => Promise<{ address: string; reused: boolean }>>()
       .mockRejectedValueOnce(new Error('Keychain access denied')).mockResolvedValue({ address, reused: true });
-    const app = new AppRuntime(dir, { initializeWallet });
+    const app = new AppRuntime(dir, { initializeWallet, readWallets: async () => [
+      { id: 'mainnet', label: 'Mainnet', address: null, status: 'missing' },
+      { id: 'devnet', label: 'Devnet · Test', address: null, status: 'missing' },
+    ] });
     try {
-      await expect(app.overview()).rejects.toThrow('Keychain access denied');
-      expect((await app.overview()).wallet).toEqual({ address, reused: true });
+      await expect(app.initializeWallet()).rejects.toThrow('Keychain access denied');
+      expect(await app.initializeWallet()).toEqual({ address, reused: true });
       await app.overview();
       expect(initializeWallet).toHaveBeenCalledTimes(2);
     } finally { app.close(); }
@@ -133,10 +160,10 @@ describe('managed budget and Devnet test records', () => {
     const fetcher = vi.fn(() => pending);
     try {
       const balance = app.balance(address, fetcher);
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
       const overview = await app.overview();
       expect(overview.wallet).toEqual({ address, reused: true });
       expect(overview.budget.dailyLimit).toBeNull();
-      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
       release();
       expect((await balance).available).toBe(false);
       expect((await app.overview()).budget.dailyLimit).toBeNull();
