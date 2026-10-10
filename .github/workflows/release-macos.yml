@@ -1,0 +1,128 @@
+name: macOS Beta release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: App version matching MARKETING_VERSION (for example 0.1.0)
+        required: true
+        type: string
+      publish_release:
+        description: Publish the unnotarized Apple Silicon Beta (requires owner approval)
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yosh-macos-beta-release
+  cancel-in-progress: false
+
+jobs:
+  build-dmg:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    env:
+      YOSH_CODESIGN_IDENTITY: '-'
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up the build Node version
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.21.0
+
+      - name: Confirm version, Apple Silicon runner, and release notes
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Use an x.y.z app version." >&2; exit 1; }
+          [[ "$(uname -m)" == arm64 ]] || { echo "This Beta requires an arm64 runner." >&2; exit 1; }
+          [[ -f "docs/releases/v$RELEASE_VERSION-beta.md" ]] || { echo "Missing Beta release notes." >&2; exit 1; }
+
+      - name: Test and build Yosh with its bundled runtime
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test
+          npm run typecheck
+          npm run lint
+          ./scripts/install-macos-app.sh
+
+      - name: Verify the app version and ad hoc signature
+        run: |
+          set -euo pipefail
+          app="build.noindex/macos/Build/Products/Release/Yosh.app"
+          actual="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
+          [[ "$actual" == "$RELEASE_VERSION" ]] || { echo "Requested version does not match the built app." >&2; exit 1; }
+          signing="$(/usr/bin/codesign -dv --verbose=2 "$app" 2>&1)"
+          [[ "$signing" == *"Signature=adhoc"* ]] || { echo "Expected an ad hoc Beta signature." >&2; exit 1; }
+
+      - name: Package and verify the unnotarized Beta DMG
+        run: |
+          set -euo pipefail
+          ./scripts/package-macos-dmg.sh --beta --output-dir "$RUNNER_TEMP/yosh-release"
+          ./scripts/package-macos-dmg.sh --verify "$RUNNER_TEMP/yosh-release/Yosh-$RELEASE_VERSION-beta-arm64.dmg"
+          cp "docs/releases/v$RELEASE_VERSION-beta.md" "$RUNNER_TEMP/yosh-release/release-notes.md"
+
+      - name: Upload the verified Beta candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: yosh-beta-arm64
+          path: |
+            ${{ runner.temp }}/yosh-release/Yosh-${{ inputs.version }}-beta-arm64.dmg
+            ${{ runner.temp }}/yosh-release/Yosh-${{ inputs.version }}-beta-arm64.dmg.sha256
+            ${{ runner.temp }}/yosh-release/release-notes.md
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    if: github.ref == 'refs/heads/main' && inputs.publish_release
+    needs: build-dmg
+    runs-on: macos-15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Download verified assets from this workflow run
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --repo "$GH_REPO" --name yosh-beta-arm64 --dir "$RUNNER_TEMP/yosh-release"
+
+      - name: Publish the explicitly approved Beta prerelease
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          cd "$RUNNER_TEMP/yosh-release"
+          /usr/bin/shasum -a 256 --check "Yosh-$RELEASE_VERSION-beta-arm64.dmg.sha256"
+          gh release create "v$RELEASE_VERSION-beta" \
+            "Yosh-$RELEASE_VERSION-beta-arm64.dmg" "Yosh-$RELEASE_VERSION-beta-arm64.dmg.sha256" \
+            --repo "$GH_REPO" --target "$GITHUB_SHA" --prerelease \
+            --title "Yosh v$RELEASE_VERSION Beta — Apple Silicon (Unnotarized)" \
+            --notes-file release-notes.md
+
+      - name: Verify the actual public download
+        run: |
+          set -euo pipefail
+          verified_dir="$RUNNER_TEMP/yosh-public-download"
+          mkdir -p "$verified_dir"
+          gh release download "v$RELEASE_VERSION-beta" --repo "$GH_REPO" --dir "$verified_dir" \
+            --pattern "Yosh-$RELEASE_VERSION-beta-arm64.dmg*"
+          cd "$verified_dir"
+          /usr/bin/shasum -a 256 --check "Yosh-$RELEASE_VERSION-beta-arm64.dmg.sha256"
+          asset_url="$(gh release view "v$RELEASE_VERSION-beta" --repo "$GH_REPO" --json assets \
+            --jq '.assets[] | select(.name == "Yosh-'"$RELEASE_VERSION"'-beta-arm64.dmg") | .url')"
+          [[ "$asset_url" == https://github.com/*/releases/download/* ]] || { echo "Missing actual release asset URL." >&2; exit 1; }
+          # No authentication headers: verify that the website's direct link serves the public bytes.
+          /usr/bin/curl --fail --location --silent --show-error "$asset_url" -o public-download.dmg
+          expected="$(awk '{print $1}' "$RUNNER_TEMP/yosh-release/Yosh-$RELEASE_VERSION-beta-arm64.dmg.sha256")"
+          actual="$(/usr/bin/shasum -a 256 public-download.dmg | awk '{print $1}')"
+          [[ "$expected" == "$actual" ]] || { echo "Public download checksum mismatch." >&2; exit 1; }
+          printf 'Verified public asset: %s\n' "$asset_url" >> "$GITHUB_STEP_SUMMARY"
