@@ -24,6 +24,7 @@ struct SpendGrantDetail: View {
     @State private var selectedResourceID = ""
     @State private var sampleQuery = ""
     @State private var sampleBody = ""
+    @State private var showingAPIDetails = false
     @State private var inputError: String?
     @State private var showingRevokeConfirmation = false
     @FocusState private var focusedAmount: AmountField?
@@ -89,6 +90,7 @@ struct SpendGrantDetail: View {
             let sample = overview.service.registeredResources?.first(where: { $0.resourceId == id })?.submission?.sample
             sampleQuery = sample?.queryText ?? ""
             sampleBody = sample?.bodyText ?? ""
+            showingAPIDetails = false
             inputError = nil
         }
         .onChange(of: overview.scopedGrant?.id) { _, _ in
@@ -187,36 +189,33 @@ struct SpendGrantDetail: View {
                 Picker("Registered API", selection: $selectedResourceID) {
                     Text("Choose an API").tag("")
                     ForEach(overview.service.registeredResources ?? []) { resource in
-                        Text((resource.name ?? resource.resourceId) + (resource.source == "agent" ? " · Agent-submitted" : "")).tag(resource.resourceId)
+                        Text((resource.name ?? resource.resourceId) + (resource.source == "agent" ? " · Agent-submitted" : ""))
+                            .lineLimit(1).truncationMode(.tail).tag(resource.resourceId)
                     }
                 }
+                .frame(maxWidth: .infinity)
                 .disabled(isSaving)
+                .accessibilityIdentifier("grant-resource")
                 .padding(.top, 12)
                 if let resource = overview.service.registeredResources?.first(where: { $0.resourceId == selectedResourceID }) {
-                    Text("\(resource.method ?? "GET") \(resource.url)\nSolana Mainnet · USDC\nMaximum: \(resource.maximumPriceDisplay ?? "Unavailable")\n\(resource.recipient.map { "Recipient: \($0)" } ?? "Recipient verified when you create the Grant")")
-                        .font(.system(size: 10)).foregroundStyle(secondaryInk)
-                        .textSelection(.enabled)
-                        .padding(.top, 6)
-                }
-                if isMainnet, let resource = overview.service.registeredResources?.first(where: { $0.resourceId == selectedResourceID }) {
-                    if resource.source == "agent" {
-                        Text("Agent-submitted · review before authorizing spending").font(.caption).foregroundStyle(secondaryInk)
+                    resourceSummary(resource).padding(.top, 10)
+                    DisclosureGroup(isExpanded: $showingAPIDetails) {
+                        apiDetails(resource).padding(.top, 8)
+                    } label: {
+                        Text("View API Details").font(.system(size: 11)).foregroundStyle(secondaryInk)
                     }
-                    if let submission = resource.submission, !submission.documentation.uncertainties.isEmpty {
-                        Text("Unconfirmed: " + submission.documentation.uncertainties.joined(separator: "\n"))
-                            .font(.caption).foregroundStyle(secondaryInk).fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let policy = resource.requestInputs?.description {
-                        Text("Input policy: \(policy)").font(.caption).textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    .tint(secondaryInk)
+                    .disabled(isSaving)
+                    .accessibilityIdentifier("grant-api-details")
+                    .transaction { if reduceMotion { $0.animation = nil } }
+                    .padding(.top, 10)
                     if let keys = resource.requestInputs?.query?.names, !keys.isEmpty {
-                        Text("Sample query JSON · \(keys.joined(separator: ", "))")
-                        TextField("{\"\(keys[0])\":\"sample\"}", text: $sampleQuery).textFieldStyle(.roundedBorder)
+                        sampleInput("Sample query", keys: keys, text: $sampleQuery, identifier: "grant-sample-query")
+                            .padding(.top, 12)
                     }
                     if let keys = resource.requestInputs?.jsonBody?.names, !keys.isEmpty {
-                        Text("Sample JSON body · \(keys.joined(separator: ", "))")
-                        TextField("{\"\(keys[0])\":\"sample\"}", text: $sampleBody).textFieldStyle(.roundedBorder)
+                        sampleInput("Sample JSON body", keys: keys, text: $sampleBody, identifier: "grant-sample-body")
+                            .padding(.top, 12)
                     }
                 }
             }
@@ -280,6 +279,88 @@ struct SpendGrantDetail: View {
                     .accessibilityAddTraits(.updatesFrequently)
                     .padding(.top, 12)
             }
+        }
+    }
+
+    private func resourceSummary(_ resource: AppOverview.Service.RegisteredResource) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(resource.name ?? resource.resourceId)
+                .font(.system(size: 13, weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("\(resource.method ?? "GET") · Solana Mainnet · USDC")
+                .font(.system(size: 10)).foregroundStyle(secondaryInk)
+            if let maximum = resource.maximumPriceDisplay {
+                Text("Maximum · \(maximum)").font(.system(size: 11)).foregroundStyle(secondaryInk)
+            } else if let base = resource.basePriceDisplay {
+                Text("Base price · \(base)").font(.system(size: 11)).foregroundStyle(secondaryInk)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("grant-resource-summary")
+    }
+
+    private func apiDetails(_ resource: AppOverview.Service.RegisteredResource) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            hairline
+            apiFact("Endpoint", value: resource.url)
+            apiFact("Resource ID", value: resource.resourceId)
+            apiFact("Provider", value: resource.providerId)
+            apiFact("Network", value: resource.network)
+            apiFact("Asset", value: "\(resource.assetId)\n\(resource.assetDecimals) decimals")
+            if let base = resource.basePriceDisplay { apiFact("Base price", value: base) }
+            apiFact("Recipient", value: resource.recipient ?? "Verified when you create the Grant")
+            if resource.source == "agent" {
+                apiFact("Source", value: "Agent-submitted · review before authorizing spending")
+            }
+            if let submission = resource.submission {
+                if !submission.documentation.urls.isEmpty {
+                    apiFact("Documentation", value: submission.documentation.urls.joined(separator: "\n"))
+                }
+                if !submission.documentation.uncertainties.isEmpty {
+                    apiFact("Unconfirmed", value: submission.documentation.uncertainties.joined(separator: "\n"))
+                }
+            }
+            if let policy = resource.requestInputs, let text = inputPolicyText(policy) {
+                apiFact("Input policy", value: text, monospaced: true)
+            }
+            hairline
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("grant-api-details-content")
+    }
+
+    private func inputPolicyText(_ policy: RegisterAPIRequest.Inputs) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(policy) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func apiFact(_ label: String, value: String, monospaced: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 10)).foregroundStyle(secondaryInk)
+            Text(value)
+                .font(.system(size: 11, design: monospaced ? .monospaced : .default))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func sampleInput(_ label: String, keys: [String], text: Binding<String>, identifier: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label).font(.system(size: 11)).foregroundStyle(secondaryInk)
+            Text(keys.joined(separator: ", "))
+                .font(.system(size: 10)).foregroundStyle(secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("{\"\(keys[0])\":\"sample\"}", text: text, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                .lineLimit(1...3)
+                .accessibilityLabel(label)
+                .accessibilityHint("JSON object · Fields: \(keys.joined(separator: ", "))")
+                .accessibilityIdentifier(identifier)
         }
     }
 

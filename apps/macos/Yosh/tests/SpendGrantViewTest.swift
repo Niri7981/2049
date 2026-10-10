@@ -7,6 +7,17 @@ private final class ExpiryProbe {
     init(_ selection: Date) { self.selection = selection }
 }
 
+@MainActor
+private final class ResourceMenuSelection: NSObject {
+    let title: String
+    init(_ title: String) { self.title = title }
+    @objc func select(_ notification: Notification) {
+        guard let menu = notification.object as? NSMenu,
+              let index = menu.items.firstIndex(where: { $0.title == title }) else { return }
+        DispatchQueue.main.async { menu.performActionForItem(at: index); menu.cancelTracking() }
+    }
+}
+
 /// Native, callback-only fixtures. No backend, real grant, credentials or payments.
 @main
 struct SpendGrantViewTest {
@@ -77,7 +88,137 @@ struct SpendGrantViewTest {
         try expiryFixture(reduceMotion: false)
         try expiryFixture(reduceMotion: true)
         try postConfirmation()
+        try resourceFormFixture()
         print("Spend Grant: exact submission, connection/saving guards, retained draft, narrow layout, inline wheel selection, keyboard adjustment, collapse/reopen and Reduce Motion passed")
+    }
+
+    @MainActor private static func resourceFormFixture() throws {
+        // Enable SwiftUI's in-process accessibility tree for this fixture only.
+        // AppKit exposes this switch through its legacy attribute entry point.
+        NSApp.accessibilitySetValue(true, forAttribute: .init(rawValue: "AXEnhancedUserInterface"))
+        let overview = try overview(enabled: true, mainnet: true)
+        var submissions: [(String, String, Int64, String?, ResourceRequestSample?)] = []
+        var preparations: [(String, ResourceRequestSample?)] = []
+        func page(saving: Bool = false) -> some View {
+            SpendGrantDetail(overview: overview, isSaving: saving, writeMessage: nil, writeFailed: false,
+                onBack: {}, onConnection: {},
+                onCreate: { total, single, expiry, resource, sample, _ in submissions.append((total, single, expiry, resource, sample)) },
+                onRevoke: { _ in }, onPreparePost: { resource, sample in
+                    preparations.append((resource, sample))
+                    throw URLError(.cannotConnectToHost)
+                })
+                .frame(width: 420, height: 526).environment(\.colorScheme, .light)
+        }
+        let host = NSHostingView(rootView: page())
+        let window = makeWindow(host, size: NSSize(width: 420, height: 526))
+        defer { window.close() }
+        settle(host)
+        guard let scroll = scrollViews(host).first, let document = scroll.documentView else { fatalError("Missing Resource form scroll view") }
+        precondition(CardMetrics.cardSize == CGSize(width: 420, height: 684) && CardMetrics.windowSize == CGSize(width: 444, height: 708))
+        precondition(element("grant-api-details", in: host) == nil, "API details require a selected Resource")
+        chooseResource(overview.service.registeredResources![0], host: host, window: window)
+        precondition(element("grant-api-details", in: host) != nil)
+        precondition(!textValues(host).contains("Endpoint") && !textValues(host).contains("Input policy"), "Technical information must be collapsed by default")
+        precondition(element("grant-sample-query", in: host) != nil && element("grant-sample-body", in: host) == nil)
+        precondition((element("grant-sample-query", in: host)?.value(forKey: "accessibilityValue") as? String)?.contains("seed") == true)
+        let collapsedHeight = document.bounds.height
+        precondition(document.bounds.width <= scroll.contentView.bounds.width + 1, "Long API names must fit the narrow form")
+        edit("grant-sample-query", text: #"{"prompt":"edited query"}"#, host: host, window: window)
+        clickElement("grant-api-details", host: host, window: window)
+        precondition(textValues(host).contains("Endpoint") && textValues(host).contains("Input policy") && textValues(host).contains("Unconfirmed"),
+            "Native disclosure must expose the existing technical information")
+        precondition(document.bounds.height > collapsedHeight && document.bounds.width <= scroll.contentView.bounds.width + 1,
+            "Details must expand vertically and wrap long URLs and policy JSON")
+        clickElement("grant-api-details", host: host, window: window)
+        precondition(!textValues(host).contains("Endpoint") && abs(document.bounds.height - collapsedHeight) < 1)
+        precondition((element("grant-sample-query", in: host)?.value(forKey: "accessibilityValue") as? String)?.contains("edited query") == true,
+            "Disclosure must preserve the edited sample request")
+        edit("grant-total", text: "0.20", host: host, window: window)
+        edit("grant-per-transaction", text: "0.30", host: host, window: window)
+        clickElement("grant-create", host: host, window: window)
+        precondition(submissions.isEmpty && textValues(host).contains("Per transaction must fit within total authorized."))
+        edit("grant-per-transaction", text: "0.10", host: host, window: window)
+        edit("grant-sample-query", text: "invalid JSON", host: host, window: window)
+        clickElement("grant-create", host: host, window: window)
+        precondition(submissions.isEmpty && textValues(host).contains("Enter valid JSON objects for the sample request."))
+        edit("grant-sample-query", text: #"{"prompt":"edited query"}"#, host: host, window: window)
+        clickElement("grant-create", host: host, window: window)
+        precondition(submissions.count == 1 && submissions[0].0 == "200000" && submissions[0].1 == "100000"
+            && submissions[0].3 == "fixture-get" && submissions[0].4?.query?["prompt"] == "edited query")
+        let expiry = submissions[0].2
+        host.rootView = page(saving: true); settle(host)
+        clickElement("grant-create", host: host, window: window)
+        precondition(submissions.count == 1, "Saving must prevent duplicate fixture submissions")
+        host.rootView = page(); settle(host)
+        clickElement("grant-api-details", host: host, window: window)
+        chooseResource(overview.service.registeredResources![1], host: host, window: window)
+        precondition(!textValues(host).contains("Endpoint"), "Changing API must collapse its details")
+        precondition(element("grant-sample-query", in: host) != nil && element("grant-sample-body", in: host) != nil)
+        edit("grant-sample-query", text: #"{"region":"global"}"#, host: host, window: window)
+        edit("grant-sample-body", text: #"{"prompt":"edited body","count":2}"#, host: host, window: window)
+        clickElement("grant-create", host: host, window: window)
+        precondition(preparations.count == 1 && preparations[0].0 == "fixture-post"
+            && preparations[0].1?.query?["region"] == "global" && preparations[0].1?.bodyText.contains("edited body") == true)
+        precondition(submissions.count == 1 && textValues(host).contains("The POST request could not be prepared safely."),
+            "POST preparation failure must preserve explicit approval and error behavior")
+        chooseResource(overview.service.registeredResources![0], host: host, window: window)
+        clickElement("grant-create", host: host, window: window)
+        precondition(submissions.count == 2 && submissions[1].2 == expiry && submissions[1].4?.query?["prompt"] == "seed",
+            "API switching must retain amounts/expiry and restore each registered sample")
+        precondition(host.frame.size == NSSize(width: 420, height: 526) && document.bounds.width <= scroll.contentView.bounds.width + 1)
+        print("Create Spend Grant native fixture: API selection, default collapse, details/reflow, long names/URLs, GET/POST samples, validation, saving guards and exact callback inputs passed")
+    }
+
+    @MainActor private static func accessibilityNodes(_ object: NSObject) -> [NSObject] {
+        guard object.responds(to: NSSelectorFromString("accessibilityChildren")) else { return [object] }
+        let children = object.value(forKey: "accessibilityChildren") as? [NSObject] ?? []
+        return [object] + children.flatMap(accessibilityNodes)
+    }
+    @MainActor private static func element(_ identifier: String, in host: NSView) -> NSObject? {
+        let matches = accessibilityNodes(host).filter { $0.responds(to: NSSelectorFromString("accessibilityIdentifier"))
+            && $0.value(forKey: "accessibilityIdentifier") as? String == identifier }
+        if identifier == "grant-api-details" {
+            return matches.first { $0.value(forKey: "accessibilityRole") as? String == "AXDisclosureTriangle" }
+        }
+        return matches.first
+    }
+    @MainActor private static func textValues(_ host: NSView) -> [String] {
+        accessibilityNodes(host).compactMap { node in
+            guard node.responds(to: NSSelectorFromString("accessibilityValue")) else { return nil }
+            return node.value(forKey: "accessibilityValue") as? String
+        }
+    }
+    @MainActor private static func clickElement(_ identifier: String, host: NSView, window: NSWindow) {
+        guard let node = element(identifier, in: host), let value = node.value(forKey: "accessibilityFrame") as? NSValue else {
+            fatalError("Missing native control: \(identifier)")
+        }
+        if identifier == "grant-api-details" {
+            let control: AnyObject = node
+            precondition(control.accessibilityPerformPress?() == true, "Native disclosure action must remain accessible")
+            settle(host)
+            return
+        }
+        if let scroll = scrollViews(host).first, let document = scroll.documentView {
+            document.scrollToVisible(document.convert(window.convertFromScreen(value.rectValue), from: nil))
+            settle(host)
+        }
+        guard let currentFrame = node.value(forKey: "accessibilityFrame") as? NSValue else { fatalError("Control frame unavailable") }
+        let frame = currentFrame.rectValue
+        click(window, at: window.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY)))
+        settle(host)
+    }
+    @MainActor private static func edit(_ identifier: String, text: String, host: NSView, window: NSWindow) {
+        clickElement(identifier, host: host, window: window)
+        guard let editor = window.firstResponder as? NSTextView else { fatalError("Missing native editor: \(identifier)") }
+        editor.selectAll(nil); editor.insertText(text, replacementRange: editor.selectedRange()); settle(host)
+    }
+    @MainActor private static func chooseResource(_ resource: AppOverview.Service.RegisteredResource, host: NSView, window: NSWindow) {
+        let title = (resource.name ?? resource.resourceId) + (resource.source == "agent" ? " · Agent-submitted" : "")
+        let selection = ResourceMenuSelection(title)
+        NotificationCenter.default.addObserver(selection, selector: #selector(ResourceMenuSelection.select(_:)), name: NSMenu.didBeginTrackingNotification, object: nil)
+        defer { NotificationCenter.default.removeObserver(selection) }
+        clickElement("grant-resource", host: host, window: window)
+        precondition(element("grant-resource", in: host)?.value(forKey: "accessibilityValue") as? String == title)
     }
 
     @MainActor private static func expiryFixture(reduceMotion: Bool) throws {
@@ -146,8 +287,8 @@ struct SpendGrantViewTest {
         print("Native POST confirmation: no implicit approval, cancel and explicit discovery/Grant buttons passed")
     }
 
-    private static func overview(enabled: Bool, status: String = "EXPIRED") throws -> AppOverview {
-        let payload: [String: Any] = [
+    private static func overview(enabled: Bool, status: String = "EXPIRED", mainnet: Bool = false) throws -> AppOverview {
+        var payload: [String: Any] = [
             "service": ["status": "running", "purchaseMode": "simulated", "network": "Solana Devnet"],
             "wallet": ["address": "FixturePublicAddress"],
             "budget": ["dailyLimit": "1000000", "dailyLimitDisplay": "Fixture limit", "paid": "0", "reserved": "0",
@@ -156,6 +297,22 @@ struct SpendGrantViewTest {
                 "remaining": "170000", "assetDecimals": 6, "expiresAt": Int64(Date.now.addingTimeInterval(status == "EXPIRED" ? -3600 : 3600).timeIntervalSince1970 * 1000)],
             "connection": ["enabled": enabled, "lastSeen": NSNull(), "access": "purchase_intent"], "purchases": [],
         ]
+        if mainnet {
+            let resources: [[String: Any]] = ["GET", "POST"].map { method in
+                let isPost = method == "POST"
+                return ["resourceId": isPost ? "fixture-post" : "fixture-get", "providerId": "fixture.example",
+                    "name": isPost ? "Fixture analysis" : String(repeating: "Research search ", count: 6),
+                    "url": "https://fixture.example/" + String(repeating: "endpoint", count: 100), "method": method,
+                    "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", "assetId": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "assetDecimals": 6,
+                    "maximumPriceDisplay": "0.003 USDC", "source": "agent",
+                    "requestInputs": isPost ? ["query": ["region"], "jsonBody": ["prompt", "count"]] : ["query": ["prompt"]],
+                    "submission": ["cardMemberId": "fixture-agent", "discoveryId": "fixture-discovery", "discoveredAt": 1,
+                        "sample": isPost ? ["query": ["region": "seed"], "jsonBody": ["prompt": "seed", "count": 1]] : ["query": ["prompt": "seed"]],
+                        "documentation": ["urls": ["https://fixture.example/" + String(repeating: "documentation", count: 50)],
+                            "uncertainties": [String(repeating: "Fixture unconfirmed merchant note. ", count: 8)]]]]
+            }
+            payload["service"] = ["status": "running", "purchaseMode": "live_mainnet", "network": "Solana Mainnet", "registeredResources": resources]
+        }
         return try JSONDecoder().decode(AppOverview.self, from: JSONSerialization.data(withJSONObject: payload))
     }
 
